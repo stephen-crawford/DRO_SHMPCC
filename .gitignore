@@ -1,0 +1,15 @@
+# Build
+build/
+*.o
+*.a
+*.so
+
+# Generated data and figures (regenerate with paper_experiment_runner + scripts)
+paper_figures/*.csv
+paper_figures/*.png
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*~
