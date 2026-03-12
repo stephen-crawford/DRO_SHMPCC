@@ -22,13 +22,11 @@
  * Helper mappings:
  *   make_experiment_config()  — PaperVariant -> ExperimentConfig
  *   baseline_to_weight()      — SamplingBaseline -> WeightType
- *   uses_ot/uses_dro/uses_sh  — PaperVariant -> feature flags
+ *   uses_dro/uses_sh  — PaperVariant -> feature flags
  *
  * Paper variants:
  *   Base      – WeightType::FREQUENCY, no DRO
  *   DRO       – WeightType::FREQUENCY + Wasserstein DRO
- *   OT        – WeightType::WASSERSTEIN (OT predictor), no DRO
- *   OT+DRO   – WeightType::WASSERSTEIN + Wasserstein DRO
  *   *+SH      – any of the above with safe horizon enabled
  *
  * Outputs CSV files to paper_figures/ for generate_results_figures.py.
@@ -57,7 +55,7 @@
 #include "wasserstein_dro.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
-#include "optimal_transport_predictor.hpp"
+// optimal_transport_predictor.hpp removed (OT types deleted)
 #include "reference_path.hpp"
 
 using namespace scenario_mpc;
@@ -108,7 +106,7 @@ static void run_experiment_a() {
     std::ofstream f_w2(OUTPUT_DIR + "exp_a_w2_vs_time.csv");
     f_w2 << "variant,step,missed_fraction\n";
 
-    f_ablation << "variant,uses_ot,uses_dro,uses_sh,"
+    f_ablation << "variant,uses_dro,uses_sh,"
                << "collision_rate,ci_lo,ci_hi,"
                << "missed_mode_rate,avg_progress,avg_clearance,avg_solve_ms\n";
 
@@ -149,9 +147,7 @@ static void run_experiment_a() {
             // Ablation table at sp=0.2
             if (std::abs(sp - 0.2) < 0.01) {
                 f_ablation << variant_name(v) << ","
-                           << (uses_ot(v) ? "yes" : "no") << ","
                            << (uses_dro(v) ? "yes" : "no") << ","
-                           << ("no") << ","
                            << (uses_sh(v) ? "yes" : "no") << ","
                            << std::setprecision(4) << coll_rate << "," << ci_lo << "," << ci_hi << ","
                            << missed_rate << "," << avg_progress << "," << avg_clearance << ","
@@ -178,14 +174,12 @@ static void run_experiment_a() {
                 cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
                 cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
                 cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+                cfg.weight_type = WeightType::FREQUENCY;
                 cfg.enable_dro = uses_dro(v);
                 cfg.safe_horizon_enabled = false;
                 cfg.num_discs = 1;
                 cfg.vehicle_length = 1.5;
                 AdaptiveScenarioMPC ctrl(cfg);
-
-                OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
                 std::vector<std::string> modes_list = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
                 std::map<std::string, ModeModel> omm;
@@ -207,19 +201,11 @@ static void run_experiment_a() {
 
                 for (int i = 0; i < 5; ++i) {
                     ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
                 }
 
                 for (int step = 0; step < ROLLOUT_STEPS; ++step) {
                     osim.maybe_switch(sp, rng2);
                     ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
 
                     pp2 = ref_path2.find_closest_point(ego2.position(), pp2);
                     std::map<int, ObstacleState> obs_map;
@@ -468,7 +454,7 @@ static void run_experiment_e() {
 
         for (int r = 0; r < buf_rollouts; ++r) {
             unsigned seed = static_cast<unsigned>(r * 6000 + buf_sz);
-            auto res = run_single_rollout(PaperVariant::OT_DRO, switch_prob,
+            auto res = run_single_rollout(PaperVariant::DRO, switch_prob,
                                            BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
             if (res.collision) collisions++;
             total_missed += res.missed_mode_steps;
@@ -506,53 +492,48 @@ static void run_experiment_f() {
     int paired_rollouts_actual = 600;
 
     std::ofstream f_mcnemar(OUTPUT_DIR + "exp_f_mcnemar_paired.csv");
-    f_mcnemar << "seed,base_collision,ot_collision,dro_collision,ot_dro_collision,"
-              << "ot_dro_sh_collision\n";
+    f_mcnemar << "seed,base_collision,base_sh_collision,dro_collision,"
+              << "dro_sh_collision\n";
 
     std::ofstream f_nonanticip(OUTPUT_DIR + "exp_f_non_anticipativity.csv");
     f_nonanticip << "seed,step,dro_risk,obs_future_displacement,non_anticipative\n";
 
-    int base_coll = 0, ot_coll = 0, dro_coll = 0, ot_dro_coll = 0, ot_dro_sh_coll = 0;
+    int base_coll = 0, base_sh_coll = 0, dro_coll = 0, dro_sh_coll = 0;
     int n_00 = 0, n_01 = 0, n_10 = 0, n_11 = 0;
 
-    std::vector<bool> base_collisions_vec, ot_collisions_vec, dro_collisions_vec,
-                      ot_dro_collisions_vec, ot_dro_sh_collisions_vec;
+    std::vector<bool> base_collisions_vec, base_sh_collisions_vec, dro_collisions_vec,
+                      dro_sh_collisions_vec;
 
     for (int r = 0; r < paired_rollouts_actual; ++r) {
         unsigned seed = static_cast<unsigned>(r * 8000);
 
         auto res_base = run_single_rollout(PaperVariant::BASE, switch_prob,
                                             BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_ot = run_single_rollout(PaperVariant::OT, switch_prob,
+        auto res_base_sh = run_single_rollout(PaperVariant::BASE_SH, switch_prob,
                                           BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
         auto res_dro = run_single_rollout(PaperVariant::DRO, switch_prob,
                                            BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_ot_dro = run_single_rollout(PaperVariant::OT_DRO, switch_prob,
+        auto res_dro_sh = run_single_rollout(PaperVariant::DRO_SH, switch_prob,
                                               BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_ot_dro_sh = run_single_rollout(PaperVariant::OT_DRO_SH, switch_prob,
-                                                  BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
 
         f_mcnemar << seed << ","
                   << (res_base.collision ? 1 : 0) << ","
-                  << (res_ot.collision ? 1 : 0) << ","
+                  << (res_base_sh.collision ? 1 : 0) << ","
                   << (res_dro.collision ? 1 : 0) << ","
-                  << (res_ot_dro.collision ? 1 : 0) << ","
-                  << (res_ot_dro_sh.collision ? 1 : 0) << "\n";
+                  << (res_dro_sh.collision ? 1 : 0) << "\n";
 
         if (res_base.collision) base_coll++;
-        if (res_ot.collision) ot_coll++;
+        if (res_base_sh.collision) base_sh_coll++;
         if (res_dro.collision) dro_coll++;
-        if (res_ot_dro.collision) ot_dro_coll++;
-        if (res_ot_dro_sh.collision) ot_dro_sh_coll++;
+        if (res_dro_sh.collision) dro_sh_coll++;
 
         base_collisions_vec.push_back(res_base.collision);
-        ot_collisions_vec.push_back(res_ot.collision);
+        base_sh_collisions_vec.push_back(res_base_sh.collision);
         dro_collisions_vec.push_back(res_dro.collision);
-        ot_dro_collisions_vec.push_back(res_ot_dro.collision);
-        ot_dro_sh_collisions_vec.push_back(res_ot_dro_sh.collision);
+        dro_sh_collisions_vec.push_back(res_dro_sh.collision);
 
-        // McNemar 2x2: Base vs OT+DRO+SH (primary comparison)
-        bool b = res_base.collision, o = res_ot_dro_sh.collision;
+        // McNemar 2x2: Base vs DRO+SH (primary comparison)
+        bool b = res_base.collision, o = res_dro_sh.collision;
         if (!b && !o) n_00++;
         else if (!b && o) n_01++;
         else if (b && !o) n_10++;
@@ -600,16 +581,14 @@ static void run_experiment_f() {
         }
     }
 
-    // McNemar's chi2: Base vs OT+DRO+SH (primary)
-    double chi2_base_ot_dro_sh = mcnemar_chi2(n_10, n_01);
+    // McNemar's chi2: Base vs DRO+SH (primary)
+    double chi2_base_dro_sh = mcnemar_chi2(n_10, n_01);
 
     // Bootstrap CIs for all paired comparisons
     std::mt19937 boot_rng(12345);
-    auto boot_base_ot_dro_sh = bootstrap_paired_delta(base_collisions_vec, ot_dro_sh_collisions_vec, 10000, &boot_rng);
-    auto boot_base_ot = bootstrap_paired_delta(base_collisions_vec, ot_collisions_vec, 10000, &boot_rng);
+    auto boot_base_dro_sh = bootstrap_paired_delta(base_collisions_vec, dro_sh_collisions_vec, 10000, &boot_rng);
+    auto boot_base_base_sh = bootstrap_paired_delta(base_collisions_vec, base_sh_collisions_vec, 10000, &boot_rng);
     auto boot_base_dro = bootstrap_paired_delta(base_collisions_vec, dro_collisions_vec, 10000, &boot_rng);
-    auto boot_base_ot_dro = bootstrap_paired_delta(base_collisions_vec, ot_dro_collisions_vec, 10000, &boot_rng);
-    auto boot_ot_ot_dro_sh = bootstrap_paired_delta(ot_collisions_vec, ot_dro_sh_collisions_vec, 10000, &boot_rng);
 
     // McNemar for all pairs
     auto mcnemar_pair = [&](const std::vector<bool>& a, const std::vector<bool>& b_vec) {
@@ -620,22 +599,17 @@ static void run_experiment_f() {
         }
         return mcnemar_chi2(mc_b, mc_c);
     };
-    double chi2_base_ot = mcnemar_pair(base_collisions_vec, ot_collisions_vec);
+    double chi2_base_base_sh = mcnemar_pair(base_collisions_vec, base_sh_collisions_vec);
     double chi2_base_dro = mcnemar_pair(base_collisions_vec, dro_collisions_vec);
-    double chi2_base_ot_dro = mcnemar_pair(base_collisions_vec, ot_dro_collisions_vec);
-    double chi2_ot_ot_dro_sh = mcnemar_pair(ot_collisions_vec, ot_dro_sh_collisions_vec);
 
     // Effect sizes
     double p_base = static_cast<double>(base_coll) / paired_rollouts_actual;
-    double p_ot_val = static_cast<double>(ot_coll) / paired_rollouts_actual;
+    double p_base_sh_val = static_cast<double>(base_sh_coll) / paired_rollouts_actual;
     double p_dro_val = static_cast<double>(dro_coll) / paired_rollouts_actual;
-    double p_ot_dro_val = static_cast<double>(ot_dro_coll) / paired_rollouts_actual;
-    double p_ot_dro_sh = static_cast<double>(ot_dro_sh_coll) / paired_rollouts_actual;
-    auto es_base_ot_dro_sh = compute_effect_sizes(p_base, p_ot_dro_sh);
-    auto es_base_ot = compute_effect_sizes(p_base, p_ot_val);
+    double p_dro_sh = static_cast<double>(dro_sh_coll) / paired_rollouts_actual;
+    auto es_base_dro_sh = compute_effect_sizes(p_base, p_dro_sh);
+    auto es_base_base_sh = compute_effect_sizes(p_base, p_base_sh_val);
     auto es_base_dro = compute_effect_sizes(p_base, p_dro_val);
-    auto es_base_ot_dro = compute_effect_sizes(p_base, p_ot_dro_val);
-    auto es_ot_ot_dro_sh = compute_effect_sizes(p_ot_val, p_ot_dro_sh);
 
     // Bootstrap CI CSV (for fig10_forest_plot)
     {
@@ -650,11 +624,9 @@ static void run_experiment_f() {
                    << "," << eff.cohens_h << "\n";
         };
 
-        write_row("Base_vs_OT", boot_base_ot, chi2_base_ot, es_base_ot);
+        write_row("Base_vs_Base+SH", boot_base_base_sh, chi2_base_base_sh, es_base_base_sh);
         write_row("Base_vs_DRO", boot_base_dro, chi2_base_dro, es_base_dro);
-        write_row("Base_vs_OT+DRO", boot_base_ot_dro, chi2_base_ot_dro, es_base_ot_dro);
-        write_row("Base_vs_OT+DRO+SH", boot_base_ot_dro_sh, chi2_base_ot_dro_sh, es_base_ot_dro_sh);
-        write_row("OT_vs_OT+DRO+SH", boot_ot_ot_dro_sh, chi2_ot_ot_dro_sh, es_ot_ot_dro_sh);
+        write_row("Base_vs_DRO+SH", boot_base_dro_sh, chi2_base_dro_sh, es_base_dro_sh);
     }
 
     // Summary CSV
@@ -663,51 +635,41 @@ static void run_experiment_f() {
         f_summary << "metric,value\n"
                   << "paired_rollouts," << paired_rollouts_actual << "\n"
                   << "base_collisions," << base_coll << "\n"
-                  << "ot_collisions," << ot_coll << "\n"
+                  << "base_sh_collisions," << base_sh_coll << "\n"
                   << "dro_collisions," << dro_coll << "\n"
-                  << "ot_dro_collisions," << ot_dro_coll << "\n"
-                  << "ot_dro_sh_collisions," << ot_dro_sh_coll << "\n"
-                  << "mcnemar_base_vs_ot_dro_sh_chi2," << std::setprecision(4) << chi2_base_ot_dro_sh << "\n"
-                  << "mcnemar_base_vs_ot_dro_sh_sig," << (chi2_base_ot_dro_sh > 3.84 ? "yes" : "no") << "\n"
-                  << "mcnemar_base_vs_ot_chi2," << chi2_base_ot << "\n"
-                  << "mcnemar_base_vs_ot_sig," << (chi2_base_ot > 3.84 ? "yes" : "no") << "\n"
+                  << "dro_sh_collisions," << dro_sh_coll << "\n"
+                  << "mcnemar_base_vs_dro_sh_chi2," << std::setprecision(4) << chi2_base_dro_sh << "\n"
+                  << "mcnemar_base_vs_dro_sh_sig," << (chi2_base_dro_sh > 3.84 ? "yes" : "no") << "\n"
+                  << "mcnemar_base_vs_base_sh_chi2," << chi2_base_base_sh << "\n"
+                  << "mcnemar_base_vs_base_sh_sig," << (chi2_base_base_sh > 3.84 ? "yes" : "no") << "\n"
                   << "mcnemar_base_vs_dro_chi2," << chi2_base_dro << "\n"
                   << "mcnemar_base_vs_dro_sig," << (chi2_base_dro > 3.84 ? "yes" : "no") << "\n"
-                  << "mcnemar_base_vs_ot_dro_chi2," << chi2_base_ot_dro << "\n"
-                  << "mcnemar_base_vs_ot_dro_sig," << (chi2_base_ot_dro > 3.84 ? "yes" : "no") << "\n"
-                  << "mcnemar_ot_vs_ot_dro_sh_chi2," << chi2_ot_ot_dro_sh << "\n"
-                  << "mcnemar_ot_vs_ot_dro_sh_sig," << (chi2_ot_ot_dro_sh > 3.84 ? "yes" : "no") << "\n"
-                  << "bootstrap_base_vs_ot_dro_sh_mean," << boot_base_ot_dro_sh.mean_delta << "\n"
-                  << "bootstrap_base_vs_ot_dro_sh_ci_lo," << boot_base_ot_dro_sh.ci_low << "\n"
-                  << "bootstrap_base_vs_ot_dro_sh_ci_hi," << boot_base_ot_dro_sh.ci_high << "\n"
-                  << "bootstrap_base_vs_ot_mean," << boot_base_ot.mean_delta << "\n"
-                  << "bootstrap_base_vs_ot_ci_lo," << boot_base_ot.ci_low << "\n"
-                  << "bootstrap_base_vs_ot_ci_hi," << boot_base_ot.ci_high << "\n"
-                  << "cohens_h_base_vs_ot_dro_sh," << es_base_ot_dro_sh.cohens_h << "\n"
-                  << "cohens_h_base_vs_ot," << es_base_ot.cohens_h << "\n"
-                  << "risk_ratio_base_vs_ot_dro_sh," << es_base_ot_dro_sh.risk_ratio << "\n"
-                  << "risk_ratio_base_vs_ot," << es_base_ot.risk_ratio << "\n"
+                  << "bootstrap_base_vs_dro_sh_mean," << boot_base_dro_sh.mean_delta << "\n"
+                  << "bootstrap_base_vs_dro_sh_ci_lo," << boot_base_dro_sh.ci_low << "\n"
+                  << "bootstrap_base_vs_dro_sh_ci_hi," << boot_base_dro_sh.ci_high << "\n"
+                  << "bootstrap_base_vs_base_sh_mean," << boot_base_base_sh.mean_delta << "\n"
+                  << "bootstrap_base_vs_base_sh_ci_lo," << boot_base_base_sh.ci_low << "\n"
+                  << "bootstrap_base_vs_base_sh_ci_hi," << boot_base_base_sh.ci_high << "\n"
+                  << "cohens_h_base_vs_dro_sh," << es_base_dro_sh.cohens_h << "\n"
+                  << "cohens_h_base_vs_base_sh," << es_base_base_sh.cohens_h << "\n"
+                  << "risk_ratio_base_vs_dro_sh," << es_base_dro_sh.risk_ratio << "\n"
+                  << "risk_ratio_base_vs_base_sh," << es_base_base_sh.risk_ratio << "\n"
                   << "non_anticipativity,passed\n";
     }
 
     std::cout << "  Paired results (n=" << paired_rollouts_actual << "):\n"
-              << "    Base: " << base_coll << "  OT: " << ot_coll
-              << "  DRO: " << dro_coll << "  OT+DRO: " << ot_dro_coll
-              << "  OT+DRO+SH: " << ot_dro_sh_coll << "\n"
-              << "  McNemar (Base vs OT+DRO+SH): chi2=" << std::setprecision(2) << chi2_base_ot_dro_sh
-              << " (" << (chi2_base_ot_dro_sh > 3.84 ? "sig" : "n.s.") << ")\n"
-              << "  McNemar (Base vs OT):        chi2=" << chi2_base_ot
-              << " (" << (chi2_base_ot > 3.84 ? "sig" : "n.s.") << ")\n"
-              << "  McNemar (Base vs DRO):        chi2=" << chi2_base_dro
+              << "    Base: " << base_coll << "  Base+SH: " << base_sh_coll
+              << "  DRO: " << dro_coll << "  DRO+SH: " << dro_sh_coll << "\n"
+              << "  McNemar (Base vs DRO+SH): chi2=" << std::setprecision(2) << chi2_base_dro_sh
+              << " (" << (chi2_base_dro_sh > 3.84 ? "sig" : "n.s.") << ")\n"
+              << "  McNemar (Base vs Base+SH): chi2=" << chi2_base_base_sh
+              << " (" << (chi2_base_base_sh > 3.84 ? "sig" : "n.s.") << ")\n"
+              << "  McNemar (Base vs DRO):     chi2=" << chi2_base_dro
               << " (" << (chi2_base_dro > 3.84 ? "sig" : "n.s.") << ")\n"
-              << "  McNemar (OT vs OT+DRO+SH):   chi2=" << chi2_ot_ot_dro_sh
-              << " (" << (chi2_ot_ot_dro_sh > 3.84 ? "sig" : "n.s.") << ")\n"
-              << "  Bootstrap (Base vs OT+DRO+SH): " << std::setprecision(4) << boot_base_ot_dro_sh.mean_delta
-              << " [" << boot_base_ot_dro_sh.ci_low << ", " << boot_base_ot_dro_sh.ci_high << "]\n"
-              << "  Bootstrap (Base vs OT):        " << boot_base_ot.mean_delta
-              << " [" << boot_base_ot.ci_low << ", " << boot_base_ot.ci_high << "]\n"
-              << "  Bootstrap (OT vs OT+DRO+SH):   " << boot_ot_ot_dro_sh.mean_delta
-              << " [" << boot_ot_ot_dro_sh.ci_low << ", " << boot_ot_ot_dro_sh.ci_high << "]\n"
+              << "  Bootstrap (Base vs DRO+SH): " << std::setprecision(4) << boot_base_dro_sh.mean_delta
+              << " [" << boot_base_dro_sh.ci_low << ", " << boot_base_dro_sh.ci_high << "]\n"
+              << "  Bootstrap (Base vs Base+SH): " << boot_base_base_sh.mean_delta
+              << " [" << boot_base_base_sh.ci_low << ", " << boot_base_base_sh.ci_high << "]\n"
               << "  -> exp_f_mcnemar_paired.csv, exp_f_summary.csv, exp_h1_bootstrap_ci.csv\n";
 }
 
@@ -747,14 +709,13 @@ static void run_experiment_g() {
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35;
             cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+            cfg.weight_type = WeightType::FREQUENCY;
             cfg.enable_dro = uses_dro(v);
             cfg.safe_horizon_enabled = false;
             cfg.num_discs = 1;
             cfg.vehicle_length = 1.5;
 
             AdaptiveScenarioMPC ctrl(cfg);
-            OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -775,10 +736,6 @@ static void run_experiment_g() {
 
             for (int i = 0; i < 5; ++i) {
                 ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                if (uses_ot(v)) {
-                    ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                    ot_pred.advance_timestep();
-                }
             }
 
             double rollout_speed_sum = 0, rollout_effort = 0;
@@ -788,10 +745,6 @@ static void run_experiment_g() {
             for (int step = 0; step < ROLLOUT_STEPS; ++step) {
                 osim.maybe_switch(switch_prob, rng);
                 ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                if (uses_ot(v)) {
-                    ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                    ot_pred.advance_timestep();
-                }
 
                 pp_g = ref_path_g.find_closest_point(ego.position(), pp_g);
                 std::map<int, ObstacleState> obs_map;
@@ -863,15 +816,14 @@ static void run_experiment_h() {
     int h_rollouts = 600;
 
     std::ofstream f_out(OUTPUT_DIR + "exp_h_ablation_full.csv");
-    f_out << "variant,sh_enabled,uses_dro,uses_ot,"
+    f_out << "variant,sh_enabled,uses_dro,"
           << "collision_rate,ci_lo,ci_hi,missed_mode_rate,"
           << "avg_progress,avg_clearance,avg_solve_ms\n";
 
     for (PaperVariant pv : ALL_VARIANTS) {
         std::cout << "  Variant: " << variant_name(pv)
                   << " (SH=" << uses_sh(pv)
-                  << " DRO=" << uses_dro(pv)
-                  << " OT=" << uses_ot(pv) << ") ... " << std::flush;
+                  << " DRO=" << uses_dro(pv) << ") ... " << std::flush;
 
         int collisions = 0;
         int total_missed = 0, total_steps_all = 0;
@@ -900,7 +852,6 @@ static void run_experiment_h() {
         f_out << variant_name(pv) << ","
               << (uses_sh(pv) ? "true" : "false") << ","
               << (uses_dro(pv) ? "yes" : "no") << ","
-              << (uses_ot(pv) ? "yes" : "no") << ","
               << std::fixed << std::setprecision(4)
               << coll_rate << "," << ci_lo << "," << ci_hi << ","
               << missed_rate << ","
@@ -930,10 +881,10 @@ static void run_experiment_i() {
 
     std::vector<int> scenario_counts = {40, 100, 200, 500};
 
-    // Variants to test: Base and OT, each with/without SH
+    // Variants to test: Base and DRO, each with/without SH
     std::vector<PaperVariant> i_variants = {
         PaperVariant::BASE, PaperVariant::BASE_SH,
-        PaperVariant::OT, PaperVariant::OT_SH
+        PaperVariant::DRO, PaperVariant::DRO_SH
     };
 
     std::ofstream f_out(OUTPUT_DIR + "exp_i_sh_scaling.csv");
@@ -1005,7 +956,7 @@ static void run_experiment_j() {
     int j_rollouts = 600;
 
     std::vector<SamplingBaseline> baselines = {
-        SamplingBaseline::STANDARD, SamplingBaseline::OT,
+        SamplingBaseline::STANDARD,
         SamplingBaseline::STRATIFIED, SamplingBaseline::TEMPERATURE,
         SamplingBaseline::EPSILON_GREEDY, SamplingBaseline::RISK_BIASED
     };
@@ -1077,8 +1028,8 @@ static void run_experiment_k() {
         EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
     };
     std::vector<PaperVariant> k_variants = {
-        PaperVariant::BASE, PaperVariant::OT,
-        PaperVariant::BASE_SH, PaperVariant::OT_SH
+        PaperVariant::BASE, PaperVariant::DRO,
+        PaperVariant::BASE_SH, PaperVariant::DRO_SH
     };
 
     std::ofstream f_out(OUTPUT_DIR + "exp_k_environment_generalization.csv");
@@ -1139,7 +1090,7 @@ static void run_experiment_l() {
               << "========================================\n";
 
     std::vector<PaperVariant> l_variants = {
-        PaperVariant::BASE, PaperVariant::BASE_SH, PaperVariant::OT_SH
+        PaperVariant::BASE, PaperVariant::BASE_SH, PaperVariant::DRO_SH
     };
     std::vector<int> scenario_counts = {40, 100, 200};
     int l_rollouts = 300;
@@ -1169,14 +1120,13 @@ static void run_experiment_l() {
                 cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35;
                 cfg.safety_margin = 0.2;
                 cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+                cfg.weight_type = WeightType::FREQUENCY;
                 cfg.enable_dro = uses_dro(v);
                 cfg.safe_horizon_enabled = uses_sh(v);
                 cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
                 cfg.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
-                OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
                 std::map<std::string, ModeModel> omm;
                 for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -1195,10 +1145,6 @@ static void run_experiment_l() {
 
                 for (int i = 0; i < 5; ++i) {
                     ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
                 }
 
                 // Run for a few steps to get a representative solve state
@@ -1206,10 +1152,6 @@ static void run_experiment_l() {
                 for (int step = 0; step < 30; ++step) {
                     osim.maybe_switch(switch_prob, rng);
                     ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
 
                     std::map<int, ObstacleState> obs_map;
                     obs_map[0] = osim.state;
@@ -1221,17 +1163,12 @@ static void run_experiment_l() {
                 }
 
                 // Now draw fresh_samples trajectories and check violation
-                auto weights = compute_mode_weights(
-                    ctrl.get_statistics().num_scenarios > 0 ?
-                    ModeHistory(0, omm) : ModeHistory(0, omm),
-                    uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY);
                 // Rebuild weights from observations
                 ModeHistory mh(0, omm);
                 for (int i = 0; i < 35; ++i) {
                     mh.record_observation(i, osim.current_mode);
                 }
-                weights = compute_mode_weights(mh,
-                    uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY);
+                auto weights = compute_mode_weights(mh, WeightType::FREQUENCY);
 
                 double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
 
@@ -1297,7 +1234,7 @@ static void run_experiment_m() {
 
     std::vector<int> n_safe_values = {3, 5, 8, 10, 12, 15};
     std::vector<PaperVariant> m_variants = {
-        PaperVariant::BASE_SH, PaperVariant::OT_SH
+        PaperVariant::BASE_SH, PaperVariant::DRO_SH
     };
     int m_rollouts = 600;
     double switch_prob = 0.2;
@@ -1381,7 +1318,7 @@ static void run_experiment_n() {
             cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = S;
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::WASSERSTEIN;
+            cfg.weight_type = WeightType::FREQUENCY;
             cfg.safe_horizon_enabled = true;
             cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
             cfg.num_discs = 3; cfg.vehicle_length = 4.0;
@@ -1454,7 +1391,7 @@ static void run_experiment_n() {
             cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::WASSERSTEIN;
+            cfg.weight_type = WeightType::FREQUENCY;
             cfg.safe_horizon_enabled = true;
             cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
             cfg.num_discs = D; cfg.vehicle_length = 4.0;
@@ -1527,7 +1464,7 @@ static void run_experiment_n() {
             cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::WASSERSTEIN;
+            cfg.weight_type = WeightType::FREQUENCY;
             cfg.safe_horizon_enabled = true;
             cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
             cfg.forced_safe_horizon = ns;
@@ -1598,7 +1535,7 @@ static void run_experiment_o() {
               << "========================================\n";
 
     std::vector<PaperVariant> o_variants = {
-        PaperVariant::BASE, PaperVariant::OT, PaperVariant::OT_SH
+        PaperVariant::BASE, PaperVariant::DRO, PaperVariant::DRO_SH
     };
     int o_rollouts = 600;
     std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
@@ -1640,14 +1577,13 @@ static void run_experiment_o() {
                 cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
                 cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
                 cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+                cfg.weight_type = WeightType::FREQUENCY;
                 cfg.enable_dro = uses_dro(v);
                 cfg.safe_horizon_enabled = uses_sh(v);
                 cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
                 cfg.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
-                OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
                 std::map<std::string, ModeModel> omm;
                 for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -1670,10 +1606,6 @@ static void run_experiment_o() {
                 for (int i = 0; i < 20; ++i) {
                     osim.maybe_switch(cond.train_sp, rng);
                     ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
                     osim.step(DT, rng);
                 }
 
@@ -1684,10 +1616,6 @@ static void run_experiment_o() {
                 for (int step = 0; step < ROLLOUT_STEPS; ++step) {
                     osim.maybe_switch(cond.test_sp, rng);
                     ctrl.update_mode_observation(0, 0, osim.current_mode, step + 20);
-                    if (uses_ot(v)) {
-                        ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                        ot_pred.advance_timestep();
-                    }
 
                     std::map<int, ObstacleState> obs_map;
                     obs_map[0] = osim.state;
@@ -1759,7 +1687,6 @@ static void run_experiment_p() {
     };
     std::vector<CoverageStrategy> strategies = {
         {"Standard",  SamplingBaseline::STANDARD,       PaperVariant::BASE},
-        {"OT",        SamplingBaseline::OT,             PaperVariant::OT},
         {"Uniform",   SamplingBaseline::UNIFORM_WEIGHT,  PaperVariant::BASE},
         {"Recency",   SamplingBaseline::RECENCY_WEIGHT,  PaperVariant::BASE},
         {"Oracle",    SamplingBaseline::ORACLE_FLOOD,    PaperVariant::BASE},
@@ -1808,151 +1735,8 @@ static void run_experiment_p() {
 }
 
 // ============================================================================
-// Experiment Q: OT Internal Ablation (parameter sensitivity)
+// Experiment Q: OT Internal Ablation (REMOVED — OT predictor deleted)
 // ============================================================================
-
-static void run_experiment_q() {
-    std::cout << "\n========================================\n"
-              << "  Experiment Q: OT Internal Ablation\n"
-              << "========================================\n";
-
-    const int NUM_ROLLOUTS = 600;
-    const double SWITCH_PROB = 0.2;
-    std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
-
-    // Vary OT predictor parameters one at a time from defaults:
-    // default: history=200, reg=0.1, horizon=10, decay=1.0
-    struct OTConfig {
-        std::string name;
-        int history_window;
-        double regularization;
-        int prediction_horizon;
-        double decay;
-    };
-    std::vector<OTConfig> configs = {
-        {"Default",       200, 0.1,  10, 1.0},
-        {"ShortHist-20",   20, 0.1,  10, 1.0},
-        {"LongHist-500",  500, 0.1,  10, 1.0},
-        {"LowReg-0.01",   200, 0.01, 10, 1.0},
-        {"HighReg-1.0",   200, 1.0,  10, 1.0},
-        {"NoDec-0.0",     200, 0.1,  10, 0.0},
-        {"ShortPred-3",   200, 0.1,   3, 1.0},
-    };
-
-    std::ofstream csv(OUTPUT_DIR + "exp_q_ot_ablation.csv");
-    csv << "config,collision_rate,ci_lo,ci_hi,missed_mode_rate,avg_progress,avg_clearance,avg_solve_ms\n";
-
-    auto mode_mdls = create_obstacle_mode_models(DT);
-
-    for (const auto& oc : configs) {
-        std::cout << "  " << oc.name << " ... " << std::flush;
-
-        int collisions = 0;
-        int total_missed = 0, total_steps_all = 0;
-        double sum_progress = 0, sum_clearance = 0, sum_solve = 0;
-
-        for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-            unsigned seed = 90000 + r;
-            std::mt19937 rng(seed);
-
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::WASSERSTEIN;
-            cfg.enable_dro = false;
-            cfg.safe_horizon_enabled = false;
-            cfg.num_discs = 1;
-
-            AdaptiveScenarioMPC ctrl(cfg);
-            OptimalTransportPredictor ot_pred(DT, oc.history_window, oc.regularization,
-                                               oc.prediction_horizon, oc.decay,
-                                               OTWeightType::WASSERSTEIN);
-
-            std::map<std::string, ModeModel> omm;
-            for (auto& m : modes) omm[m] = mode_mdls[m];
-            ctrl.initialize_obstacle(0, 0, omm);
-
-            ObstacleSim osim;
-            std::uniform_real_distribution<double> jitter(-0.5, 0.5);
-            osim.state = ObstacleState(3.0 + jitter(rng), 0.3 + jitter(rng) * 0.3,
-                                       jitter(rng) * 0.2, jitter(rng) * 0.2);
-            osim.current_mode = "constant_velocity";
-            osim.available_modes = modes;
-            osim.mode_models = omm;
-
-            EgoState ego(0, 0, 0, 1.5);
-            Eigen::Vector2d goal(20, 0);
-            EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
-
-            for (int i = 0; i < 5; ++i) {
-                ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                ot_pred.advance_timestep();
-            }
-
-            bool had_collision = false;
-            double rollout_min_clear = 1e9;
-            int missed = 0, steps = 0;
-            double rollout_solve = 0;
-
-            for (int step = 0; step < ROLLOUT_STEPS; ++step) {
-                osim.maybe_switch(SWITCH_PROB, rng);
-                ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                ot_pred.advance_timestep();
-
-                std::map<int, ObstacleState> obs_map;
-                obs_map[0] = osim.state;
-                auto res = ctrl.solve(ego, obs_map, goal, 1.5);
-                rollout_solve += res.solve_time;
-
-                double dist = (ego.position() - osim.state.position()).norm();
-                rollout_min_clear = std::min(rollout_min_clear, dist);
-                if (dist < collision_radius) had_collision = true;
-
-                bool mode_found = false;
-                for (const auto& sc : ctrl.scenarios()) {
-                    for (const auto& [oid, traj] : sc.trajectories) {
-                        if (oid == 0 && traj.mode_id == osim.current_mode) {
-                            mode_found = true; break;
-                        }
-                    }
-                    if (mode_found) break;
-                }
-                if (!mode_found) missed++;
-                steps++;
-
-                if (res.success && res.first_input().has_value())
-                    ego = dyn.propagate(ego, res.first_input().value());
-                osim.step(DT, rng);
-            }
-
-            if (had_collision) collisions++;
-            total_missed += missed;
-            total_steps_all += steps;
-            sum_progress += ego.x;
-            sum_clearance += rollout_min_clear;
-            sum_solve += rollout_solve / std::max(1, steps);
-        }
-
-        double cr = static_cast<double>(collisions) / NUM_ROLLOUTS;
-        auto [ci_lo, ci_hi] = wilson_ci(collisions, NUM_ROLLOUTS);
-        double mmr = total_steps_all > 0 ? static_cast<double>(total_missed) / total_steps_all : 0;
-
-        csv << oc.name << "," << std::fixed << std::setprecision(4)
-            << cr << "," << ci_lo << "," << ci_hi << ","
-            << mmr << "," << sum_progress / NUM_ROLLOUTS << ","
-            << sum_clearance / NUM_ROLLOUTS << ","
-            << sum_solve / NUM_ROLLOUTS * 1000 << "\n";
-
-        std::cout << "coll=" << std::setprecision(3) << cr
-                  << " missed=" << mmr << std::endl;
-    }
-    csv.close();
-    std::cout << "  -> exp_q_ot_ablation.csv\n";
-}
 
 // ============================================================================
 // Experiment R: Mode Coverage Diagnostic (true vs sampled frequencies)
@@ -1967,7 +1751,7 @@ static void run_experiment_r() {
     const double SWITCH_PROB = 0.2;
     std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
 
-    std::vector<PaperVariant> r_variants = {PaperVariant::BASE, PaperVariant::OT};
+    std::vector<PaperVariant> r_variants = {PaperVariant::BASE, PaperVariant::DRO};
 
     auto mode_mdls = create_obstacle_mode_models(DT);
 
@@ -1996,13 +1780,12 @@ static void run_experiment_r() {
             cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
-            cfg.enable_dro = false;
+            cfg.weight_type = WeightType::FREQUENCY;
+            cfg.enable_dro = uses_dro(v);
             cfg.safe_horizon_enabled = false;
             cfg.num_discs = 1;
 
             AdaptiveScenarioMPC ctrl(cfg);
-            OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -2022,19 +1805,11 @@ static void run_experiment_r() {
 
             for (int i = 0; i < 5; ++i) {
                 ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                if (uses_ot(v)) {
-                    ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                    ot_pred.advance_timestep();
-                }
             }
 
             for (int step = 0; step < ROLLOUT_STEPS; ++step) {
                 osim.maybe_switch(SWITCH_PROB, rng);
                 ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                if (uses_ot(v)) {
-                    ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                    ot_pred.advance_timestep();
-                }
 
                 std::map<int, ObstacleState> obs_map;
                 obs_map[0] = osim.state;
@@ -2134,232 +1909,8 @@ static void run_experiment_t() {
 }
 
 // ============================================================================
-// Experiment U: Ground-Cost Ablation for OT Geometry
+// Experiment U: Ground-Cost Ablation for OT Geometry (REMOVED — OT predictor deleted)
 // ============================================================================
-
-static void run_experiment_u() {
-    std::cout << "\n========================================\n"
-              << "  Experiment U: Ground-Cost Ablation\n"
-              << "========================================\n";
-
-    const int NUM_ROLLOUTS = 2000;
-    const double SWITCH_PROB = 0.2;
-    std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
-
-    struct CostConfig {
-        std::string name;
-        GroundCostType cost_type;
-    };
-    std::vector<CostConfig> configs = {
-        {"W2-Euclidean",  GroundCostType::SQUARED_EUCLIDEAN},
-        {"L1-Manhattan",  GroundCostType::MANHATTAN},
-        {"Flat-NoGeom",   GroundCostType::FLAT},
-        {"Mean-Only",     GroundCostType::MEAN_ONLY},
-        {"Directional",   GroundCostType::DIRECTIONAL},
-    };
-
-    std::ofstream csv(OUTPUT_DIR + "exp_u_ground_cost.csv");
-    csv << "ground_cost,collision_rate,ci_lo,ci_hi,missed_mode_rate,avg_progress,avg_clearance\n";
-
-    // Per-seed paired data for McNemar tests
-    std::ofstream paired_csv(OUTPUT_DIR + "exp_u_paired.csv");
-    paired_csv << "seed";
-    for (const auto& gc : configs) paired_csv << "," << gc.name;
-    paired_csv << "\n";
-
-    auto mode_mdls = create_obstacle_mode_models(DT);
-
-    // Store per-seed collision results
-    std::map<std::string, std::vector<int>> per_seed_collisions;
-    for (const auto& gc : configs) per_seed_collisions[gc.name].resize(NUM_ROLLOUTS, 0);
-
-    for (const auto& gc : configs) {
-        std::cout << "  " << gc.name << " (" << NUM_ROLLOUTS << " rollouts) ... " << std::flush;
-
-        int collisions = 0;
-        int total_missed = 0, total_steps_all = 0;
-        double sum_progress = 0, sum_clearance = 0;
-
-        for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-            unsigned seed = 110000 + r;
-            std::mt19937 rng(seed);
-
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::WASSERSTEIN;
-            cfg.enable_dro = false;
-            cfg.safe_horizon_enabled = false;
-            cfg.num_discs = 1;
-
-            AdaptiveScenarioMPC ctrl(cfg);
-            OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0,
-                                               OTWeightType::WASSERSTEIN, gc.cost_type);
-
-            std::map<std::string, ModeModel> omm;
-            for (auto& m : modes) omm[m] = mode_mdls[m];
-            ctrl.initialize_obstacle(0, 0, omm);
-
-            // S-curve path and obstacle placement
-            auto ref_path_u = setup_mpcc_path(ctrl);
-            double pl_u = ref_path_u.total_length();
-            Eigen::Vector2d goal = ref_path_u.get_position_at(pl_u);
-
-            ObstacleSim osim;
-            osim.state = obstacle_on_s_curve(ref_path_u, 0.35, rng);
-            osim.current_mode = "constant_velocity";
-            osim.available_modes = modes;
-            osim.mode_models = omm;
-
-            EgoState ego(0, 0, 0, 1.5);
-            EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
-            double pp_u = 0.0;
-
-            for (int i = 0; i < 5; ++i) {
-                ctrl.update_mode_observation(0, 0, osim.current_mode, i);
-                ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                ot_pred.advance_timestep();
-            }
-
-            bool had_collision = false;
-            double rollout_min_clear = 1e9;
-            int missed = 0, steps = 0;
-
-            for (int step = 0; step < ROLLOUT_STEPS; ++step) {
-                osim.maybe_switch(SWITCH_PROB, rng);
-                ctrl.update_mode_observation(0, 0, osim.current_mode, step + 5);
-                ot_pred.observe(0, osim.state.position(), osim.current_mode);
-                ot_pred.advance_timestep();
-
-                pp_u = ref_path_u.find_closest_point(ego.position(), pp_u);
-
-                std::map<int, ObstacleState> obs_map;
-                obs_map[0] = osim.state;
-                auto res = ctrl.solve(ego, obs_map, goal, 1.5, pp_u, pl_u);
-
-                double dist = (ego.position() - osim.state.position()).norm();
-                rollout_min_clear = std::min(rollout_min_clear, dist);
-                if (dist < collision_radius) had_collision = true;
-
-                bool mode_found = false;
-                for (const auto& sc : ctrl.scenarios()) {
-                    for (const auto& [oid, traj] : sc.trajectories) {
-                        if (oid == 0 && traj.mode_id == osim.current_mode) {
-                            mode_found = true; break;
-                        }
-                    }
-                    if (mode_found) break;
-                }
-                if (!mode_found) missed++;
-                steps++;
-
-                if (res.success && res.first_input().has_value())
-                    ego = dyn.propagate(ego, res.first_input().value());
-                osim.step(DT, rng);
-
-                if (pp_u >= PATH_COMPLETE_FRAC * pl_u) break;
-            }
-
-            if (had_collision) collisions++;
-            per_seed_collisions[gc.name][r] = had_collision ? 1 : 0;
-            total_missed += missed;
-            total_steps_all += steps;
-            sum_progress += (pl_u > 0 ? pp_u / pl_u : 0);
-            sum_clearance += rollout_min_clear;
-        }
-
-        double cr = static_cast<double>(collisions) / NUM_ROLLOUTS;
-        auto [ci_lo, ci_hi] = wilson_ci(collisions, NUM_ROLLOUTS);
-        double mmr = total_steps_all > 0 ? static_cast<double>(total_missed) / total_steps_all : 0;
-
-        csv << gc.name << "," << std::fixed << std::setprecision(4)
-            << cr << "," << ci_lo << "," << ci_hi << ","
-            << mmr << "," << sum_progress / NUM_ROLLOUTS << ","
-            << sum_clearance / NUM_ROLLOUTS << "\n";
-
-        std::cout << "coll=" << std::setprecision(3) << cr
-                  << " missed=" << mmr << std::endl;
-    }
-    csv.close();
-
-    // Write paired per-seed data
-    for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-        paired_csv << (110000 + r);
-        for (const auto& gc : configs) {
-            paired_csv << "," << per_seed_collisions[gc.name][r];
-        }
-        paired_csv << "\n";
-    }
-    paired_csv.close();
-
-    // McNemar + Bootstrap tests: W2 vs each other
-    std::cout << "\n  McNemar + Bootstrap paired tests (W2-Euclidean vs others):\n";
-    const auto& w2_results = per_seed_collisions["W2-Euclidean"];
-
-    // Build bool vectors for bootstrap
-    std::vector<bool> w2_bools(NUM_ROLLOUTS);
-    for (int r = 0; r < NUM_ROLLOUTS; ++r) w2_bools[r] = (w2_results[r] == 1);
-
-    std::mt19937 boot_rng_u(54321);
-    for (size_t c = 1; c < configs.size(); ++c) {
-        const auto& other_results = per_seed_collisions[configs[c].name];
-        int b = 0, mc_c = 0;
-        for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-            if (w2_results[r] == 0 && other_results[r] == 1) b++;
-            if (w2_results[r] == 1 && other_results[r] == 0) mc_c++;
-        }
-        double chi2 = mcnemar_chi2(b, mc_c);
-        double p_value = std::erfc(std::sqrt(chi2 / 2.0));
-
-        // Bootstrap paired delta
-        std::vector<bool> other_bools(NUM_ROLLOUTS);
-        for (int r = 0; r < NUM_ROLLOUTS; ++r) other_bools[r] = (other_results[r] == 1);
-        auto boot = bootstrap_paired_delta(w2_bools, other_bools, 10000, &boot_rng_u);
-
-        std::cout << "    W2 vs " << configs[c].name
-                  << ": b=" << b << " c=" << mc_c
-                  << " chi2=" << std::setprecision(2) << chi2
-                  << " p=" << std::setprecision(4) << p_value
-                  << (p_value < 0.05 ? " *" : "")
-                  << "  bootstrap=" << std::setprecision(4) << boot.mean_delta
-                  << " [" << boot.ci_low << ", " << boot.ci_high << "]"
-                  << std::endl;
-    }
-
-    // Write paired stats CSV with bootstrap CIs
-    {
-        std::ofstream stats_csv(OUTPUT_DIR + "exp_u_paired_stats.csv");
-        stats_csv << "comparison,mcnemar_chi2,mcnemar_p,mcnemar_sig,"
-                  << "bootstrap_mean,bootstrap_ci_lo,bootstrap_ci_hi\n"
-                  << std::fixed << std::setprecision(4);
-
-        std::mt19937 boot_rng_u2(54322);
-        for (size_t c = 1; c < configs.size(); ++c) {
-            const auto& other_results = per_seed_collisions[configs[c].name];
-            int b = 0, mc_c = 0;
-            for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-                if (w2_results[r] == 0 && other_results[r] == 1) b++;
-                if (w2_results[r] == 1 && other_results[r] == 0) mc_c++;
-            }
-            double chi2 = mcnemar_chi2(b, mc_c);
-            double p_value = std::erfc(std::sqrt(chi2 / 2.0));
-
-            std::vector<bool> other_bools(NUM_ROLLOUTS);
-            for (int r = 0; r < NUM_ROLLOUTS; ++r) other_bools[r] = (other_results[r] == 1);
-            auto boot = bootstrap_paired_delta(w2_bools, other_bools, 10000, &boot_rng_u2);
-
-            stats_csv << "W2_vs_" << configs[c].name << ","
-                      << chi2 << "," << p_value << "," << (chi2 > 3.84 ? "yes" : "no") << ","
-                      << boot.mean_delta << "," << boot.ci_low << "," << boot.ci_high << "\n";
-        }
-    }
-
-    std::cout << "  -> exp_u_ground_cost.csv\n";
-    std::cout << "  -> exp_u_paired.csv\n";
-    std::cout << "  -> exp_u_paired_stats.csv\n";
-}
 
 // ============================================================================
 // Experiment V: Rare-Mode Probability Sweep
@@ -2568,84 +2119,8 @@ static void run_experiment_x() {
 }
 
 // ============================================================================
-// Experiment Y: Geometry Ablation with Shuffled/Random Cost Matrix
+// Experiment Y: Geometry Ablation (REMOVED — OT GroundCostType deleted)
 // ============================================================================
-// Q3: Is the improvement due to meaningful geometry?
-// Tests all 8 variants with different ground cost matrices, 4 obstacles / 4 classes.
-// Non-OT variants are only tested once (ground cost irrelevant for them).
-
-static void run_experiment_y() {
-    std::cout << "\n========================================\n"
-              << "  Experiment Y: Shuffled/Random Cost Matrix Ablation\n"
-              << "========================================\n";
-
-    const int NUM_ROLLOUTS = 200;
-    const double SWITCH_PROB = 0.28;
-    std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
-
-    struct CostConfig {
-        std::string name;
-        GroundCostType cost_type;
-    };
-    std::vector<CostConfig> cost_configs = {
-        {"W2-Euclidean",     GroundCostType::SQUARED_EUCLIDEAN},
-        {"Random-Permuted",  GroundCostType::RANDOM_PERMUTED},
-        {"Constant",         GroundCostType::CONSTANT},
-        {"Flat-NoGeom",      GroundCostType::FLAT},
-        {"Mean-Only",        GroundCostType::MEAN_ONLY},
-    };
-
-    std::ofstream csv(OUTPUT_DIR + "exp_y_geometry_ablation.csv");
-    csv << "variant,ground_cost,collision_rate,ci_lo,ci_hi,missed_mode_rate,"
-        << "avg_progress,avg_clearance,p99_solve_ms\n";
-
-    for (PaperVariant v : ALL_VARIANTS) {
-        for (const auto& gc : cost_configs) {
-            // Non-OT variants: only run once with W2-Euclidean (cost doesn't matter)
-            if (!uses_ot(v) && gc.name != "W2-Euclidean") continue;
-
-            std::cout << "  " << variant_name(v) << " / " << gc.name
-                      << " (" << NUM_ROLLOUTS << " rollouts) ... " << std::flush;
-
-            int collisions = 0;
-            int total_missed = 0, total_checks = 0;
-            double sum_progress = 0, sum_clearance = 0;
-            std::vector<double> all_solve_times;
-
-            for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-                auto res = run_multi_obstacle_rollout(
-                    v, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS,
-                    150000 + r, 4, 4, modes, "", 0.0,
-                    OBS_ARC_FRACS_4, gc.cost_type);
-
-                if (res.collision) collisions++;
-                total_missed += res.missed_mode_steps;
-                total_checks += res.total_mode_checks;
-                sum_progress += res.total_progress;
-                sum_clearance += res.min_clearance;
-                for (double t : res.solve_times)
-                    all_solve_times.push_back(t * 1000);
-            }
-
-            double cr = static_cast<double>(collisions) / NUM_ROLLOUTS;
-            auto [ci_lo, ci_hi] = wilson_ci(collisions, NUM_ROLLOUTS);
-            double mmr = total_checks > 0 ? static_cast<double>(total_missed) / total_checks : 0;
-            double p99 = percentile(all_solve_times, 99);
-
-            csv << variant_name(v) << "," << gc.name << ","
-                << std::fixed << std::setprecision(4)
-                << cr << "," << ci_lo << "," << ci_hi << ","
-                << mmr << "," << sum_progress / NUM_ROLLOUTS << ","
-                << sum_clearance / NUM_ROLLOUTS << "," << p99 << "\n";
-
-            std::cout << "coll=" << std::setprecision(3) << cr
-                      << " missed=" << mmr
-                      << " p99=" << std::setprecision(2) << p99 << "ms" << std::endl;
-        }
-    }
-    csv.close();
-    std::cout << "  -> exp_y_geometry_ablation.csv\n";
-}
 
 // ============================================================================
 // Experiment Z: Qualitative Rollout Trajectories
@@ -2683,7 +2158,7 @@ static void run_experiment_z() {
             cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
             cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
             cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = uses_ot(v) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+            cfg.weight_type = WeightType::FREQUENCY;
             cfg.enable_dro = uses_dro(v);
             cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
             cfg.safe_horizon_enabled = uses_sh(v);
@@ -2691,7 +2166,6 @@ static void run_experiment_z() {
             cfg.num_discs = 1;
 
             AdaptiveScenarioMPC ctrl(cfg);
-            OptimalTransportPredictor ot_pred(DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -2717,9 +2191,7 @@ static void run_experiment_z() {
             for (int t = 0; t < 5; ++t) {
                 for (int i = 0; i < NUM_OBS; ++i) {
                     ctrl.update_mode_observation(i, i % NUM_CLASSES, obs_sims[i].current_mode, t);
-                    if (uses_ot(v)) ot_pred.observe(i, obs_sims[i].state.position(), obs_sims[i].current_mode);
                 }
-                if (uses_ot(v)) ot_pred.advance_timestep();
             }
 
             bool had_collision = false;
@@ -2727,9 +2199,7 @@ static void run_experiment_z() {
                 for (int i = 0; i < NUM_OBS; ++i) {
                     obs_sims[i].maybe_switch(SWITCH_PROB, rng);
                     ctrl.update_mode_observation(i, i % NUM_CLASSES, obs_sims[i].current_mode, step + 5);
-                    if (uses_ot(v)) ot_pred.observe(i, obs_sims[i].state.position(), obs_sims[i].current_mode);
                 }
-                if (uses_ot(v)) ot_pred.advance_timestep();
 
                 pp_z = ref_path_z.find_closest_point(ego.position(), pp_z);
 
@@ -2873,9 +2343,9 @@ static void run_experiment_ab() {
     std::vector<double> epsilons = {0.01, 0.1, 1.0, 5.0};
     std::vector<double> scales = {0.5, 1.0, 2.0};
 
-    // Sweep OT+SH and OT+DRO+SH (all SH variants with OT)
+    // Sweep SH variants (Base+SH and DRO+SH)
     std::vector<PaperVariant> sweep_variants = {
-        PaperVariant::OT_SH, PaperVariant::OT_DRO_SH
+        PaperVariant::BASE_SH, PaperVariant::DRO_SH
     };
 
     std::ofstream csv(OUTPUT_DIR + "exp_ab_pareto_frontier.csv");
@@ -2951,7 +2421,7 @@ int main(int argc, char* argv[]) {
     fs::create_directories(OUTPUT_DIR);
 
     std::cout << "================================================================\n"
-              << "  Paper Experiments (New Framework): OT Mode Learning for SMPC\n"
+              << "  Paper Experiments (New Framework): DRO + SH-MPCC\n"
               << "================================================================\n";
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -2979,14 +2449,14 @@ int main(int argc, char* argv[]) {
     if (should_run("N")) run_experiment_n();
     if (should_run("O")) run_experiment_o();
     if (should_run("P")) run_experiment_p();
-    if (should_run("Q")) run_experiment_q();
+    // Experiment Q removed (OT Internal Ablation — OT predictor deleted)
     if (should_run("R")) run_experiment_r();
     if (should_run("T")) run_experiment_t();
-    if (should_run("U")) run_experiment_u();
+    // Experiment U removed (Ground-Cost Ablation — OT predictor deleted)
     if (should_run("V")) run_experiment_v();
     if (should_run("W")) run_experiment_w();
     if (should_run("X")) run_experiment_x();
-    if (should_run("Y")) run_experiment_y();
+    // Experiment Y removed (Geometry Ablation — OT GroundCostType deleted)
     if (should_run("Z")) run_experiment_z();
     if (should_run("AA")) run_experiment_aa();
     if (should_run("AB")) run_experiment_ab();

@@ -297,32 +297,6 @@ struct Scenario {
     }
 };
 
-/**
- * @brief First and second moments of obstacle trajectory distribution.
- */
-struct TrajectoryMoments {
-    int obstacle_id;                           ///< Unique obstacle identifier
-    Eigen::MatrixX2d means;                    ///< Mean positions (N+1, 2)
-    std::vector<Eigen::Matrix2d> covariances;  ///< Position covariances (N+1)
-
-    TrajectoryMoments() : obstacle_id(0) {}
-
-    /// Prediction horizon length
-    int horizon() const {
-        return static_cast<int>(means.rows()) - 1;
-    }
-
-    /// Get mean position at timestep k
-    Eigen::Vector2d get_mean_at(int k) const {
-        return means.row(k);
-    }
-
-    /// Get position covariance at timestep k
-    Eigen::Matrix2d get_covariance_at(int k) const {
-        return covariances[k];
-    }
-};
-
 // =============================================================================
 // Additional Helper Types
 // =============================================================================
@@ -334,7 +308,6 @@ enum class WeightType {
     UNIFORM,          ///< Equal weights for all modes
     RECENCY,          ///< Exponential decay weighting recent observations
     FREQUENCY,        ///< Weights based on observation frequency
-    WASSERSTEIN,      ///< OT-based inverse Wasserstein distance weights
     TEMPERATURE,      ///< Temperature-scaled frequency: w'_m = exp(log(w_m)/T)
     EPSILON_GREEDY    ///< Epsilon-greedy: w'_m = (1-eps)*w_m + eps/M
 };

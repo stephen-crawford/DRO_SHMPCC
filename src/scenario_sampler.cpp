@@ -4,7 +4,6 @@
  */
 
 #include "scenario_sampler.hpp"
-#include "trajectory_moments.hpp"
 #include <cmath>
 
 namespace scenario_mpc {

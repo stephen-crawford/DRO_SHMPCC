@@ -22,7 +22,6 @@
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 #include "collision_constraints.hpp"
-#include "scenario_pruning.hpp"
 #include "qp_solver.hpp"
 #include "wasserstein_dro.hpp"
 #include "reference_path.hpp"

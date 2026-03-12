@@ -192,8 +192,6 @@ ExperimentConfig make_sweep_config(
     cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
     cfg.ablation = AblationVariant::NO_INJECTION;
 
-    // Strategy settings (no OT)
-    cfg.use_ot_predictor = false;
     cfg.weight_type = WeightType::FREQUENCY;
     cfg.enable_dro = strat.enable_dro;
     cfg.injection_mode = strat.injection_mode;

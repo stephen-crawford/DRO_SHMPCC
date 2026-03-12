@@ -30,7 +30,6 @@
 #include "config.hpp"
 #include "wasserstein_dro.hpp"
 #include "reference_path.hpp"
-#include "optimal_transport_predictor.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -78,32 +77,6 @@ inline std::string ground_cost_name(DROGroundCostType t) {
 }
 
 // ============================================================================
-// OT Usage Mode
-// ============================================================================
-
-/**
- * @brief How the OT predictor output is used in the rollout.
- *
- * Controls how OT information feeds into the MPC controller:
- * - SAMPLING_WEIGHTS: Original — OT weights as DRO nominal (causes interference)
- * - DISABLED: OT observes but output not used (pure DRO baseline)
- * - POST_DRO_SAMPLING: OT weights for sampling, frequency for DRO Q*
- * - UNCERTAINTY_MARGIN: OT prediction error → adjusted safety margin
- * - SWITCH_DETECTION: W2 spikes → extra mode observations for faster adaptation
- * - EXTRA_SCENARIO: OT trajectory prediction → injected scenario constraint
- * - DYNAMICS_LEARNING: OT learns mode (b, G) parameters, updates controller
- */
-enum class OTUsageMode {
-    SAMPLING_WEIGHTS,
-    DISABLED,
-    POST_DRO_SAMPLING,
-    UNCERTAINTY_MARGIN,
-    SWITCH_DETECTION,
-    EXTRA_SCENARIO,
-    DYNAMICS_LEARNING,
-};
-
-// ============================================================================
 // Paper Experiment Constants
 // ============================================================================
 
@@ -122,50 +95,31 @@ inline constexpr double OBS_PATH_FRACTION      = 0.35;
 // ============================================================================
 
 enum class PaperVariant {
-    BASE, BASE_SH, OT, OT_SH, DRO, DRO_SH, OT_DRO, OT_DRO_SH,
-    OT_DRO_SH_BLEND
+    BASE, BASE_SH, DRO, DRO_SH
 };
 
 inline const std::vector<PaperVariant> ALL_VARIANTS = {
+    PaperVariant::BASE,
     PaperVariant::BASE_SH,
-    PaperVariant::OT_SH,
-    PaperVariant::DRO_SH,
-    PaperVariant::OT_DRO_SH,
-    PaperVariant::OT_DRO_SH_BLEND
+    PaperVariant::DRO,
+    PaperVariant::DRO_SH
 };
 
 inline std::string variant_name(PaperVariant v) {
     switch (v) {
         case PaperVariant::BASE:       return "Base";
         case PaperVariant::BASE_SH:    return "Base+SH";
-        case PaperVariant::OT:         return "OT";
-        case PaperVariant::OT_SH:      return "OT+SH";
         case PaperVariant::DRO:        return "DRO";
         case PaperVariant::DRO_SH:     return "DRO+SH";
-        case PaperVariant::OT_DRO:     return "OT+DRO";
-        case PaperVariant::OT_DRO_SH:  return "OT+DRO+SH";
-        case PaperVariant::OT_DRO_SH_BLEND: return "OT+DRO+SH+Blend";
     }
     return "?";
 }
 
-inline bool uses_ot(PaperVariant v) {
-    return v == PaperVariant::OT || v == PaperVariant::OT_SH ||
-           v == PaperVariant::OT_DRO || v == PaperVariant::OT_DRO_SH ||
-           v == PaperVariant::OT_DRO_SH_BLEND;
-}
 inline bool uses_dro(PaperVariant v) {
-    return v == PaperVariant::DRO || v == PaperVariant::DRO_SH ||
-           v == PaperVariant::OT_DRO || v == PaperVariant::OT_DRO_SH ||
-           v == PaperVariant::OT_DRO_SH_BLEND;
+    return v == PaperVariant::DRO || v == PaperVariant::DRO_SH;
 }
 inline bool uses_sh(PaperVariant v) {
-    return v == PaperVariant::BASE_SH || v == PaperVariant::OT_SH ||
-           v == PaperVariant::DRO_SH || v == PaperVariant::OT_DRO_SH ||
-           v == PaperVariant::OT_DRO_SH_BLEND;
-}
-inline bool uses_blend(PaperVariant v) {
-    return v == PaperVariant::OT_DRO_SH_BLEND;
+    return v == PaperVariant::BASE_SH || v == PaperVariant::DRO_SH;
 }
 
 // ============================================================================
@@ -197,14 +151,13 @@ inline std::string environment_name(EnvironmentType env) {
 // ============================================================================
 
 enum class SamplingBaseline {
-    STANDARD, OT, STRATIFIED, TEMPERATURE, EPSILON_GREEDY, RISK_BIASED,
+    STANDARD, STRATIFIED, TEMPERATURE, EPSILON_GREEDY, RISK_BIASED,
     UNIFORM_WEIGHT, RECENCY_WEIGHT, ORACLE_FLOOD
 };
 
 inline std::string baseline_name(SamplingBaseline b) {
     switch (b) {
         case SamplingBaseline::STANDARD: return "Standard";
-        case SamplingBaseline::OT: return "OT";
         case SamplingBaseline::STRATIFIED: return "Stratified";
         case SamplingBaseline::TEMPERATURE: return "Temperature";
         case SamplingBaseline::EPSILON_GREEDY: return "EpsilonGreedy";
@@ -216,11 +169,9 @@ inline std::string baseline_name(SamplingBaseline b) {
     return "?";
 }
 
-inline WeightType baseline_to_weight(SamplingBaseline bl, PaperVariant variant) {
+inline WeightType baseline_to_weight(SamplingBaseline bl) {
     switch (bl) {
-        case SamplingBaseline::STANDARD:
-            return uses_ot(variant) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
-        case SamplingBaseline::OT:             return WeightType::WASSERSTEIN;
+        case SamplingBaseline::STANDARD:       return WeightType::FREQUENCY;
         case SamplingBaseline::STRATIFIED:     return WeightType::FREQUENCY;
         case SamplingBaseline::TEMPERATURE:    return WeightType::TEMPERATURE;
         case SamplingBaseline::EPSILON_GREEDY: return WeightType::EPSILON_GREEDY;
@@ -303,12 +254,6 @@ struct ExperimentConfig {
     DROGroundCostType ground_cost = DROGroundCostType::W2_BURES;
     DistributionShiftConfig shift;
 
-    // OT predictor
-    bool use_ot_predictor = false;
-    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN;
-    double dro_coverage_alpha = 0.0;  ///< DRO/OT blend: 0=pure DRO, >0 preserves OT coverage
-    OTUsageMode ot_usage_mode = OTUsageMode::SAMPLING_WEIGHTS;  ///< How OT output is used
-    DRONominalSource dro_nominal_source = DRONominalSource::AUTO;  ///< P_hat source for DRO Q*
     int dro_injection_count = 1;  ///< Top-K modes to inject per obstacle (0=none, -1=all)
     double softmax_tau = 5.0;     ///< Temperature for SOFTMAX_RISK baseline
     double eps_greedy_epsilon = 0.3;  ///< Epsilon for EPSILON_GREEDY_INJ baseline
@@ -554,8 +499,7 @@ ExperimentConfig make_experiment_config(
     double rare_prob = 0.0,
     bool safe_horizon_enabled = false,
     int num_discs = 1,
-    double vehicle_length = 1.5,
-    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN
+    double vehicle_length = 1.5
 );
 
 /// Run a single rollout for a PaperVariant.
@@ -585,8 +529,7 @@ RolloutResult run_multi_obstacle_rollout(
     const std::vector<std::string>& obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"},
     const std::string& rare_mode = "",
     double rare_prob = 0.0,
-    const std::vector<double>& arc_fracs = OBS_ARC_FRACS_4,
-    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN
+    const std::vector<double>& arc_fracs = OBS_ARC_FRACS_4
 );
 
 /// Create an environment setup for a given type.

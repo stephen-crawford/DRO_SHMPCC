@@ -12,9 +12,7 @@
 #include "dynamics.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
-#include "scenario_pruning.hpp"
 #include "reference_path.hpp"
-#include "optimal_transport_predictor.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -319,8 +317,6 @@ RolloutRecord run_experiment_rollout(
     mpc_cfg.weight_type = config.weight_type;
     mpc_cfg.enable_dro = config.enable_dro;
     mpc_cfg.injection_mode = config.injection_mode;
-    mpc_cfg.dro_coverage_alpha = config.dro_coverage_alpha;
-    mpc_cfg.dro_nominal_source = config.dro_nominal_source;
     mpc_cfg.dro_injection_count = config.dro_injection_count;
     mpc_cfg.softmax_tau = config.softmax_tau;
     mpc_cfg.eps_greedy_epsilon = config.eps_greedy_epsilon;
@@ -340,14 +336,6 @@ RolloutRecord run_experiment_rollout(
     }
 
     AdaptiveScenarioMPC controller(mpc_cfg);
-
-    // OT predictor (optional)
-    std::unique_ptr<OptimalTransportPredictor> ot_predictor;
-    if (config.use_ot_predictor) {
-        ot_predictor = std::make_unique<OptimalTransportPredictor>(
-            DT, 200, 0.1, 10, 1.0, OTWeightType::WASSERSTEIN,
-            config.ot_ground_cost);
-    }
 
     // ---- Build mode model set ----
     std::map<std::string, ModeModel> obs_mode_models;
@@ -409,11 +397,7 @@ RolloutRecord run_experiment_rollout(
         for (int oi = 0; oi < n_obs; ++oi) {
             int obs_class = oi / per_class;
             controller.update_mode_observation(oi, obs_class, obs_sims[oi].current_mode, t);
-            if (ot_predictor) {
-                ot_predictor->observe(oi, obs_sims[oi].state.position(), obs_sims[oi].current_mode);
-            }
         }
-        if (ot_predictor) ot_predictor->advance_timestep();
     }
 
     // ---- Main rollout loop ----
@@ -441,148 +425,11 @@ RolloutRecord run_experiment_rollout(
             int obs_class = oi / per_class;
             controller.update_mode_observation(oi, obs_class, obs_sims[oi].current_mode, step + 5);
 
-            if (ot_predictor) {
-                ot_predictor->observe(oi, obs_sims[oi].state.position(), obs_sims[oi].current_mode);
-            }
-
             // Per-step callback (for experiment-specific logic like oracle flood)
             if (config.step_callback) {
                 config.step_callback(step, oi, obs_sims[oi], controller, rng);
             }
         }
-        if (ot_predictor) {
-            ot_predictor->advance_timestep();
-
-            std::vector<std::string> avail_modes;
-            for (const auto& m : config.obs_modes) avail_modes.push_back(m);
-            if (!config.rare_mode.empty()) avail_modes.push_back(config.rare_mode);
-
-            switch (config.ot_usage_mode) {
-                case OTUsageMode::SAMPLING_WEIGHTS:
-                case OTUsageMode::POST_DRO_SAMPLING:
-                    // Feed OT weights to controller for scenario sampling.
-                    // POST_DRO_SAMPLING: controller config has dro_nominal_source=FREQUENCY
-                    // so DRO Q* uses freq weights, but sampling uses OT weights.
-                    for (int oi = 0; oi < n_obs; ++oi) {
-                        auto ot_weights = ot_predictor->compute_mode_weights(oi, avail_modes);
-                        if (!ot_weights.empty()) {
-                            controller.set_custom_mode_weights(oi, ot_weights);
-                        }
-                    }
-                    break;
-
-                case OTUsageMode::DISABLED:
-                    // OT observes but output is NOT used.
-                    break;
-
-                case OTUsageMode::UNCERTAINTY_MARGIN: {
-                    // OT prediction error → adjusted safety margin.
-                    // Higher prediction error = more uncertain → larger margin.
-                    double max_uncertainty = 0.0;
-                    for (int oi = 0; oi < n_obs; ++oi) {
-                        auto preds = ot_predictor->predict_trajectory(
-                            oi, obs_sims[oi].state.position(),
-                            obs_sims[oi].state.velocity(),
-                            std::min(5, config.horizon));
-                        // Use position spread across prediction steps as uncertainty
-                        double spread = 0.0;
-                        if (preds.size() >= 2) {
-                            for (size_t p = 1; p < preds.size(); ++p) {
-                                spread += preds[p].major_radius + preds[p].minor_radius;
-                            }
-                            spread /= (preds.size() - 1);
-                        }
-                        double unc = ot_predictor->adapt_uncertainty(oi, spread);
-                        max_uncertainty = std::max(max_uncertainty, unc);
-                    }
-                    // Scale safety margin: base 0.2 + uncertainty bonus [0, 0.3]
-                    double base_margin = 0.2;
-                    double bonus = std::min(0.3, (max_uncertainty - 1.0) * 0.15);
-                    controller.mutable_config().safety_margin = base_margin + std::max(0.0, bonus);
-                    break;
-                }
-
-                case OTUsageMode::SWITCH_DETECTION: {
-                    // W2 distance spike → extra mode observations.
-                    // If OT-computed weights change significantly, flood mode observations.
-                    for (int oi = 0; oi < n_obs; ++oi) {
-                        auto ot_weights = ot_predictor->compute_mode_weights(oi, avail_modes);
-                        // Compute weight entropy as proxy for mode uncertainty
-                        double entropy = 0.0;
-                        for (const auto& [_, w] : ot_weights) {
-                            if (w > 1e-10) entropy -= w * std::log(w);
-                        }
-                        // High entropy = uncertain which mode → possible switch
-                        double max_entropy = std::log(std::max(1, static_cast<int>(avail_modes.size())));
-                        if (max_entropy > 0 && entropy > 0.7 * max_entropy) {
-                            // Flood with extra observations to speed up mode detection
-                            int obs_class = oi / std::max(1, config.obstacles_per_class);
-                            for (int f = 0; f < 10; ++f) {
-                                controller.update_mode_observation(
-                                    oi, obs_class, obs_sims[oi].current_mode, step + 5);
-                            }
-                        }
-                    }
-                    break;
-                }
-
-                case OTUsageMode::EXTRA_SCENARIO: {
-                    // OT trajectory prediction → injected scenario.
-                    // Build a Scenario from OT's barycenter trajectory prediction.
-                    int next_sc_id = config.num_scenarios + 100 + step;
-                    std::map<int, ObstacleTrajectory> ot_trajs;
-                    for (int oi = 0; oi < n_obs; ++oi) {
-                        auto preds = ot_predictor->predict_trajectory(
-                            oi, obs_sims[oi].state.position(),
-                            obs_sims[oi].state.velocity(),
-                            config.horizon);
-                        if (preds.empty()) continue;
-                        std::vector<PredictionStep> steps;
-                        steps.reserve(preds.size());
-                        for (int k = 0; k < static_cast<int>(preds.size()); ++k) {
-                            Eigen::Matrix2d cov = Eigen::Matrix2d::Identity()
-                                * preds[k].major_radius * preds[k].minor_radius;
-                            steps.emplace_back(k, preds[k].position, cov);
-                        }
-                        ot_trajs[oi] = ObstacleTrajectory(oi, "ot_prediction", steps, 1.0);
-                    }
-                    if (!ot_trajs.empty()) {
-                        Scenario ot_sc(next_sc_id, ot_trajs, 1.0);
-                        ot_sc.is_injected = true;
-                        controller.inject_scenario(ot_sc);
-                    }
-                    break;
-                }
-
-                case OTUsageMode::DYNAMICS_LEARNING: {
-                    // Every 20 steps, estimate mode dynamics and update controller.
-                    if (step > 0 && step % 20 == 0) {
-                        for (const auto& mode_id : avail_modes) {
-                            // Use first obstacle's data as representative
-                            Eigen::Matrix4d A_prior = Eigen::Matrix4d::Identity();
-                            auto result = ot_predictor->estimate_mode_dynamics(
-                                0, mode_id, A_prior, DT);
-                            if (result.has_value()) {
-                                auto [b_learned, G_learned] = result.value();
-                                // Extract the position-velocity block as 4x2 noise matrix
-                                // (columns 0,1 correspond to x,y noise components)
-                                Eigen::MatrixXd G_noise(4, 2);
-                                G_noise.col(0) = G_learned.col(0);
-                                G_noise.col(1) = G_learned.col(1);
-                                // Clamp noise magnitude to avoid divergent dynamics
-                                double g_norm = G_noise.norm();
-                                if (g_norm > 0.5) {
-                                    G_noise *= 0.5 / g_norm;
-                                }
-                                controller.update_mode_model(mode_id, b_learned, G_noise);
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-
         // Track path progress
         path_progress = ref_path.find_closest_point(ego.position(), path_progress);
 
@@ -734,8 +581,7 @@ ExperimentConfig make_experiment_config(
     double rare_prob,
     bool safe_horizon_enabled,
     int num_discs,
-    double vehicle_length,
-    GroundCostType ot_ground_cost
+    double vehicle_length
 ) {
     ExperimentConfig cfg;
     cfg.horizon = DEFAULT_HORIZON;
@@ -747,19 +593,14 @@ ExperimentConfig make_experiment_config(
     cfg.rare_switch_prob = rare_prob;
     cfg.num_discs = num_discs;
     cfg.vehicle_length = vehicle_length;
-    cfg.weight_type = uses_ot(variant) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+    cfg.weight_type = WeightType::FREQUENCY;
     cfg.enable_dro = uses_dro(variant);
     cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
     cfg.safe_horizon_enabled = safe_horizon_enabled || uses_sh(variant);
-    cfg.use_ot_predictor = uses_ot(variant);
     cfg.path_completion_termination = true;
     cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
     cfg.method_name = variant_name(variant);
     cfg.ablation = AblationVariant::NO_INJECTION;
-    cfg.ot_ground_cost = ot_ground_cost;
-    if (uses_blend(variant)) {
-        cfg.dro_coverage_alpha = 0.3;
-    }
     return cfg;
 }
 
@@ -794,12 +635,11 @@ RolloutResult run_multi_obstacle_rollout(
     const std::vector<std::string>& obs_modes,
     const std::string& rare_mode,
     double rare_prob,
-    const std::vector<double>& arc_fracs,
-    GroundCostType ot_ground_cost
+    const std::vector<double>& arc_fracs
 ) {
     auto cfg = make_experiment_config(
         variant, switch_prob, num_scenarios, rollout_steps,
-        obs_modes, rare_mode, rare_prob, false, 1, 1.5, ot_ground_cost);
+        obs_modes, rare_mode, rare_prob, false, 1, 1.5);
     cfg.num_obstacles = num_obstacles;
     cfg.obstacles_per_class = (num_classes > 0 && num_classes < num_obstacles)
         ? (num_obstacles / num_classes) : 1;
@@ -876,8 +716,7 @@ RolloutResult run_single_rollout_env(
         variant, switch_prob, num_scenarios, rollout_steps,
         env_setup.obs_modes, "", 0.0, false, num_discs, vehicle_length);
 
-    cfg.weight_type = baseline_to_weight(baseline, variant);
-    cfg.use_ot_predictor = (baseline == SamplingBaseline::OT || uses_ot(variant));
+    cfg.weight_type = baseline_to_weight(baseline);
     cfg.forced_safe_horizon = forced_safe_horizon;
     cfg.safe_horizon_enabled = uses_sh(variant) || (forced_safe_horizon >= 0);
     cfg.initial_obstacle_states = {env_setup.initial_obs};

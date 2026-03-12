@@ -408,24 +408,7 @@ MPCResult AdaptiveScenarioMPC::solve(
             // Resample ALL S scenarios from q* distribution (Eq. 3-4).
             std::map<int, std::map<std::string, double>> per_obs_weights_dro;
             for (auto& [obs_id, dro_result] : dro_results) {
-                auto q_final = dro_result.worst_case_weights;
-                double alpha = config_.dro_coverage_alpha;
-                if (alpha > 0.0) {
-                    auto nom_it = per_obs_nominal.find(obs_id);
-                    if (nom_it != per_obs_nominal.end()) {
-                        double sum = 0.0;
-                        for (auto& [mode, w] : q_final) {
-                            double q_cov = nom_it->second.count(mode)
-                                ? nom_it->second.at(mode) : 0.0;
-                            w = (1.0 - alpha) * w + alpha * q_cov;
-                            sum += w;
-                        }
-                        if (sum > 0.0) {
-                            for (auto& [mode, w] : q_final) w /= sum;
-                        }
-                    }
-                }
-                per_obs_weights_dro[obs_id] = q_final;
+                per_obs_weights_dro[obs_id] = dro_result.worst_case_weights;
             }
 
             if (!per_obs_weights_dro.empty()) {
@@ -467,20 +450,12 @@ MPCResult AdaptiveScenarioMPC::solve(
     // Clear custom weights after use (they're set per-solve by external code)
     custom_per_obstacle_weights_.clear();
 
-    // Add any pre-injected scenarios (e.g. OT trajectory predictions)
+    // Add any pre-injected scenarios (e.g. DRO worst-case)
     for (auto& sc : pre_injected_scenarios_) {
         sc.is_injected = true;
         scenarios_.push_back(sc);
     }
     pre_injected_scenarios_.clear();
-
-    // Step 3: Prune dominated scenarios (Algorithm 3)
-    scenarios_ = prune_dominated_scenarios(
-        scenarios_,
-        reference_trajectory_,
-        config_.ego_radius,
-        config_.obstacle_radius
-    );
 
     // Verify scenario sufficiency for epsilon guarantee (Part 4)
     {
@@ -604,14 +579,7 @@ MPCResult AdaptiveScenarioMPC::solve(
     result.qp_solve_time =
         std::chrono::duration<double>(qp_end - qp_start).count();
 
-    // Step 6: Remove inactive scenarios (Algorithm 4)
     if (result.success) {
-        auto [remaining, active] = remove_inactive_scenarios(
-            scenarios_, constraints, result.ego_trajectory
-        );
-        scenarios_ = remaining;
-        result.active_scenarios = std::vector<int>(active.begin(), active.end());
-
         // Update reference trajectory for next iteration
         reference_trajectory_ = result.ego_trajectory;
     }

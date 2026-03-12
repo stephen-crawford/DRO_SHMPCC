@@ -99,26 +99,6 @@ std::map<std::string, double> compute_mode_weights(
             weights = compute_frequency_weights(mode_history, modes);
             break;
 
-        case WeightType::WASSERSTEIN:
-            // OT-inspired: blend frequency with strong recency to detect
-            // distributional shifts faster than pure frequency.
-            {
-                auto freq_w = compute_frequency_weights(mode_history, modes);
-                auto rec_w  = compute_recency_weights(
-                    mode_history, modes, 0.85, current_timestep);
-                double freq_total = 0, rec_total = 0;
-                for (auto& [_, w] : freq_w) freq_total += w;
-                for (auto& [_, w] : rec_w)  rec_total  += w;
-                if (freq_total > 0) for (auto& [_, w] : freq_w) w /= freq_total;
-                if (rec_total  > 0) for (auto& [_, w] : rec_w)  w /= rec_total;
-                for (const auto& m : modes) {
-                    double f = freq_total > 0 ? freq_w[m] : 1.0 / num_modes;
-                    double r = rec_total  > 0 ? rec_w[m]  : 1.0 / num_modes;
-                    weights[m] = 0.3 * f + 0.7 * r;  // emphasise recent observations
-                }
-            }
-            break;
-
         case WeightType::TEMPERATURE:
             // Temperature scaling (T=0.5): w'_m = exp(log(w_m)/T), sharpens distribution
             {

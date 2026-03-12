@@ -16,14 +16,9 @@ namespace scenario_mpc {
 
 /**
  * @brief Source of nominal distribution for DRO Q* computation.
- *
- * Controls whether OT weights (if available) are used as P_hat
- * for the Kantorovich dual, or whether frequency weights are
- * always used regardless of custom weight availability.
  */
 enum class DRONominalSource {
-    AUTO,       ///< Use custom (OT) weights if available, else frequency (default)
-    FREQUENCY,  ///< Always use frequency weights for DRO Q* (avoid OT interference)
+    FREQUENCY,  ///< Use frequency weights for DRO Q*
 };
 
 /**
@@ -84,14 +79,7 @@ struct ScenarioMPCConfig {
     bool enforce_scenario_count = false;  ///< Auto-increase scenarios if S < S_required
     bool ensure_mode_coverage = false;    ///< Guarantee ≥1 scenario per observed mode per obstacle
 
-    // OT-based dynamics learning (gated separately from DRO)
-    bool use_ot_sampling = false;         ///< Enable OT-based scenario reshaping (disabled by default)
-    bool enable_dynamics_learning = false; ///< Enable OT-based dynamics parameter learning
-    int dynamics_learning_interval = 10;  ///< Update dynamics every N timesteps
-
     // DRO (Distributionally Robust Optimization) parameters
-    // OT (W2 Bures metric) is used ONLY as the ground cost D[i][j] in the
-    // Wasserstein ball.  Scenario sampling is NOT reshaped by OT.
     bool enable_dro = false;                 ///< Enable Wasserstein DRO weight reweighting
     InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;  ///< Injection strategy when enable_dro=true
     double dro_rho_base = 0.1;               ///< Base Wasserstein ball radius rho
@@ -99,8 +87,7 @@ struct ScenarioMPCConfig {
     double dro_rho_max = 0.5;              ///< Maximum rho (clamped)
     bool dro_adaptive_rho = true;           ///< Enable adaptive rho scaling
     double adversarial_sigma_scale = 1.5;    ///< Scale for adversarial injection (sigma multiplier)
-    double dro_coverage_alpha = 0.0;         ///< Blend ratio: q = (1-a)*q_dro + a*q_ot. 0 = pure DRO.
-    DRONominalSource dro_nominal_source = DRONominalSource::AUTO;  ///< What P_hat to use for DRO Q*
+    DRONominalSource dro_nominal_source = DRONominalSource::FREQUENCY;  ///< P_hat source for DRO Q*
     int dro_injection_count = 1;             ///< Number of top-K modes to inject per obstacle (0 = none, -1 = all modes)
     double softmax_tau = 5.0;                ///< Temperature for SOFTMAX_RISK baseline
     double eps_greedy_epsilon = 0.3;         ///< Epsilon for EPSILON_GREEDY_INJ baseline

@@ -128,7 +128,6 @@ struct MethodDef {
     std::string name;
     bool enable_dro;
     InjectionMode injection_mode;
-    double dro_coverage_alpha;
     double softmax_tau;
     double eps_greedy_epsilon;
 };
@@ -161,7 +160,6 @@ static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_p
 static ExperimentConfig apply_method(ExperimentConfig cfg, const MethodDef& m) {
     cfg.enable_dro = m.enable_dro;
     cfg.injection_mode = m.injection_mode;
-    cfg.dro_coverage_alpha = m.dro_coverage_alpha;
     cfg.softmax_tau = m.softmax_tau;
     cfg.eps_greedy_epsilon = m.eps_greedy_epsilon;
     cfg.method_name = m.name;
@@ -203,9 +201,9 @@ static void run_e1() {
     };
     const std::vector<std::string> ENV_NAMES = {"Straight", "Narrow", "Intersection", "Oncoming"};
     const std::vector<MethodDef> METHODS = {
-        {"Base",            false, InjectionMode::NONE,         0.0, 0.0, 0.0},
-        {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE, 0.0, 0.0, 0.0},
-        {"WDRO-injection",  true,  InjectionMode::DRO,          0.0, 0.0, 0.0},
+        {"Base",            false, InjectionMode::NONE,         0.0, 0.0},
+        {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE, 0.0, 0.0},
+        {"WDRO-injection",  true,  InjectionMode::DRO,          0.0, 0.0},
     };
     const int N = 1000;
 
@@ -325,13 +323,13 @@ static void run_e4() {
     auto t0 = std::chrono::steady_clock::now();
 
     const std::vector<MethodDef> METHODS = {
-        {"Base",              false, InjectionMode::NONE,              0.0, 0.0, 0.0},
-        {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0, 0.0},
-        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0, 0.0},
-        {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0, 0.0},
-        {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     0.0, 5.0, 0.0},
-        {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.0, 0.3},
-        {"Top-risk-inject",   true,  InjectionMode::TOP_RISK_INJECT,  0.0, 0.0, 0.0},
+        {"Base",              false, InjectionMode::NONE,              0.0, 0.0},
+        {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0},
+        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0},
+        {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0},
+        {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     5.0, 0.0},
+        {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.3},
+        {"Top-risk-inject",   true,  InjectionMode::TOP_RISK_INJECT,  0.0, 0.0},
     };
     const int N = 500;
 
@@ -393,13 +391,13 @@ static void run_baselines() {
     auto t0 = std::chrono::steady_clock::now();
 
     const std::vector<MethodDef> METHODS = {
-        {"Base",              false, InjectionMode::NONE,              0.0, 0.0, 0.0},
-        {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0, 0.0},
-        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0, 0.0},
-        {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0, 0.0},
-        {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     0.0, 5.0, 0.0},
-        {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.0, 0.3},
-        {"Top-risk-inject",   true,  InjectionMode::TOP_RISK_INJECT,  0.0, 0.0, 0.0},
+        {"Base",              false, InjectionMode::NONE,              0.0, 0.0},
+        {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0},
+        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0},
+        {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0},
+        {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     5.0, 0.0},
+        {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.3},
+        {"Top-risk-inject",   true,  InjectionMode::TOP_RISK_INJECT,  0.0, 0.0},
     };
     const int N = 1000;
 

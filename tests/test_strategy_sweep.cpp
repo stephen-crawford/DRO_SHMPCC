@@ -47,7 +47,6 @@ static const std::string OUTPUT_DIR = "paper_figures/";
 
 struct StrategyDef {
     std::string name;
-    bool use_ot;
     bool enable_dro;
     InjectionMode injection_mode;
     bool safe_horizon;
@@ -55,16 +54,12 @@ struct StrategyDef {
 
 static const std::vector<StrategyDef> STRATEGIES = {
     // Non-SH baselines
-    {"Base",            false, false, InjectionMode::NONE,         false},
-    {"OT",              true,  false, InjectionMode::NONE,         false},
-    {"DRO(inj)",        false, true,  InjectionMode::DRO,          false},
+    {"Base",            false, InjectionMode::NONE,         false},
+    {"DRO(inj)",        true,  InjectionMode::DRO,          false},
     // SH variants
-    {"SH",              false, false, InjectionMode::NONE,         true},
-    {"OT+SH",           true,  false, InjectionMode::NONE,         true},
-    {"DRO(inj)+SH",     false, true,  InjectionMode::DRO,          true},
-    {"OT+DRO(inj)+SH",  true,  true,  InjectionMode::DRO,          true},
-    {"DRO(q*)+SH",      false, true,  InjectionMode::QSTAR_SAMPLE, true},
-    {"OT+DRO(q*)+SH",   true,  true,  InjectionMode::QSTAR_SAMPLE, true},
+    {"SH",              false, InjectionMode::NONE,         true},
+    {"DRO(inj)+SH",     true,  InjectionMode::DRO,          true},
+    {"DRO(q*)+SH",      true,  InjectionMode::QSTAR_SAMPLE, true},
 };
 
 // ============================================================================
@@ -268,9 +263,7 @@ static ExperimentConfig make_config(const StrategyDef& strat,
         cfg.obs_arc_fractions = OBS_ARC_FRACS_4;
     }
 
-    cfg.use_ot_predictor = strat.use_ot;
-    cfg.weight_type = strat.use_ot ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
-    cfg.ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN;
+    cfg.weight_type = WeightType::FREQUENCY;
     cfg.enable_dro = strat.enable_dro;
     cfg.injection_mode = strat.injection_mode;
     cfg.eps_wass = DRO_RHO_BASE;

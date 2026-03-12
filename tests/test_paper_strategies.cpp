@@ -53,7 +53,6 @@ static const std::string OUTPUT_DIR = "paper_figures/";
 
 struct StrategyDef {
     std::string name;
-    bool use_ot;
     bool enable_dro;
     InjectionMode injection_mode;
     bool safe_horizon;
@@ -61,16 +60,12 @@ struct StrategyDef {
 
 static const std::vector<StrategyDef> STRATEGIES = {
     // Non-SH baselines (expect higher collision rates)
-    {"Base",            false, false, InjectionMode::NONE,         false},
-    {"OT",              true,  false, InjectionMode::NONE,         false},
-    {"DRO(inj)",        false, true,  InjectionMode::DRO,          false},
+    {"Base",            false, InjectionMode::NONE,         false},
+    {"DRO(inj)",        true,  InjectionMode::DRO,          false},
     // SH variants
-    {"SH",              false, false, InjectionMode::NONE,         true},
-    {"OT+SH",           true,  false, InjectionMode::NONE,         true},
-    {"DRO(inj)+SH",     false, true,  InjectionMode::DRO,          true},
-    {"OT+DRO(inj)+SH",  true,  true,  InjectionMode::DRO,          true},
-    {"DRO(q*)+SH",      false, true,  InjectionMode::QSTAR_SAMPLE, true},
-    {"OT+DRO(q*)+SH",   true,  true,  InjectionMode::QSTAR_SAMPLE, true},
+    {"SH",              false, InjectionMode::NONE,         true},
+    {"DRO(inj)+SH",     true,  InjectionMode::DRO,          true},
+    {"DRO(q*)+SH",      true,  InjectionMode::QSTAR_SAMPLE, true},
 };
 
 // ============================================================================
@@ -239,9 +234,7 @@ static ExperimentConfig make_strategy_config(const StrategyDef& strat) {
     cfg.method_name = strat.name;
     cfg.ablation = AblationVariant::NO_INJECTION;
 
-    cfg.use_ot_predictor = strat.use_ot;
-    cfg.weight_type = strat.use_ot ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
-    cfg.ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN;
+    cfg.weight_type = WeightType::FREQUENCY;
 
     cfg.enable_dro = strat.enable_dro;
     cfg.injection_mode = strat.injection_mode;
@@ -313,15 +306,10 @@ static void write_config_file(const std::string& filepath, int total_rollouts,
     ofs << "ground_cost = W2_BURES\n";
     ofs << "risk_mode = FULL\n\n";
 
-    ofs << "[ot_predictor]\n";
-    ofs << "ground_cost = SQUARED_EUCLIDEAN\n";
-    ofs << "weight_type = WASSERSTEIN\n\n";
-
     ofs << "[strategies]\n";
     for (size_t i = 0; i < STRATEGIES.size(); i++) {
         const auto& s = STRATEGIES[i];
         ofs << i << ". " << s.name << "\n";
-        ofs << "   use_ot = " << (s.use_ot ? "true" : "false") << "\n";
         ofs << "   enable_dro = " << (s.enable_dro ? "true" : "false") << "\n";
         ofs << "   injection_mode = ";
         switch (s.injection_mode) {

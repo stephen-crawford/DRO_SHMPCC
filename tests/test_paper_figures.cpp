@@ -240,7 +240,6 @@ static ExperimentConfig make_method_config(MethodType method, double switch_prob
         case MethodType::WDRO_COMBINED:
             cfg.enable_dro = true;
             cfg.injection_mode = InjectionMode::DRO;
-            cfg.dro_coverage_alpha = 0.5;
             break;
     }
     return cfg;

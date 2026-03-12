@@ -37,7 +37,6 @@ static const std::string OUTPUT_DIR = "paper_figures/";
 
 struct TuningConfig {
     std::string name;
-    bool use_ot;
     bool enable_dro;
     InjectionMode injection_mode;
     bool safe_horizon;
@@ -45,8 +44,6 @@ struct TuningConfig {
     int forced_safe_horizon;        // -1 = auto
     int safe_horizon_min;           // min constrained steps
     int num_scenarios;              // base scenarios
-    double dro_coverage_alpha;      // OT/DRO blend alpha
-    WeightType weight_type;
 };
 
 static constexpr int BASE_S = DEFAULT_BASE_SCENARIOS;  // 40
@@ -56,25 +53,22 @@ static std::vector<TuningConfig> build_configs() {
 
     // === Reference strategies (same as main test) ===
     cfgs.push_back({"Base",
-        false, false, InjectionMode::NONE, false,
-        0.1, -1, 3, BASE_S, 0.0, WeightType::FREQUENCY});
+        false, InjectionMode::NONE, false,
+        0.1, -1, 3, BASE_S});
     cfgs.push_back({"DRO(inj)",
-        false, true, InjectionMode::DRO, false,
-        0.1, -1, 3, BASE_S, 0.0, WeightType::FREQUENCY});
+        true, InjectionMode::DRO, false,
+        0.1, -1, 3, BASE_S});
     cfgs.push_back({"DRO(inj)+SH",
-        false, true, InjectionMode::DRO, true,
-        0.1, -1, 3, BASE_S, 0.0, WeightType::FREQUENCY});
-    cfgs.push_back({"OT+SH",
-        true, false, InjectionMode::NONE, true,
-        0.1, -1, 3, BASE_S, 0.0, WeightType::WASSERSTEIN});
+        true, InjectionMode::DRO, true,
+        0.1, -1, 3, BASE_S});
 
     // === Sweep 1: DRO rho for DRO(inj) alone ===
     for (double rho : {0.01, 0.05, 0.2, 0.3, 0.5}) {
         std::ostringstream ss;
         ss << "DRO(inj) rho=" << std::fixed << std::setprecision(2) << rho;
         cfgs.push_back({ss.str(),
-            false, true, InjectionMode::DRO, false,
-            rho, -1, 3, BASE_S, 0.0, WeightType::FREQUENCY});
+            true, InjectionMode::DRO, false,
+            rho, -1, 3, BASE_S});
     }
 
     // === Sweep 2: DRO(inj)+SH with higher safe_horizon_min ===
@@ -84,8 +78,8 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj)+SH min=" << sh_min;
         cfgs.push_back({ss.str(),
-            false, true, InjectionMode::DRO, true,
-            0.1, -1, sh_min, BASE_S, 0.0, WeightType::FREQUENCY});
+            true, InjectionMode::DRO, true,
+            0.1, -1, sh_min, BASE_S});
     }
 
     // === Sweep 3: DRO(inj)+SH with forced safe horizon ===
@@ -93,47 +87,30 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj)+SH forced=" << fsh;
         cfgs.push_back({ss.str(),
-            false, true, InjectionMode::DRO, true,
-            0.1, fsh, 3, BASE_S, 0.0, WeightType::FREQUENCY});
+            true, InjectionMode::DRO, true,
+            0.1, fsh, 3, BASE_S});
     }
 
-    // === Sweep 4: OT+DRO(inj) with dro_coverage_alpha blending ===
-    // alpha > 0 blends OT coverage preservation with DRO safety
-    for (double alpha : {0.1, 0.3, 0.5, 0.8}) {
-        std::ostringstream ss;
-        ss << "OT+DRO(inj)+SH a=" << std::fixed << std::setprecision(1) << alpha;
-        cfgs.push_back({ss.str(),
-            true, true, InjectionMode::DRO, true,
-            0.1, -1, 3, BASE_S, alpha, WeightType::WASSERSTEIN});
-    }
-
-    // === Sweep 5: OT with frequency weighting + DRO(inj) ===
-    // Hypothesis: Wasserstein weighting suppresses rare modes,
-    // frequency weighting might preserve them better
-    cfgs.push_back({"OT(freq)+DRO(inj)+SH",
-        true, true, InjectionMode::DRO, true,
-        0.1, -1, 3, BASE_S, 0.0, WeightType::FREQUENCY});
-
-    // === Sweep 6: More scenarios ===
+    // === Sweep 4: More scenarios ===
     for (int S : {60, 80}) {
         std::ostringstream ss;
         ss << "DRO(inj) S=" << S;
         cfgs.push_back({ss.str(),
-            false, true, InjectionMode::DRO, false,
-            0.1, -1, 3, S, 0.0, WeightType::FREQUENCY});
+            true, InjectionMode::DRO, false,
+            0.1, -1, 3, S});
     }
 
-    // === Sweep 7: Best combo attempts ===
+    // === Sweep 5: Best combo attempts ===
     // DRO(inj)+SH with tuned rho and higher SH min
     cfgs.push_back({"DRO(inj)+SH rho=0.2 min=12",
-        false, true, InjectionMode::DRO, true,
-        0.2, -1, 12, BASE_S, 0.0, WeightType::FREQUENCY});
+        true, InjectionMode::DRO, true,
+        0.2, -1, 12, BASE_S});
     cfgs.push_back({"DRO(inj)+SH rho=0.05 min=15",
-        false, true, InjectionMode::DRO, true,
-        0.05, -1, 15, BASE_S, 0.0, WeightType::FREQUENCY});
+        true, InjectionMode::DRO, true,
+        0.05, -1, 15, BASE_S});
     cfgs.push_back({"DRO(inj) rho=0.2 S=60",
-        false, true, InjectionMode::DRO, false,
-        0.2, -1, 3, 60, 0.0, WeightType::FREQUENCY});
+        true, InjectionMode::DRO, false,
+        0.2, -1, 3, 60});
 
     return cfgs;
 }
@@ -264,9 +241,7 @@ int main(int argc, char** argv) {
         cfg.method_name = tc.name;
         cfg.ablation = AblationVariant::NO_INJECTION;
 
-        cfg.use_ot_predictor = tc.use_ot;
-        cfg.weight_type = tc.weight_type;
-        cfg.ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN;
+        cfg.weight_type = WeightType::FREQUENCY;
 
         cfg.enable_dro = tc.enable_dro;
         cfg.injection_mode = tc.injection_mode;
@@ -275,8 +250,6 @@ int main(int argc, char** argv) {
         cfg.safe_horizon_enabled = tc.safe_horizon;
         cfg.forced_safe_horizon = tc.forced_safe_horizon;
         cfg.safe_horizon_min = tc.safe_horizon_min;
-
-        cfg.dro_coverage_alpha = tc.dro_coverage_alpha;
 
         cfg.num_obstacles = num_obstacles;
         cfg.obstacles_per_class = obstacles_per_class;

@@ -164,8 +164,6 @@ static ExperimentConfig make_config(Method method, double switch_prob, double ra
         case Method::WDRO_COMBINED:
             cfg.enable_dro = true;
             cfg.injection_mode = InjectionMode::DRO;
-            // Combined: DRO injection + q* sampling blended
-            cfg.dro_coverage_alpha = 0.5;
             break;
     }
     return cfg;
