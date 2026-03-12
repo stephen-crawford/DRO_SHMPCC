@@ -152,6 +152,15 @@ std::map<std::string, double> compute_mode_weights(
             break;
     }
 
+    // Gate: only modes observed at least once may have nonzero weight.
+    // This ensures progressive discovery — unobserved modes are not sampled.
+    auto counts = mode_history.get_mode_counts();
+    for (auto& [mode_id, w] : weights) {
+        if (counts[mode_id] == 0) {
+            w = 0.0;
+        }
+    }
+
     // Normalize weights to sum to 1
     double total = 0.0;
     for (const auto& [_, w] : weights) {
@@ -163,10 +172,9 @@ std::map<std::string, double> compute_mode_weights(
             w /= total;
         }
     } else {
-        // Fallback to uniform if no observations
-        for (auto& [_, w] : weights) {
-            w = 1.0 / num_modes;
-        }
+        // No modes observed yet — return empty to signal stationary treatment.
+        // Callers generate a hold-position trajectory for this obstacle.
+        return {};
     }
 
     return weights;

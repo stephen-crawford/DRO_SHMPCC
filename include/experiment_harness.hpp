@@ -1,10 +1,26 @@
 /**
  * @file experiment_harness.hpp
- * @brief Shared types, stat helpers, and CSV writer for experiment runner.
+ * @brief Canonical rollout runner, obstacle simulator, stats, and CSV writer.
  *
- * Provides the infrastructure for all experiments A-K in the results-
- * strengthening upgrade. Each experiment uses run_rollout() to collect
- * per-rollout RolloutRecords, then writes them via CSVWriter.
+ * ALL rollout logic lives here. The paper_experiment_runner configures
+ * ExperimentConfig and calls run_experiment_rollout() — it does NOT
+ * duplicate obstacle simulation, collision detection, or mode tracking.
+ *
+ * Key features of run_experiment_rollout():
+ *   - S-curve reference path (L=25m, A=3m) matching Python tests
+ *   - Multi-obstacle with class-based mode observation sharing
+ *   - Multi-disc collision detection (configurable num_discs)
+ *   - OT predictor integration (when use_ot_predictor is set)
+ *   - Path completion termination at configurable fraction (default 95%)
+ *   - Distribution shift injection
+ *   - Per-step callbacks for experiment-specific logic (e.g. oracle flood)
+ *
+ * Obstacle class sharing:
+ *   Obstacles assigned to the same class (via obstacles_per_class) share
+ *   mode observations. When a mode is observed on any obstacle, it is
+ *   broadcast to all siblings in the same class via the controller's
+ *   update_mode_observation(). Late-joining obstacles inherit existing
+ *   class history.
  */
 
 #ifndef SCENARIO_MPC_EXPERIMENT_HARNESS_HPP
@@ -13,6 +29,8 @@
 #include "types.hpp"
 #include "config.hpp"
 #include "wasserstein_dro.hpp"
+#include "reference_path.hpp"
+#include "optimal_transport_predictor.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -22,20 +40,20 @@
 
 namespace scenario_mpc {
 
+// Forward declarations
+class AdaptiveScenarioMPC;
+
 // ============================================================================
 // Enums
 // ============================================================================
 
-/**
- * @brief Ablation variant for Section E experiments.
- */
 enum class AblationVariant {
-    NO_INJECTION,       ///< Base scenario MPC (no DRO)
-    DRO_FULL,           ///< Full DRO risk + covariance
-    DRO_NO_COV,         ///< DRO risk without covariance inflation
-    DRO_DISTANCE_ONLY,  ///< DRO with sigma_scale=0 (distance only)
-    RANDOM_INJECTION,   ///< Inject one random mode per step
-    ALWAYS_INJECT       ///< Inject all modes deterministically
+    NO_INJECTION,
+    DRO_FULL,
+    DRO_NO_COV,
+    DRO_DISTANCE_ONLY,
+    RANDOM_INJECTION,
+    ALWAYS_INJECT
 };
 
 inline std::string ablation_variant_name(AblationVariant v) {
@@ -60,12 +78,187 @@ inline std::string ground_cost_name(DROGroundCostType t) {
 }
 
 // ============================================================================
-// Data Structures
+// OT Usage Mode
 // ============================================================================
 
 /**
- * @brief Deterministic seed bundle derived from a master seed.
+ * @brief How the OT predictor output is used in the rollout.
+ *
+ * Controls how OT information feeds into the MPC controller:
+ * - SAMPLING_WEIGHTS: Original — OT weights as DRO nominal (causes interference)
+ * - DISABLED: OT observes but output not used (pure DRO baseline)
+ * - POST_DRO_SAMPLING: OT weights for sampling, frequency for DRO Q*
+ * - UNCERTAINTY_MARGIN: OT prediction error → adjusted safety margin
+ * - SWITCH_DETECTION: W2 spikes → extra mode observations for faster adaptation
+ * - EXTRA_SCENARIO: OT trajectory prediction → injected scenario constraint
+ * - DYNAMICS_LEARNING: OT learns mode (b, G) parameters, updates controller
  */
+enum class OTUsageMode {
+    SAMPLING_WEIGHTS,
+    DISABLED,
+    POST_DRO_SAMPLING,
+    UNCERTAINTY_MARGIN,
+    SWITCH_DETECTION,
+    EXTRA_SCENARIO,
+    DYNAMICS_LEARNING,
+};
+
+// ============================================================================
+// Paper Experiment Constants
+// ============================================================================
+
+inline constexpr int    DEFAULT_ROLLOUT_STEPS  = 200;
+inline constexpr double DEFAULT_DT             = 0.1;
+inline constexpr int    DEFAULT_HORIZON        = 15;
+inline constexpr int    DEFAULT_BASE_SCENARIOS = 40;
+inline constexpr double S_CURVE_LENGTH         = 25.0;
+inline constexpr double S_CURVE_AMPLITUDE      = 3.0;
+inline constexpr int    S_CURVE_POINTS         = 200;
+inline constexpr double PATH_COMPLETE_FRAC     = 0.95;
+inline constexpr double OBS_PATH_FRACTION      = 0.35;
+
+// ============================================================================
+// Paper Variants
+// ============================================================================
+
+enum class PaperVariant {
+    BASE, BASE_SH, OT, OT_SH, DRO, DRO_SH, OT_DRO, OT_DRO_SH,
+    OT_DRO_SH_BLEND
+};
+
+inline const std::vector<PaperVariant> ALL_VARIANTS = {
+    PaperVariant::BASE_SH,
+    PaperVariant::OT_SH,
+    PaperVariant::DRO_SH,
+    PaperVariant::OT_DRO_SH,
+    PaperVariant::OT_DRO_SH_BLEND
+};
+
+inline std::string variant_name(PaperVariant v) {
+    switch (v) {
+        case PaperVariant::BASE:       return "Base";
+        case PaperVariant::BASE_SH:    return "Base+SH";
+        case PaperVariant::OT:         return "OT";
+        case PaperVariant::OT_SH:      return "OT+SH";
+        case PaperVariant::DRO:        return "DRO";
+        case PaperVariant::DRO_SH:     return "DRO+SH";
+        case PaperVariant::OT_DRO:     return "OT+DRO";
+        case PaperVariant::OT_DRO_SH:  return "OT+DRO+SH";
+        case PaperVariant::OT_DRO_SH_BLEND: return "OT+DRO+SH+Blend";
+    }
+    return "?";
+}
+
+inline bool uses_ot(PaperVariant v) {
+    return v == PaperVariant::OT || v == PaperVariant::OT_SH ||
+           v == PaperVariant::OT_DRO || v == PaperVariant::OT_DRO_SH ||
+           v == PaperVariant::OT_DRO_SH_BLEND;
+}
+inline bool uses_dro(PaperVariant v) {
+    return v == PaperVariant::DRO || v == PaperVariant::DRO_SH ||
+           v == PaperVariant::OT_DRO || v == PaperVariant::OT_DRO_SH ||
+           v == PaperVariant::OT_DRO_SH_BLEND;
+}
+inline bool uses_sh(PaperVariant v) {
+    return v == PaperVariant::BASE_SH || v == PaperVariant::OT_SH ||
+           v == PaperVariant::DRO_SH || v == PaperVariant::OT_DRO_SH ||
+           v == PaperVariant::OT_DRO_SH_BLEND;
+}
+inline bool uses_blend(PaperVariant v) {
+    return v == PaperVariant::OT_DRO_SH_BLEND;
+}
+
+// ============================================================================
+// Environment Types
+// ============================================================================
+
+enum class EnvironmentType { STRAIGHT, NARROW_CORRIDOR, INTERSECTION, ONCOMING };
+
+struct EnvironmentSetup {
+    ObstacleState initial_obs;
+    std::vector<std::string> obs_modes;
+    EgoState initial_ego;
+    Eigen::Vector2d goal;
+    std::string name;
+};
+
+inline std::string environment_name(EnvironmentType env) {
+    switch (env) {
+        case EnvironmentType::STRAIGHT: return "Straight";
+        case EnvironmentType::NARROW_CORRIDOR: return "Narrow";
+        case EnvironmentType::INTERSECTION: return "Intersection";
+        case EnvironmentType::ONCOMING: return "Oncoming";
+    }
+    return "?";
+}
+
+// ============================================================================
+// Sampling Baselines
+// ============================================================================
+
+enum class SamplingBaseline {
+    STANDARD, OT, STRATIFIED, TEMPERATURE, EPSILON_GREEDY, RISK_BIASED,
+    UNIFORM_WEIGHT, RECENCY_WEIGHT, ORACLE_FLOOD
+};
+
+inline std::string baseline_name(SamplingBaseline b) {
+    switch (b) {
+        case SamplingBaseline::STANDARD: return "Standard";
+        case SamplingBaseline::OT: return "OT";
+        case SamplingBaseline::STRATIFIED: return "Stratified";
+        case SamplingBaseline::TEMPERATURE: return "Temperature";
+        case SamplingBaseline::EPSILON_GREEDY: return "EpsilonGreedy";
+        case SamplingBaseline::RISK_BIASED: return "RiskBiased";
+        case SamplingBaseline::UNIFORM_WEIGHT: return "Uniform";
+        case SamplingBaseline::RECENCY_WEIGHT: return "Recency";
+        case SamplingBaseline::ORACLE_FLOOD: return "Oracle";
+    }
+    return "?";
+}
+
+inline WeightType baseline_to_weight(SamplingBaseline bl, PaperVariant variant) {
+    switch (bl) {
+        case SamplingBaseline::STANDARD:
+            return uses_ot(variant) ? WeightType::WASSERSTEIN : WeightType::FREQUENCY;
+        case SamplingBaseline::OT:             return WeightType::WASSERSTEIN;
+        case SamplingBaseline::STRATIFIED:     return WeightType::FREQUENCY;
+        case SamplingBaseline::TEMPERATURE:    return WeightType::TEMPERATURE;
+        case SamplingBaseline::EPSILON_GREEDY: return WeightType::EPSILON_GREEDY;
+        case SamplingBaseline::UNIFORM_WEIGHT: return WeightType::UNIFORM;
+        case SamplingBaseline::RECENCY_WEIGHT: return WeightType::RECENCY;
+        case SamplingBaseline::RISK_BIASED:
+        case SamplingBaseline::ORACLE_FLOOD:
+        default:                               return WeightType::FREQUENCY;
+    }
+}
+
+// ============================================================================
+// Obstacle Simulator
+// ============================================================================
+
+/**
+ * @brief Ground-truth obstacle simulator with mode switching.
+ *
+ * Used by all rollouts. Propagates obstacle state under the current mode
+ * dynamics with small process noise and optional mode switching.
+ */
+struct ObstacleSim {
+    ObstacleState state;
+    std::string current_mode;
+    std::vector<std::string> available_modes;
+    std::map<std::string, ModeModel> mode_models;
+
+    /// Propagate one step under current mode dynamics with noise.
+    void step(double dt, std::mt19937& rng);
+
+    /// Switch to a random mode with the given probability.
+    void maybe_switch(double switch_prob, std::mt19937& rng);
+};
+
+// ============================================================================
+// Data Structures
+// ============================================================================
+
 struct SeedBundle {
     unsigned master;
     unsigned env;
@@ -73,17 +266,17 @@ struct SeedBundle {
     unsigned scenario;
 };
 
-/**
- * @brief Distribution shift configuration for Section D.
- */
 struct DistributionShiftConfig {
-    double rho = 0.0;             ///< Blend: p_true = (1-rho)*p_hat + rho*uniform
-    double dangerous_boost = 0.0; ///< Extra mass on highest-risk mode
-    int boosted_mode = -1;        ///< Specific mode index to boost (-1 = auto)
+    double rho = 0.0;
+    double dangerous_boost = 0.0;
+    int boosted_mode = -1;
 };
 
 /**
- * @brief Full experiment configuration wrapping all MPC + experiment params.
+ * @brief Full experiment configuration.
+ *
+ * Covers all parameters needed by any rollout variant. The paper
+ * experiment runner maps its PaperVariant enum into these fields.
  */
 struct ExperimentConfig {
     // MPC parameters
@@ -92,15 +285,34 @@ struct ExperimentConfig {
     double sigma_scale = 1.0;
     int horizon = 20;
     int num_discs = 3;
+    double vehicle_length = 4.0;
     bool safe_horizon_enabled = true;
+    int forced_safe_horizon = -1;
+    int safe_horizon_min = 3;              ///< Minimum safe horizon (default matches harness)
     double switch_prob = 0.1;
     int rollout_steps = 60;
     int num_modes = 4;
 
-    // Experiment variant
+    // Weight type and DRO (set directly, not derived from AblationVariant)
+    WeightType weight_type = WeightType::FREQUENCY;
+    bool enable_dro = false;
+    InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;
+
+    // Legacy ablation variant (used by configure_ablation helper)
     AblationVariant ablation = AblationVariant::DRO_FULL;
     DROGroundCostType ground_cost = DROGroundCostType::W2_BURES;
     DistributionShiftConfig shift;
+
+    // OT predictor
+    bool use_ot_predictor = false;
+    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN;
+    double dro_coverage_alpha = 0.0;  ///< DRO/OT blend: 0=pure DRO, >0 preserves OT coverage
+    OTUsageMode ot_usage_mode = OTUsageMode::SAMPLING_WEIGHTS;  ///< How OT output is used
+    DRONominalSource dro_nominal_source = DRONominalSource::AUTO;  ///< P_hat source for DRO Q*
+    int dro_injection_count = 1;  ///< Top-K modes to inject per obstacle (0=none, -1=all)
+    double softmax_tau = 5.0;     ///< Temperature for SOFTMAX_RISK baseline
+    double eps_greedy_epsilon = 0.3;  ///< Epsilon for EPSILON_GREEDY_INJ baseline
+    int max_history_length = -1;      ///< Max observation history length (-1 = default, i.e. horizon*10)
 
     // Mode configuration
     std::vector<std::string> obs_modes = {
@@ -109,33 +321,34 @@ struct ExperimentConfig {
     std::string rare_mode = "lane_change_left";
     double rare_switch_prob = 0.05;
 
-    // Scenario / edge-case tag (e.g. "baseline", "high_switch", "low_S", "distribution_shift")
+    // Multi-obstacle configuration
+    int num_obstacles = 1;
+    int obstacles_per_class = 1;
+    std::vector<double> obs_arc_fractions;  ///< Where to place obstacles (empty = auto)
+
+    // Custom initial obstacle states (overrides arc-fraction placement)
+    std::vector<ObstacleState> initial_obstacle_states;
+
+    // Custom reference path (overrides default S-curve)
+    std::optional<ReferencePath> custom_ref_path;
+    // Custom initial ego state (overrides default (0,0,0,1.5))
+    std::optional<EgoState> custom_initial_ego;
+
+    // Path and termination
+    bool path_completion_termination = true;
+    double path_completion_fraction = 0.95;
+
+    // Per-step callback: called after mode observation, before solve.
+    // Args: (step, obstacle_id, obstacle_sim, controller, rng)
+    std::function<void(int, int, ObstacleSim&, AdaptiveScenarioMPC&, std::mt19937&)> step_callback;
+
+    // Scenario / edge-case tag
     std::string scenario_tag = "baseline";
-
-    // Tuning overrides (<= 0 means use default)
-    double certificate_radius_override = 0.0;  ///< default 0.15
-    double rta_threshold_override = 0.0;       ///< default 1.5
-    double bandit_beta_override = 0.0;          ///< default 1.0
-    // Quotient-space reduction (SHMPC_QuotientSpace): reduce S scenarios to K for efficiency
-    int quotient_num_override = 0;              ///< if > 0, number of quotient representatives K; else K = max(1, 40% of num_scenarios)
-
-    // GAN adversarial scenarios (optional path to CSV from gan_adversarial.py)
-    std::string gan_scenario_csv_path;
-    bool use_gan_cache = true;           ///< if true, load CSV once per rollout and reuse (faster)
-    int gan_num_scenarios_override = 0;   ///< if > 0, use this many GAN scenarios per solve (fewer = faster)
-    int gan_reduced_num_scenarios = 12;    ///< SHMPC_GAN_Reduced uses this (12 = real-time: >=50% safety, <10ms)
-    // Reservoir adversarial scenarios (optional path to CSV from reservoir_adversarial.py; same format)
-    std::string reservoir_scenario_csv_path;
-    // Seek-avoid (pursuit) scenarios from seek_avoid.py
-    std::string seek_avoid_scenario_csv_path;
-    // ML model trained on seek-avoid data (seek_avoid_ml.py)
-    std::string seek_avoid_ml_scenario_csv_path;
-    // Stiefel manifold GAN scenarios (stiefel_gan.py; same CSV format as GAN)
-    std::string stiefel_gan_scenario_csv_path;
+    std::string method_name;  ///< Override method name in record (empty = auto)
 };
 
 /**
- * @brief Per-rollout record with all metrics (CSV row).
+ * @brief Per-rollout record with all metrics.
  */
 struct RolloutRecord {
     unsigned seed = 0;
@@ -156,22 +369,71 @@ struct RolloutRecord {
 
     // Progress metrics
     double total_progress = 0.0;
+    bool completed_path = false;
     double control_effort = 0.0;
     int constraint_active_count = 0;
     int missed_mode_steps = 0;
+    int total_mode_checks = 0;
     int total_steps = 0;
+
+    // Rare mode tracking
+    int rare_mode_active = 0;
+    int rare_mode_missed = 0;
 
     // Timing metrics
     double avg_solve_ms = 0.0;
     double p50_solve_ms = 0.0;
     double p95_solve_ms = 0.0;
     double max_solve_ms = 0.0;
+    std::vector<double> solve_times_raw;  ///< Raw per-step solve times [s]
 
     // DRO-specific
     int total_dro_injected = 0;
     double avg_safe_horizon = 0.0;
     double clearance_5pct = 0.0;
+    int active_constraints = 0;
 };
+
+// ============================================================================
+// RolloutResult — thin adapter over RolloutRecord
+// ============================================================================
+
+struct RolloutResult {
+    bool collision = false;
+    bool completed_path = false;
+    double min_clearance = 1e9;
+    double total_progress = 0.0;
+    double avg_solve_time = 0.0;
+    double max_solve_time = 0.0;
+    int missed_mode_steps = 0;
+    int total_mode_checks = 0;
+    int rare_mode_active = 0;
+    int rare_mode_missed = 0;
+    int total_steps = 0;
+    int active_constraints = 0;
+    std::vector<double> solve_times;
+
+    static RolloutResult from_record(const RolloutRecord& rec) {
+        RolloutResult r;
+        r.collision = rec.collision;
+        r.completed_path = rec.completed_path;
+        r.min_clearance = rec.min_clearance;
+        r.total_progress = rec.total_progress;
+        r.avg_solve_time = rec.avg_solve_ms / 1000.0;
+        r.max_solve_time = rec.max_solve_ms / 1000.0;
+        r.missed_mode_steps = rec.missed_mode_steps;
+        r.total_mode_checks = rec.total_mode_checks;
+        r.rare_mode_active = rec.rare_mode_active;
+        r.rare_mode_missed = rec.rare_mode_missed;
+        r.total_steps = rec.total_steps;
+        r.active_constraints = rec.active_constraints;
+        r.solve_times = rec.solve_times_raw;
+        return r;
+    }
+};
+
+/// Default arc fractions for placing 4 obstacles along the S-curve.
+inline const std::vector<double> OBS_ARC_FRACS_4 = {0.20, 0.35, 0.50, 0.65};
 
 // ============================================================================
 // CSV Writer
@@ -194,17 +456,8 @@ private:
 // Statistical Helpers
 // ============================================================================
 
-/// Wilson score confidence interval for a proportion
 std::pair<double, double> wilson_ci(int successes, int n, double z = 1.96);
 
-/**
- * @brief Bootstrap paired delta for collision rate differences.
- * @param base_collisions  Boolean vector for base method
- * @param dro_collisions   Boolean vector for DRO method (paired)
- * @param n_bootstrap      Number of bootstrap resamples
- * @param rng              Random number generator
- * @return (mean_delta, ci_low, ci_high) where delta = base_rate - dro_rate
- */
 struct BootstrapResult {
     double mean_delta;
     double ci_low;
@@ -218,31 +471,48 @@ BootstrapResult bootstrap_paired_delta(
     std::mt19937* rng = nullptr
 );
 
-/**
- * @brief McNemar's chi-squared test with continuity correction.
- * @param b  count of (base=collision, dro=no collision) pairs
- * @param c  count of (base=no collision, dro=collision) pairs
- * @return chi2 statistic (compare to chi2(1) critical values: 3.84 for p<0.05)
- */
 double mcnemar_chi2(int b, int c);
 
-/**
- * @brief Effect size summary.
- */
 struct EffectSizes {
-    double abs_delta;    ///< p_base - p_dro
-    double rel_delta;    ///< (p_base - p_dro) / p_base
-    double risk_ratio;   ///< p_dro / p_base
-    double cohens_h;     ///< 2*arcsin(sqrt(p_base)) - 2*arcsin(sqrt(p_dro))
+    double abs_delta;
+    double rel_delta;
+    double risk_ratio;
+    double cohens_h;
 };
 
-EffectSizes compute_effect_sizes(double p_base, double p_dro);
+EffectSizes compute_effect_sizes(double p_base, double p_comparison);
 
 // ============================================================================
-// Seed Derivation
+// Utilities
 // ============================================================================
 
 SeedBundle derive_seeds(unsigned master_seed, int idx);
+
+/// Apply distribution shift to an obstacle simulator.
+void apply_distribution_shift(
+    const DistributionShiftConfig& shift,
+    ObstacleSim& obs_sim,
+    std::mt19937& rng
+);
+
+/// Configure ScenarioMPCConfig + DROConfig from an AblationVariant.
+void configure_ablation(
+    ScenarioMPCConfig& config,
+    DROConfig& dro_cfg,
+    AblationVariant variant,
+    double eps_wass,
+    double sigma_scale
+);
+
+/// Place an obstacle on an S-curve path at the given arc-length fraction.
+ObstacleState obstacle_on_s_curve(
+    const ReferencePath& path,
+    double arc_fraction,
+    std::mt19937& rng
+);
+
+/// Compute percentile of a vector (p in [0,100]).
+double percentile(std::vector<double> v, double p);
 
 // ============================================================================
 // Rollout Runner
@@ -250,20 +520,90 @@ SeedBundle derive_seeds(unsigned master_seed, int idx);
 
 /**
  * @brief Run a single MPC rollout with the given configuration and seed.
+ *
+ * This is THE canonical rollout function. All experiments should call this.
+ * Features:
+ * - S-curve reference path (matching Python tests)
+ * - Multi-obstacle with class-based mode sharing
+ * - Multi-disc collision detection
+ * - Path completion termination
+ * - OT predictor integration (when enabled)
+ * - Distribution shift
+ * - Per-step callbacks for experiment-specific monitoring
  */
 RolloutRecord run_experiment_rollout(
     const ExperimentConfig& config,
     unsigned seed
 );
 
-/**
- * @brief Run a single rollout with a named method for Future SL MPC comparison.
- * method: "SHMPC" (safe horizon, no DRO), "SHMPC_DRO", "SHMPC_AdaptiveDRO", "SHMPC_RTA".
- */
-RolloutRecord run_experiment_rollout_future_sl(
-    const ExperimentConfig& config,
+// ============================================================================
+// Paper Variant Helpers (implementations in experiment_harness.cpp)
+// ============================================================================
+
+/// Create a reference path and set it on the controller.
+ReferencePath setup_mpcc_path(AdaptiveScenarioMPC& ctrl);
+
+/// Map PaperVariant to ExperimentConfig fields.
+ExperimentConfig make_experiment_config(
+    PaperVariant variant,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    const std::vector<std::string>& obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0,
+    bool safe_horizon_enabled = false,
+    int num_discs = 1,
+    double vehicle_length = 1.5,
+    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN
+);
+
+/// Run a single rollout for a PaperVariant.
+RolloutResult run_single_rollout(
+    PaperVariant variant,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
     unsigned seed,
-    const std::string& method
+    const std::vector<std::string>& obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0,
+    bool safe_horizon_enabled = false,
+    int num_discs = 1,
+    double vehicle_length = 1.5
+);
+
+/// Run a multi-obstacle rollout for a PaperVariant.
+RolloutResult run_multi_obstacle_rollout(
+    PaperVariant variant,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    unsigned seed,
+    int num_obstacles = 4,
+    int num_classes = 4,
+    const std::vector<std::string>& obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0,
+    const std::vector<double>& arc_fracs = OBS_ARC_FRACS_4,
+    GroundCostType ot_ground_cost = GroundCostType::SQUARED_EUCLIDEAN
+);
+
+/// Create an environment setup for a given type.
+EnvironmentSetup create_environment(EnvironmentType env, std::mt19937& rng);
+
+/// Run a rollout with a custom environment setup.
+RolloutResult run_single_rollout_env(
+    PaperVariant variant,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    unsigned seed,
+    const EnvironmentSetup& env_setup,
+    SamplingBaseline baseline = SamplingBaseline::STANDARD,
+    int forced_safe_horizon = -1,
+    int num_discs = 1,
+    double vehicle_length = 1.5
 );
 
 }  // namespace scenario_mpc

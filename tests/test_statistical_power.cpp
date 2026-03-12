@@ -28,7 +28,6 @@
 #include <filesystem>
 
 #include "mpc_controller.hpp"
-#include "contouring_mpc.hpp"
 #include "optimal_transport_predictor.hpp"
 
 using namespace scenario_mpc;
@@ -164,7 +163,7 @@ RolloutResult run_single_rollout(
             obs_mode_models[m] = mode_models[m];
     }
 
-    controller.initialize_obstacle(obs_id, obs_mode_models);
+    controller.initialize_obstacle(obs_id, 0, obs_mode_models);
 
     ObstacleSim obs_sim;
     std::uniform_real_distribution<double> y_dist(-0.5, 0.5);
@@ -182,7 +181,7 @@ RolloutResult run_single_rollout(
     double collision_radius = config.ego_radius + config.obstacle_radius;
 
     for (int i = 0; i < 5; ++i) {
-        controller.update_mode_observation(obs_id, obs_sim.current_mode, i);
+        controller.update_mode_observation(obs_id, 0, obs_sim.current_mode, i);
         if (use_ot) {
             ot_predictor.observe(obs_id, obs_sim.state.position(), obs_sim.current_mode);
             ot_predictor.advance_timestep();
@@ -192,7 +191,7 @@ RolloutResult run_single_rollout(
     for (int step = 0; step < rollout_steps; ++step) {
         obs_sim.maybe_switch(switch_prob, rng);
 
-        controller.update_mode_observation(obs_id, obs_sim.current_mode, step + 5);
+        controller.update_mode_observation(obs_id, 0, obs_sim.current_mode, step + 5);
 
         if (use_ot) {
             ot_predictor.observe(obs_id, obs_sim.state.position(), obs_sim.current_mode);

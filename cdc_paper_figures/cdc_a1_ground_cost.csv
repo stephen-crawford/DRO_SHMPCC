@@ -1,0 +1,4 @@
+ground_cost,method,collision_rate,coll_ci_lo,coll_ci_hi,missed_mode_rate,mm_ci_lo,mm_ci_hi,rare_miss_rate,rare_ci_lo,rare_ci_hi,mean_clearance,p5_clearance,mean_progress,mean_solve_ms,n_rollouts
+W2-Bures,W2-Bures,0.149000,0.128274,0.172412,0.235631,0.231929,0.239374,0.189811,0.184794,0.194933,1.0708,0.4310,0.9560,0.963,1000
+Zero-One,Zero-One,0.141000,0.120801,0.163947,0.231440,0.227769,0.235152,0.193948,0.188856,0.199143,1.0792,0.5167,0.9561,0.955,1000
+Euclidean-Mean,Euclidean-Mean,0.144000,0.123601,0.167124,0.234394,0.230696,0.238133,0.193482,0.188466,0.198599,1.0846,0.5326,0.9562,0.956,1000

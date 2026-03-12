@@ -141,7 +141,7 @@ static RolloutResult run_rollout(
     if (!rare_mode.empty() && mode_models.find(rare_mode) != mode_models.end()) {
         obs_mode_models[rare_mode] = mode_models[rare_mode];
     }
-    controller.initialize_obstacle(obs_id, obs_mode_models);
+    controller.initialize_obstacle(obs_id, 0, obs_mode_models);
 
     ObstacleSim obs_sim;
     std::uniform_real_distribution<double> y_dist(-0.5, 0.5);
@@ -159,7 +159,7 @@ static RolloutResult run_rollout(
 
     // Initial mode observations
     for (int i = 0; i < 5; ++i) {
-        controller.update_mode_observation(obs_id, obs_sim.current_mode, i);
+        controller.update_mode_observation(obs_id, 0, obs_sim.current_mode, i);
     }
 
     for (int step = 0; step < rollout_steps; ++step) {
@@ -175,7 +175,7 @@ static RolloutResult run_rollout(
             obs_sim.maybe_switch(switch_prob, rng);
         }
 
-        controller.update_mode_observation(obs_id, obs_sim.current_mode, step + 5);
+        controller.update_mode_observation(obs_id, 0, obs_sim.current_mode, step + 5);
 
         std::map<int, ObstacleState> obstacles;
         obstacles[obs_id] = obs_sim.state;
@@ -787,7 +787,7 @@ static int test_h6_ot_ground_cost() {
                   << " (nominal=" << nominal[id] << ")\n";
     }
 
-    std::cout << "  Epsilon used: " << result.epsilon_used << "\n";
+    std::cout << "  Rho used: " << result.rho_used << "\n";
     std::cout << "  Optimal lambda: " << result.optimal_lambda << "\n";
 
     // Verify: D[i][i] = 0 (self-distance)

@@ -12,6 +12,33 @@ namespace scenario_mpc {
 namespace {
 
 /**
+ * @brief Generate a stationary (hold-position) trajectory for an unobserved obstacle.
+ *
+ * Used during cold start: the obstacle has no observed modes yet, so we
+ * predict it stays at its current position with small growing uncertainty.
+ */
+ObstacleTrajectory make_stationary_trajectory(
+    int obstacle_id,
+    const ObstacleState& initial_state,
+    int horizon
+) {
+    std::vector<PredictionStep> steps;
+    steps.reserve(horizon + 1);
+
+    Eigen::Vector2d pos = initial_state.position();
+    Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
+    const double sigma_growth = 0.01;  // small per-step uncertainty growth
+
+    steps.emplace_back(0, pos, cov);
+    for (int k = 1; k <= horizon; ++k) {
+        cov += sigma_growth * Eigen::Matrix2d::Identity();
+        steps.emplace_back(k, pos, cov);
+    }
+
+    return ObstacleTrajectory(obstacle_id, "stationary", steps, 1.0);
+}
+
+/**
  * @brief Sample a single obstacle trajectory.
  */
 ObstacleTrajectory sample_obstacle_trajectory(
@@ -155,7 +182,8 @@ std::vector<Scenario> sample_scenarios(
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto hist_it = mode_histories.find(obs_id);
             if (hist_it == mode_histories.end()) {
-                // No mode history - skip this obstacle
+                // No mode history — treat as stationary
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
 
@@ -167,6 +195,8 @@ std::vector<Scenario> sample_scenarios(
             );
 
             if (mode_weights.empty()) {
+                // No modes observed yet — treat as stationary
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
 
@@ -249,7 +279,10 @@ std::vector<Scenario> sample_scenarios_with_weights(
 
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) continue;
+            if (info_it == obs_info.end()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
+                continue;
+            }
             const auto& info = info_it->second;
             auto hist_it = mode_histories.find(obs_id);
             const ModeHistory& mode_history = hist_it->second;
@@ -291,7 +324,10 @@ std::vector<Scenario> sample_scenarios_with_weights(
 
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) continue;
+            if (info_it == obs_info.end()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
+                continue;
+            }
             const auto& info = info_it->second;
             auto hist_it = mode_histories.find(obs_id);
             const ModeHistory& mode_history = hist_it->second;
@@ -338,6 +374,7 @@ std::vector<Scenario> sample_scenarios_with_mode_sequences(
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto hist_it = mode_histories.find(obs_id);
             if (hist_it == mode_histories.end()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
 
@@ -345,6 +382,7 @@ std::vector<Scenario> sample_scenarios_with_mode_sequences(
             auto mode_weights = compute_mode_weights(mode_history, weight_type);
 
             if (mode_weights.empty()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
 
@@ -423,7 +461,11 @@ std::vector<Scenario> sample_scenarios_with_mode_coverage(
 
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) continue;
+            if (info_it == obs_info.end()) {
+                // No observed modes — stationary
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
+                continue;
+            }
 
             const auto& info = info_it->second;
             auto hist_it = mode_histories.find(obs_id);
@@ -467,7 +509,10 @@ std::vector<Scenario> sample_scenarios_with_mode_coverage(
 
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) continue;
+            if (info_it == obs_info.end()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
+                continue;
+            }
 
             const auto& info = info_it->second;
             auto hist_it = mode_histories.find(obs_id);
@@ -554,7 +599,10 @@ std::vector<Scenario> sample_scenarios_stratified(
 
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) continue;
+            if (info_it == obs_info.end()) {
+                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
+                continue;
+            }
             const auto& info = info_it->second;
             auto hist_it = mode_histories.find(obs_id);
             const ModeHistory& mode_history = hist_it->second;

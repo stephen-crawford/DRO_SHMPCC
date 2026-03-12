@@ -57,7 +57,8 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
     const std::vector<EgoState>& reference_trajectory,
     const Scenario& scenario,
     double combined_radius,
-    int num_discs
+    int num_discs,
+    double vehicle_length
 ) {
     std::vector<CollisionConstraint> constraints;
     int horizon = static_cast<int>(reference_trajectory.size()) - 1;
@@ -67,7 +68,7 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
 
         // Compute ego disc positions (Eq. 16)
         std::vector<Eigen::Vector2d> disc_positions =
-            compute_ego_disc_positions(ref_state, num_discs);
+            compute_ego_disc_positions(ref_state, num_discs, vehicle_length);
 
         for (const auto& [obs_id, trajectory] : scenario.trajectories) {
             if (k >= static_cast<int>(trajectory.steps.size())) {
@@ -101,41 +102,21 @@ std::vector<CollisionConstraint> compute_linearized_constraints(
     double ego_radius,
     double obstacle_radius,
     double safety_margin,
-    int num_discs
+    int num_discs,
+    double vehicle_length
 ) {
     std::vector<CollisionConstraint> constraints;
     double combined_radius = ego_radius + obstacle_radius + safety_margin;
 
     for (const auto& scenario : scenarios) {
         auto scenario_constraints = compute_scenario_constraints(
-            reference_trajectory, scenario, combined_radius, num_discs
+            reference_trajectory, scenario, combined_radius, num_discs, vehicle_length
         );
         constraints.insert(constraints.end(),
             scenario_constraints.begin(), scenario_constraints.end());
     }
 
     return constraints;
-}
-
-std::vector<CollisionConstraint> tighten_constraints_by_certificate(
-    const std::vector<CollisionConstraint>& constraints,
-    const std::vector<double>& radii
-) {
-    if (radii.empty()) return constraints;
-    std::vector<CollisionConstraint> out;
-    out.reserve(constraints.size());
-    for (const auto& c : constraints) {
-        CollisionConstraint c2 = c;
-        size_t k = static_cast<size_t>(c.k);
-        if (k < radii.size()) {
-            double r = radii[k];
-            double anorm = c.a.norm();
-            if (anorm > 1e-12)
-                c2.b = c.b - r * anorm;
-        }
-        out.push_back(c2);
-    }
-    return out;
 }
 
 std::vector<Eigen::Vector2d> compute_ego_disc_positions(
@@ -287,6 +268,102 @@ std::vector<CollisionConstraint> merge_redundant_constraints(
     }
 
     return merged;
+}
+
+namespace {
+
+/// Project point onto collision boundary (circle of radius r centered at delta).
+/// If inside, projects outward in direction from starting_pose toward delta.
+Eigen::Vector2d dr_project(
+    const Eigen::Vector2d& position,
+    const Eigen::Vector2d& delta,
+    double radius,
+    const Eigen::Vector2d& starting_pose
+) {
+    Eigen::Vector2d diff = position - delta;
+    double dist = diff.norm();
+
+    if (dist < radius) {
+        // Inside collision zone: project to boundary
+        Eigen::Vector2d direction = delta - starting_pose;
+        double norm_dir = direction.norm();
+        if (norm_dir < 1e-10) {
+            return position;  // Degenerate case
+        }
+        return delta - (direction / norm_dir) * radius;
+    }
+    // Already outside: no projection needed
+    return position;
+}
+
+/// Reflect point across the projection onto the collision-free region.
+/// reflect(p) = 2 * project(p) - p
+Eigen::Vector2d dr_reflect(
+    const Eigen::Vector2d& position,
+    const Eigen::Vector2d& delta,
+    double radius,
+    const Eigen::Vector2d& starting_pose
+) {
+    return 2.0 * dr_project(position, delta, radius, starting_pose) - position;
+}
+
+}  // anonymous namespace
+
+void douglas_rachford_projection(
+    Eigen::Vector2d& position,
+    const Eigen::Vector2d& obstacle,
+    double radius,
+    const Eigen::Vector2d& starting_pose
+) {
+    // Douglas-Rachford iteration:
+    // position := (position + reflect(reflect(position, anchor, r), delta, r)) / 2
+    // Using obstacle as both anchor and delta for single-obstacle case
+    position = (position + dr_reflect(
+        dr_reflect(position, obstacle, radius, position),
+        obstacle, radius, starting_pose
+    )) / 2.0;
+}
+
+int project_warmstart_to_safety(
+    std::vector<EgoState>& trajectory,
+    const std::vector<CollisionConstraint>& constraints,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin
+) {
+    int projections = 0;
+    double combined_radius = ego_radius + obstacle_radius + safety_margin;
+
+    // Group constraints by timestep
+    std::map<int, std::vector<const CollisionConstraint*>> by_k;
+    for (const auto& c : constraints) {
+        by_k[c.k].push_back(&c);
+    }
+
+    for (auto& [k, k_constraints] : by_k) {
+        if (k < 0 || k >= static_cast<int>(trajectory.size())) continue;
+
+        Eigen::Vector2d ego_pos = trajectory[k].position();
+
+        for (const auto* con : k_constraints) {
+            double value = con->evaluate(ego_pos);
+            if (value < 0) {
+                // Constraint violated: use Douglas-Rachford projection
+                // Reconstruct obstacle position from constraint: a^T @ p_obs + r = b
+                // So p_obs = linearization_point - (constraint normal) * distance
+                // Simpler: project along constraint normal
+                Eigen::Vector2d starting_pose = trajectory[0].position();
+                Eigen::Vector2d obstacle_approx = ego_pos - con->a * (value + combined_radius);
+
+                douglas_rachford_projection(ego_pos, obstacle_approx, combined_radius, starting_pose);
+                trajectory[k].x = ego_pos(0);
+                trajectory[k].y = ego_pos(1);
+                projections++;
+            }
+        }
+    }
+
+    return projections;
 }
 
 }  // namespace scenario_mpc

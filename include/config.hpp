@@ -15,14 +15,33 @@
 namespace scenario_mpc {
 
 /**
+ * @brief Source of nominal distribution for DRO Q* computation.
+ *
+ * Controls whether OT weights (if available) are used as P_hat
+ * for the Kantorovich dual, or whether frequency weights are
+ * always used regardless of custom weight availability.
+ */
+enum class DRONominalSource {
+    AUTO,       ///< Use custom (OT) weights if available, else frequency (default)
+    FREQUENCY,  ///< Always use frequency weights for DRO Q* (avoid OT interference)
+};
+
+/**
  * @brief Injection mode for experiment ablation variants.
  */
 enum class InjectionMode {
-    NONE,         ///< No DRO injection (base scenario MPC)
-    DRO,          ///< Standard DRO worst-case injection (mean trajectory)
-    ADVERSARIAL,  ///< Geometrically-motivated adversarial injection (tail trajectory)
-    RANDOM,       ///< Inject one random mode per step
-    ALL_MODES     ///< Inject all modes deterministically
+    NONE,               ///< No DRO injection (base scenario MPC)
+    DRO,                ///< DRO worst-case injection: sample nominally, inject argmax(q*) as extra constraint
+    QSTAR_SAMPLE,       ///< DRO q* sampling: resample ALL S scenarios from q* distribution
+    ADVERSARIAL,        ///< Geometrically-motivated adversarial injection (tail trajectory)
+    RANDOM,             ///< Inject one random mode per step
+    ALL_MODES,          ///< Inject all modes deterministically
+    // CDC baselines
+    UNIFORM_COVERAGE,   ///< Force each observed mode to appear at least once
+    SOFTMAX_RISK,       ///< Sample modes via p(m) proportional to exp(tau * r_m)
+    EPSILON_GREEDY_INJ, ///< eps-greedy: (1-eps)*nominal + eps*uniform
+    TOP_RISK_INJECT,    ///< Inject top-K modes by r_m deterministically (no WDRO)
+    DIVERSE_RISK_INJECT ///< Inject K modes by risk*diversity (greedy facility-location style)
 };
 
 /**
@@ -74,13 +93,18 @@ struct ScenarioMPCConfig {
     // OT (W2 Bures metric) is used ONLY as the ground cost D[i][j] in the
     // Wasserstein ball.  Scenario sampling is NOT reshaped by OT.
     bool enable_dro = false;                 ///< Enable Wasserstein DRO weight reweighting
-    InjectionMode injection_mode = InjectionMode::DRO;  ///< Injection strategy when enable_dro=true
-    double dro_epsilon_base = 0.1;           ///< Base Wasserstein ball radius
-    double dro_epsilon_min = 0.01;           ///< Minimum epsilon (clamped)
-    double dro_epsilon_max = 0.5;            ///< Maximum epsilon (clamped)
-    bool dro_adaptive_epsilon = true;        ///< Enable adaptive epsilon scaling
-    double dro_risk_sigma_scale = 1.0;       ///< Sigma scale for risk computation
+    InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;  ///< Injection strategy when enable_dro=true
+    double dro_rho_base = 0.1;               ///< Base Wasserstein ball radius rho
+    double dro_rho_min = 0.01;              ///< Minimum rho (clamped)
+    double dro_rho_max = 0.5;              ///< Maximum rho (clamped)
+    bool dro_adaptive_rho = true;           ///< Enable adaptive rho scaling
     double adversarial_sigma_scale = 1.5;    ///< Scale for adversarial injection (sigma multiplier)
+    double dro_coverage_alpha = 0.0;         ///< Blend ratio: q = (1-a)*q_dro + a*q_ot. 0 = pure DRO.
+    DRONominalSource dro_nominal_source = DRONominalSource::AUTO;  ///< What P_hat to use for DRO Q*
+    int dro_injection_count = 1;             ///< Number of top-K modes to inject per obstacle (0 = none, -1 = all modes)
+    double softmax_tau = 5.0;                ///< Temperature for SOFTMAX_RISK baseline
+    double eps_greedy_epsilon = 0.3;         ///< Epsilon for EPSILON_GREEDY_INJ baseline
+    int max_history_length = -1;             ///< Max observation history length (-1 = default horizon*10)
 
     // Multi-disc collision model (Section 7)
     int num_discs = 3;                    ///< Number of discs for ego vehicle (D=3 default)
@@ -88,9 +112,13 @@ struct ScenarioMPCConfig {
 
     // Safe horizon truncation (SH-MPC)
     bool safe_horizon_enabled = true;     ///< Enable safe horizon truncation
-    int safe_horizon_min = 3;             ///< Minimum truncated horizon steps
+    int safe_horizon_min = 12;            ///< Minimum truncated horizon steps
     SafeHorizonMode safe_horizon_mode = SafeHorizonMode::PRACTICAL;  ///< SH computation mode
     int forced_safe_horizon = -1;         ///< Force N_safe to this value (-1 = auto)
+
+    // Contouring constraints (road boundary halfplanes)
+    bool enable_contouring_constraints = false;  ///< Enable road boundary constraints
+    double road_width = 7.0;          ///< Road width [m] (symmetric about reference path)
 
     // Constraint parameters
     double safety_margin = 0.1;       ///< Additional safety margin [m]
@@ -111,6 +139,11 @@ struct ScenarioMPCConfig {
     double velocity_weight = 1.0;     ///< Weight for velocity tracking
     double acceleration_weight = 0.1; ///< Weight for acceleration penalty
     double steering_weight = 0.1;     ///< Weight for steering penalty
+
+    // MPCC cost weights (Paper Eq. 6)
+    double contour_weight = 1.0;          ///< w_c: lateral (contouring) error penalty
+    double lag_weight = 0.1;              ///< w_l: progress lag penalty
+    double terminal_heading_weight = 1.0; ///< Terminal heading alignment weight
 
     // Progress-aware cost parameters
     double goal_weight_scale_max = 6.0;       ///< Max goal weight multiplier near end

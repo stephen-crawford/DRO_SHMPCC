@@ -25,6 +25,7 @@
 #include "scenario_pruning.hpp"
 #include "qp_solver.hpp"
 #include "wasserstein_dro.hpp"
+#include "reference_path.hpp"
 #include <random>
 #include <chrono>
 #include <optional>
@@ -59,24 +60,29 @@ public:
     /**
      * @brief Initialize mode history for a new obstacle.
      * @param obstacle_id Unique obstacle identifier
+     * @param obstacle_class Obstacle class identifier
      * @param available_modes Optional custom modes (uses defaults if empty)
      */
     void initialize_obstacle(
         int obstacle_id,
+        int obstacle_class,
         const std::map<std::string, ModeModel>& available_modes = {}
     );
 
     /**
      * @brief Record a mode observation for an obstacle.
      * @param obstacle_id Obstacle identifier
+     * @param obstacle_class Obstacle class identifier
      * @param observed_mode Observed mode ID
      * @param timestep Optional timestep (uses iteration count if -1)
      */
     void update_mode_observation(
         int obstacle_id,
+        int obstacle_class,
         const std::string& observed_mode,
         int timestep = -1
     );
+
 
     /**
      * @brief Solve the MPC problem.
@@ -85,7 +91,7 @@ public:
      *
      * @param ego_state Current ego vehicle state
      * @param obstacles Current obstacle states
-     * @param goal Goal position [x, y]
+     * @param goal Goal position [x, y] for terminal cost
      * @param reference_velocity Desired velocity
      * @param path_progress Current progress along reference path (-1 to disable progress-aware features)
      * @param path_length Total reference path length (-1 to disable)
@@ -122,24 +128,34 @@ public:
     /// Get DRO module (for diagnostics)
     const WassersteinDRO& dro() const { return dro_; }
 
-    /// Set DRO epsilon override for next solve (e.g. adaptive shift). Clear after solve.
-    void set_dro_epsilon_override(std::optional<double> rho);
-    void clear_dro_epsilon_override();
+    /// Set reference path for MPCC contouring/lag cost (Paper Eq. 6).
+    void set_reference_path(const ReferencePath& path);
+    /// Clear reference path (disables MPCC cost terms).
+    void clear_reference_path();
 
-    /// Custom mode weights for next solve (Conformal/Hazard/Bandit). If set, sampling uses these instead of history.
-    void set_custom_mode_weights(int obstacle_id, const std::map<std::string, double>& weights);
+    /// Set custom per-obstacle mode weights (e.g. from OT predictor).
+    /// When set, these override the internal weight_type computation for
+    /// scenario sampling. Cleared after each solve() call.
+    void set_custom_mode_weights(int obstacle_id,
+                                 const std::map<std::string, double>& weights);
+    /// Clear all custom mode weights.
     void clear_custom_mode_weights();
 
-    /// Certificate radii for constraint tightening (Certificate-First §7.1). Applied after linearization.
-    void set_certificate_radii(const std::vector<double>& radii);
-    void clear_certificate_radii();
+    /// Mutable config access (for per-step adjustments like safety_margin).
+    ScenarioMPCConfig& mutable_config() { return config_; }
 
-    /// Scenario compiler: set scenarios and skip sampling on next solve.
-    void set_scenarios(const std::vector<Scenario>& scenarios);
-    /// After set_scenarios(), next solve() uses current scenarios only (no sampling). Cleared after that solve.
-    void set_use_current_scenarios_next(bool use);
-    /// Sample N scenarios and set them for next solve (for compiler initial set). Call before solve().
-    void sample_and_set_scenarios(const std::map<int, ObstacleState>& obstacles, int N);
+    /// Inject an extra scenario for the next solve() call.
+    /// Pre-injected scenarios are added after normal sampling and marked
+    /// is_injected=true so they survive pruning. Cleared after solve().
+    void inject_scenario(const Scenario& scenario);
+
+    /// Clear all pre-injected scenarios.
+    void clear_injected_scenarios();
+
+    /// Update a mode model's dynamics parameters (b, G) for all obstacles.
+    void update_mode_model(const std::string& mode_id,
+                           const Eigen::Vector4d& b_new,
+                           const Eigen::Matrix4d& G_new);
 
 private:
     /**
@@ -171,7 +187,8 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0
+        double path_length = -1.0,
+        int cost_horizon = -1
     );
 
     /**
@@ -183,14 +200,20 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0
+        double path_length = -1.0,
+        int cost_horizon = -1
     );
 
     /**
      * @brief Build condensed QP subproblem for SQP iteration.
      *
      * Condenses dynamics to express positions as linear function of inputs,
-     * then maps collision constraints into input space.
+     * then maps collision constraints into input space. MPCC contouring/lag
+     * objectives are applied to all steps 1..N. Collision constraints are
+     * pre-filtered by the safe horizon in solve() before reaching this method.
+     *
+     * @param cost_horizon Reserved for future use (-1 = full horizon).
+     *        Constraint truncation is handled upstream in solve().
      */
     QPProblem build_condensed_qp(
         const std::vector<EgoState>& x_ref,
@@ -199,7 +222,8 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0
+        double path_length = -1.0,
+        int cost_horizon = -1
     );
 
     /**
@@ -222,6 +246,7 @@ private:
     ADMMSolver qp_solver_;
     std::map<std::string, ModeModel> default_modes_;
     std::map<int, ModeHistory> mode_histories_;
+    std::map<int, int> obstacle_classes_;  ///< obstacle_id -> obstacle_class
     std::vector<Scenario> scenarios_;
     WassersteinDRO dro_;
     std::vector<EgoState> reference_trajectory_;
@@ -229,9 +254,13 @@ private:
     std::vector<double> solve_times_;
     int iteration_count_ = 0;
 
+    std::optional<ReferencePath> reference_path_;
+
+    /// Custom per-obstacle mode weights (set externally, e.g. from OT predictor).
     std::map<int, std::map<std::string, double>> custom_per_obstacle_weights_;
-    std::vector<double> certificate_radii_;
-    bool use_current_scenarios_next_ = false;
+
+    /// Pre-injected scenarios for the next solve() call.
+    std::vector<Scenario> pre_injected_scenarios_;
 };
 
 }  // namespace scenario_mpc

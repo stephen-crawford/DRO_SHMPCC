@@ -43,18 +43,8 @@ std::vector<CollisionConstraint> compute_linearized_constraints(
     double ego_radius,
     double obstacle_radius,
     double safety_margin = 0.0,
-    int num_discs = 1
-);
-
-/**
- * @brief Tighten constraints by certificate radii (Certificate-First, §7.1).
- * For each constraint at timestep k: b_robust = b - radius[k] * ||a||.
- * @param constraints Linearized constraints
- * @param radii Per-timestep radii (index k); if empty, no tightening
- */
-std::vector<CollisionConstraint> tighten_constraints_by_certificate(
-    const std::vector<CollisionConstraint>& constraints,
-    const std::vector<double>& radii
+    int num_discs = 1,
+    double vehicle_length = 4.0
 );
 
 /**
@@ -133,6 +123,48 @@ std::vector<CollisionConstraint> merge_redundant_constraints(
     const std::vector<CollisionConstraint>& constraints,
     double angle_threshold = 0.1,
     double offset_threshold = 0.5
+);
+
+/**
+ * @brief Douglas-Rachford projection for collision avoidance.
+ *
+ * Projects a position onto the collision-free region outside a circle
+ * of given radius centered at the obstacle. Uses the DR splitting
+ * method from the Python reference (utils/math_tools_impl.py).
+ *
+ * @param position Point to project (modified in-place)
+ * @param obstacle Obstacle center position
+ * @param radius Combined collision radius (ego + obstacle + margin)
+ * @param starting_pose Starting pose for projection direction
+ */
+void douglas_rachford_projection(
+    Eigen::Vector2d& position,
+    const Eigen::Vector2d& obstacle,
+    double radius,
+    const Eigen::Vector2d& starting_pose
+);
+
+/**
+ * @brief Project a warmstart trajectory to satisfy collision constraints.
+ *
+ * For each timestep, if the warmstart position violates any collision
+ * constraint, project it away from the obstacle using Douglas-Rachford.
+ * This ensures the solver warmstart is feasible, preventing solver
+ * failures. Reference: Python GaussianConstraints._project_warmstart_to_gaussian_safety
+ *
+ * @param trajectory Warmstart trajectory (modified in-place)
+ * @param constraints Collision constraints to satisfy
+ * @param ego_radius Ego collision radius
+ * @param obstacle_radius Obstacle collision radius
+ * @param safety_margin Additional margin
+ * @return Number of positions projected
+ */
+int project_warmstart_to_safety(
+    std::vector<EgoState>& trajectory,
+    const std::vector<CollisionConstraint>& constraints,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin = 0.0
 );
 
 }  // namespace scenario_mpc

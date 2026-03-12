@@ -27,32 +27,48 @@ namespace scenario_mpc {
 // =============================================================================
 
 /**
- * @brief Ego vehicle state: x_ego = (x, y, theta, v)
+ * @brief Ego vehicle state: x_ego = (x, y, theta, v, s)
+ *
+ * The first 4 components [x, y, theta, v] are integrated via RK4.
+ * The spline parameter s (arc length along reference path) is updated
+ * algebraically after integration, following the Python reference
+ * (ContouringSecondOrderUnicycleModel).
  */
 struct EgoState {
     double x;      ///< Position x-coordinate [m]
     double y;      ///< Position y-coordinate [m]
     double theta;  ///< Heading angle [rad]
     double v;      ///< Velocity magnitude [m/s]
+    double s;      ///< Spline/arc-length parameter along reference path [m] (-1 = not tracking)
 
-    EgoState() : x(0), y(0), theta(0), v(0) {}
+    EgoState() : x(0), y(0), theta(0), v(0), s(-1) {}
     EgoState(double x, double y, double theta, double v)
-        : x(x), y(y), theta(theta), v(v) {}
+        : x(x), y(y), theta(theta), v(v), s(-1) {}
+    EgoState(double x, double y, double theta, double v, double s)
+        : x(x), y(y), theta(theta), v(v), s(s) {}
 
-    /// Convert to Eigen vector [x, y, theta, v]
+    /// Convert to Eigen vector [x, y, theta, v] (dynamics-only, 4D)
     Eigen::Vector4d to_array() const {
         return Eigen::Vector4d(x, y, theta, v);
     }
 
-    /// Create from Eigen vector
+    /// Create from Eigen vector (dynamics-only, 4D; preserves s=-1)
     static EgoState from_array(const Eigen::Vector4d& arr) {
         return EgoState(arr(0), arr(1), arr(2), arr(3));
+    }
+
+    /// Create from Eigen vector with spline parameter
+    static EgoState from_array(const Eigen::Vector4d& arr, double s) {
+        return EgoState(arr(0), arr(1), arr(2), arr(3), s);
     }
 
     /// Get position as 2D vector [x, y]
     Eigen::Vector2d position() const {
         return Eigen::Vector2d(x, y);
     }
+
+    /// Whether this state has a valid spline parameter
+    bool has_spline() const { return s >= 0; }
 };
 
 /**
@@ -161,13 +177,16 @@ struct ModeModel {
  */
 struct ModeHistory {
     int obstacle_id;                                    ///< Unique obstacle identifier
+    int obstacle_class = 0;                             ///< Class identifier (shared across obstacles)
     std::map<std::string, ModeModel> available_modes;   ///< Mode ID to ModeModel
     std::vector<std::pair<int, std::string>> observed_modes;  ///< (timestep, mode_id)
     int max_history = 100;                              ///< Maximum history length
 
     ModeHistory() : obstacle_id(0) {}
-    ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes)
-        : obstacle_id(obstacle_id), available_modes(modes) {}
+    ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes,
+                int obstacle_class = 0)
+        : obstacle_id(obstacle_id), obstacle_class(obstacle_class),
+          available_modes(modes) {}
 
     /// Record a mode observation at the given timestep
     void record_observation(int timestep, const std::string& mode_id) {

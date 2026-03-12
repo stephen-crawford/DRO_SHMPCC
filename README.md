@@ -14,14 +14,21 @@ ot_shmpc_paper/
 ├── CMakeLists.txt          # Builds library + paper_experiment_runner + tests
 ├── README.md               # This file
 ├── include/                # C++ headers (config, MPC, DRO, OT predictor, etc.)
-├── src/                    # Library sources
-├── tests/                  # paper_experiment_runner, test_dro_framework, test_statistical_power
+│   └── experiment_harness.hpp  # Canonical rollout API (ExperimentConfig, RolloutRecord)
+├── src/
+│   └── experiment_harness.cpp  # ALL rollout logic (obstacle sim, collision, path, OT)
+├── tests/
+│   ├── paper_experiment_runner.cpp  # Experiment configs A-AB, thin wrappers over harness
+│   ├── test_dro_framework.cpp       # DRO module validation (H1-H6)
+│   ├── test_statistical_power.cpp   # High-power statistical tests (2000 rollouts)
+│   └── test_obstacle_class.cpp      # Obstacle class sharing validation
 ├── scripts/
-│   └── generate_results_figures.py   # Reads CSVs, writes figure PNGs
+│   └── generate_results_figures.py  # Reads CSVs, writes figure PNGs
 ├── paper_figures/          # Created at run time; CSVs and PNGs go here
 └── docs/
     ├── PAPER_FIGURES_PIPELINE.md     # Experiment → CSV → figure map, DRO/OT flow
-    └── OT_MODE_COVERAGE.md           # OT and safe-horizon math
+    ├── OT_MODE_COVERAGE.md           # OT and safe-horizon math
+    └── OT_SHMPCC_REFERENCE.md        # Complete codebase reference
 ```
 
 ## Build
@@ -47,6 +54,9 @@ cd build
 ./test_dro_framework
 ./test_statistical_power
 
+# Validate obstacle class sharing
+./test_obstacle_class
+
 # Generate figures (reads/writes build/paper_figures/)
 python3 ../scripts/generate_results_figures.py
 ```
@@ -60,13 +70,21 @@ To run a single experiment, e.g. A or T:
 ./paper_experiment_runner T
 ```
 
+## Architecture
+
+All rollout logic lives in `experiment_harness.cpp` — obstacle simulation, mode observation tracking, multi-disc collision detection, OT predictor integration, path progress, and multi-obstacle class sharing. The paper experiment runner (`paper_experiment_runner.cpp`) is a thin configuration layer: it maps experiment parameters to `ExperimentConfig`, calls `run_experiment_rollout()`, and writes CSVs.
+
+**Obstacle class sharing**: obstacles assigned to the same class share mode observations. When one obstacle's mode is observed, it is broadcast to all siblings in the same class. This is configured via `ExperimentConfig::obstacles_per_class` and tracked via `ModeHistory::obstacle_class` in the controller.
+
 ## What this export includes
 
 - **Core SHMPC library**: scenario sampling, mode weights, DRO (Wasserstein worst-case weights + injection), OT predictor (Sinkhorn, ground cost), safe-horizon truncation, QP solver, collision constraints.
-- **Paper experiment runner**: variants Base, DRO, OT, OT+SH, etc.; experiments A–AB writing CSVs for the paper figures.
+- **Experiment harness**: canonical rollout runner with S-curve paths, multi-obstacle class sharing, OT predictor, and per-step callbacks for experiment-specific behavior.
+- **Paper experiment runner**: variants Base, DRO, OT, OT+SH, etc.; experiments A–AB writing CSVs for the paper figures. All rollouts delegate to the harness.
 - **test_dro_framework** and **test_statistical_power**: additional CSVs used by fig 10, 11, 12.
+- **test_obstacle_class**: validates obstacle class sharing (observation sync, late-join inheritance, class independence).
 - **Figure script**: `scripts/generate_results_figures.py` produces all paper figures from the CSVs.
-- **Docs**: pipeline description and OT/safe-horizon formulation.
+- **Docs**: pipeline description, OT/safe-horizon formulation, and complete codebase reference.
 
 ## Exporting as a new repo
 

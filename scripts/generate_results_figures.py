@@ -48,26 +48,26 @@ OUT_DIR = "paper_figures/"
 
 VARIANT_COLORS = {
     "Base": "#1f77b4",
-    "DRO": "#ff7f0e",
-    "OT": "#2ca02c",
-    "OT+DRO": "#d62728",
     "Base+SH": "#aec7e8",
+    "OT": "#2ca02c",
     "OT+SH": "#98df8a",
-    "OT+ADV": "#9467bd",
-    "OT+ADV+SH": "#e377c2",
+    "DRO": "#ff7f0e",
+    "DRO+SH": "#ffbb78",
+    "OT+DRO": "#d62728",
+    "OT+DRO+SH": "#e377c2",
 }
 VARIANT_MARKERS = {
     "Base": "o",
-    "DRO": "s",
-    "OT": "^",
-    "OT+DRO": "D",
     "Base+SH": "v",
+    "OT": "^",
     "OT+SH": "<",
-    "OT+ADV": ">",
-    "OT+ADV+SH": "P",
+    "DRO": "s",
+    "DRO+SH": ">",
+    "OT+DRO": "D",
+    "OT+DRO+SH": "P",
 }
-VARIANT_ORDER = ["Base", "DRO", "OT", "OT+DRO",
-                 "Base+SH", "OT+SH", "OT+ADV", "OT+ADV+SH"]
+VARIANT_ORDER = ["Base", "Base+SH", "OT", "OT+SH",
+                 "DRO", "DRO+SH", "OT+DRO", "OT+DRO+SH"]
 
 EPS_TARGET = 0.05  # epsilon target for horizontal dashed line
 
@@ -1496,31 +1496,29 @@ def fig25_missed_mode_vs_s():
     if df is None:
         return
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    for vname in ["Base", "OT", "OT+SH"]:
+    for vname in VARIANT_ORDER:
         sub = df[df["variant"] == vname].sort_values("num_scenarios")
         if sub.empty:
             continue
         color = VARIANT_COLORS.get(vname, "#999999")
         marker = VARIANT_MARKERS.get(vname, "o")
 
-        # Left: missed-mode rate vs S
         axes[0].plot(sub["num_scenarios"], sub["missed_mode_rate"],
                      label=vname, color=color, marker=marker,
-                     linewidth=1.5, markersize=6)
+                     linewidth=1.5, markersize=5)
 
-        # Right: collision rate vs S with CI
         axes[1].errorbar(sub["num_scenarios"], sub["collision_rate"],
                          yerr=[sub["collision_rate"] - sub["ci_lo"],
                                sub["ci_hi"] - sub["collision_rate"]],
                          label=vname, color=color, marker=marker,
-                         linewidth=1.5, markersize=6, capsize=3)
+                         linewidth=1.5, markersize=5, capsize=3)
 
     axes[0].set_xlabel("Scenario count S")
     axes[0].set_ylabel("Missed-mode rate")
     axes[0].set_title("Mode Coverage vs. Scenario Budget")
-    axes[0].legend(fontsize=8)
+    axes[0].legend(fontsize=7, ncol=2)
     axes[0].grid(True, alpha=0.3)
     axes[0].set_xscale("log", base=2)
 
@@ -1529,11 +1527,11 @@ def fig25_missed_mode_vs_s():
     axes[1].set_xlabel("Scenario count S")
     axes[1].set_ylabel("Collision rate")
     axes[1].set_title("Collision Rate vs. Scenario Budget")
-    axes[1].legend(fontsize=8)
+    axes[1].legend(fontsize=7, ncol=2)
     axes[1].grid(True, alpha=0.3)
     axes[1].set_xscale("log", base=2)
 
-    fig.suptitle("Impact of Scenario Count on Coverage and Safety", fontsize=12, y=1.02)
+    fig.suptitle("Impact of Scenario Count on Coverage and Safety (4 obs, 4 classes)", fontsize=12, y=1.02)
     fig.tight_layout()
     out = os.path.join(OUT_DIR, "fig25_missed_mode_vs_s.png")
     fig.savefig(out)
@@ -1634,57 +1632,64 @@ def fig27_rare_mode_sweep():
     if df is None:
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    # Check if obs_config column exists (new multi-config format)
+    has_config = "obs_config" in df.columns
+    configs = df["obs_config"].unique() if has_config else ["default"]
 
-    for vname in ["Base", "OT", "OT+SH"]:
-        sub = df[df["variant"] == vname].sort_values("rare_prob")
-        if sub.empty:
-            continue
-        color = VARIANT_COLORS.get(vname, "#999999")
-        marker = VARIANT_MARKERS.get(vname, "o")
+    for cfg in configs:
+        sub_cfg = df[df["obs_config"] == cfg] if has_config else df
+        suffix = f"_{cfg}" if has_config and len(configs) > 1 else ""
 
-        # Left: collision rate vs rare_prob
-        axes[0].errorbar(sub["rare_prob"], sub["collision_rate"],
-                         yerr=[sub["collision_rate"] - sub["ci_lo"],
-                               sub["ci_hi"] - sub["collision_rate"]],
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+        for vname in VARIANT_ORDER:
+            sub = sub_cfg[sub_cfg["variant"] == vname].sort_values("rare_prob")
+            if sub.empty:
+                continue
+            color = VARIANT_COLORS.get(vname, "#999999")
+            marker = VARIANT_MARKERS.get(vname, "o")
+
+            axes[0].errorbar(sub["rare_prob"], sub["collision_rate"],
+                             yerr=[sub["collision_rate"] - sub["ci_lo"],
+                                   sub["ci_hi"] - sub["collision_rate"]],
+                             label=vname, color=color, marker=marker,
+                             linewidth=1.5, markersize=5, capsize=3)
+
+            axes[1].plot(sub["rare_prob"], sub["missed_mode_rate"],
                          label=vname, color=color, marker=marker,
-                         linewidth=1.5, markersize=6, capsize=3)
+                         linewidth=1.5, markersize=5)
 
-        # Middle: overall missed-mode rate
-        axes[1].plot(sub["rare_prob"], sub["missed_mode_rate"],
-                     label=vname, color=color, marker=marker,
-                     linewidth=1.5, markersize=6)
+            if "rare_mode_missed_frac" in sub.columns:
+                axes[2].plot(sub["rare_prob"], sub["rare_mode_missed_frac"],
+                             label=vname, color=color, marker=marker,
+                             linewidth=1.5, markersize=5)
 
-        # Right: rare-mode specific miss fraction
-        axes[2].plot(sub["rare_prob"], sub["rare_mode_missed_frac"],
-                     label=vname, color=color, marker=marker,
-                     linewidth=1.5, markersize=6)
+        axes[0].axhline(EPS_TARGET, color="gray", linestyle="--", linewidth=1, alpha=0.7)
+        axes[0].set_xlabel("Rare-mode probability")
+        axes[0].set_ylabel("Collision rate")
+        axes[0].set_title("Collision Rate")
+        axes[0].legend(fontsize=7, ncol=2)
+        axes[0].grid(True, alpha=0.3)
 
-    axes[0].axhline(EPS_TARGET, color="gray", linestyle="--", linewidth=1, alpha=0.7)
-    axes[0].set_xlabel("Rare-mode probability")
-    axes[0].set_ylabel("Collision rate")
-    axes[0].set_title("Collision Rate")
-    axes[0].legend(fontsize=8)
-    axes[0].grid(True, alpha=0.3)
+        axes[1].set_xlabel("Rare-mode probability")
+        axes[1].set_ylabel("Missed-mode rate (all modes)")
+        axes[1].set_title("Overall Mode Coverage")
+        axes[1].legend(fontsize=7, ncol=2)
+        axes[1].grid(True, alpha=0.3)
 
-    axes[1].set_xlabel("Rare-mode probability")
-    axes[1].set_ylabel("Missed-mode rate (all modes)")
-    axes[1].set_title("Overall Mode Coverage")
-    axes[1].legend(fontsize=8)
-    axes[1].grid(True, alpha=0.3)
+        axes[2].set_xlabel("Rare-mode probability")
+        axes[2].set_ylabel("Rare-mode miss fraction")
+        axes[2].set_title("Rare-Mode Miss Rate")
+        axes[2].legend(fontsize=7, ncol=2)
+        axes[2].grid(True, alpha=0.3)
 
-    axes[2].set_xlabel("Rare-mode probability")
-    axes[2].set_ylabel("Rare-mode miss fraction")
-    axes[2].set_title("Rare-Mode Miss Rate")
-    axes[2].legend(fontsize=8)
-    axes[2].grid(True, alpha=0.3)
-
-    fig.suptitle("Rare-Mode Probability Sweep (S=40, sp=0.2)", fontsize=12, y=1.02)
-    fig.tight_layout()
-    out = os.path.join(OUT_DIR, "fig27_rare_mode_sweep.png")
-    fig.savefig(out)
-    plt.close(fig)
-    print(f"  Saved {out}")
+        title = f"Rare-Mode Probability Sweep ({cfg})" if has_config else "Rare-Mode Probability Sweep"
+        fig.suptitle(title, fontsize=12, y=1.02)
+        fig.tight_layout()
+        out = os.path.join(OUT_DIR, f"fig27_rare_mode_sweep{suffix}.png")
+        fig.savefig(out)
+        plt.close(fig)
+        print(f"  Saved {out}")
 
 
 # ============================================================================
@@ -1696,55 +1701,52 @@ def fig28_mode_scaling():
     if df is None:
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
-    for vname in ["Base", "OT", "OT+SH"]:
+    for vname in VARIANT_ORDER:
         sub = df[df["variant"] == vname].sort_values("num_modes")
         if sub.empty:
             continue
         color = VARIANT_COLORS.get(vname, "#999999")
         marker = VARIANT_MARKERS.get(vname, "o")
 
-        # Left: collision rate vs M
         axes[0].errorbar(sub["num_modes"], sub["collision_rate"],
                          yerr=[sub["collision_rate"] - sub["ci_lo"],
                                sub["ci_hi"] - sub["collision_rate"]],
                          label=vname, color=color, marker=marker,
-                         linewidth=1.5, markersize=6, capsize=3)
+                         linewidth=1.5, markersize=5, capsize=3)
 
-        # Middle: missed-mode rate vs M
         axes[1].plot(sub["num_modes"], sub["missed_mode_rate"],
                      label=vname, color=color, marker=marker,
-                     linewidth=1.5, markersize=6)
+                     linewidth=1.5, markersize=5)
 
-        # Right: solve time vs M
         axes[2].plot(sub["num_modes"], sub["avg_solve_ms"],
                      label=vname, color=color, marker=marker,
-                     linewidth=1.5, markersize=6)
+                     linewidth=1.5, markersize=5)
 
     axes[0].axhline(EPS_TARGET, color="gray", linestyle="--", linewidth=1, alpha=0.7)
     axes[0].set_xlabel("Number of modes M")
     axes[0].set_ylabel("Collision rate")
     axes[0].set_title("Collision Rate vs. M")
-    axes[0].legend(fontsize=8)
+    axes[0].legend(fontsize=7, ncol=2)
     axes[0].grid(True, alpha=0.3)
     axes[0].set_xticks(df["num_modes"].unique())
 
     axes[1].set_xlabel("Number of modes M")
     axes[1].set_ylabel("Missed-mode rate")
     axes[1].set_title("Mode Coverage vs. M")
-    axes[1].legend(fontsize=8)
+    axes[1].legend(fontsize=7, ncol=2)
     axes[1].grid(True, alpha=0.3)
     axes[1].set_xticks(df["num_modes"].unique())
 
     axes[2].set_xlabel("Number of modes M")
     axes[2].set_ylabel("Average solve time [ms]")
     axes[2].set_title("Runtime vs. M")
-    axes[2].legend(fontsize=8)
+    axes[2].legend(fontsize=7, ncol=2)
     axes[2].grid(True, alpha=0.3)
     axes[2].set_xticks(df["num_modes"].unique())
 
-    fig.suptitle("Scaling with Number of Modes (S=40, sp=0.2)", fontsize=12, y=1.02)
+    fig.suptitle("Scaling with Number of Modes (4 obs, 4 classes)", fontsize=12, y=1.02)
     fig.tight_layout()
     out = os.path.join(OUT_DIR, "fig28_mode_scaling.png")
     fig.savefig(out)
@@ -1761,57 +1763,45 @@ def fig29_baselines_rare_mode():
     if df is None:
         return
 
-    baselines = df["baseline"].unique()
-    rare_probs = sorted(df["rare_prob"].unique())
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle("All Variants: Rare-Mode Stress Test (4 obs, 4 classes)", fontsize=13)
 
-    baseline_colors = {
-        "Standard": "#1f77b4", "OT": "#2ca02c", "OT+SH": "#98df8a",
-        "Uniform": "#ff7f0e", "Temperature": "#d62728",
-        "Stratified": "#9467bd", "EpsGreedy": "#8c564b",
-    }
-    baseline_markers = {
-        "Standard": "s", "OT": "o", "OT+SH": "D",
-        "Uniform": "^", "Temperature": "v",
-        "Stratified": "P", "EpsGreedy": "X",
-    }
+    for vname in VARIANT_ORDER:
+        sub = df[df["baseline"] == vname].sort_values("rare_prob")
+        if sub.empty:
+            continue
+        c = VARIANT_COLORS.get(vname, "#333333")
+        m = VARIANT_MARKERS.get(vname, "o")
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
-    fig.suptitle("Coverage Baselines vs OT on Rare-Mode Stress Test (S=40, sp=0.2)", fontsize=13)
-
-    for bl in baselines:
-        sub = df[df["baseline"] == bl]
-        c = baseline_colors.get(bl, "#333333")
-        m = baseline_markers.get(bl, "o")
-
-        # Panel 1: Collision rate
         axes[0].errorbar(sub["rare_prob"], sub["collision_rate"],
                          yerr=[sub["collision_rate"] - sub["ci_lo"],
                                sub["ci_hi"] - sub["collision_rate"]],
-                         label=bl, color=c, marker=m, markersize=5, capsize=3, linewidth=1.5)
+                         label=vname, color=c, marker=m, markersize=5, capsize=3, linewidth=1.5)
 
-        # Panel 2: Missed-mode rate
         axes[1].plot(sub["rare_prob"], sub["missed_mode_rate"],
-                     label=bl, color=c, marker=m, markersize=5, linewidth=1.5)
+                     label=vname, color=c, marker=m, markersize=5, linewidth=1.5)
 
-        # Panel 3: Rare-mode miss fraction
         axes[2].plot(sub["rare_prob"], sub["rare_mode_missed_frac"],
-                     label=bl, color=c, marker=m, markersize=5, linewidth=1.5)
+                     label=vname, color=c, marker=m, markersize=5, linewidth=1.5)
 
     axes[0].set_xlabel("Rare-mode probability")
     axes[0].set_ylabel("Collision rate")
     axes[0].set_title("Collision Rate")
     axes[0].axhline(0.05, ls="--", color="gray", alpha=0.5, label=r"$\varepsilon$ target")
     axes[0].legend(fontsize=7, ncol=2)
+    axes[0].grid(True, alpha=0.3)
 
     axes[1].set_xlabel("Rare-mode probability")
     axes[1].set_ylabel("Missed-mode rate (all modes)")
     axes[1].set_title("Overall Mode Coverage")
     axes[1].legend(fontsize=7, ncol=2)
+    axes[1].grid(True, alpha=0.3)
 
     axes[2].set_xlabel("Rare-mode probability")
     axes[2].set_ylabel("Rare-mode miss fraction")
     axes[2].set_title("Rare-Mode Miss Rate")
     axes[2].legend(fontsize=7, ncol=2)
+    axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
     out = os.path.join(OUT_DIR, "fig29_baselines_rare_mode.png")
@@ -1829,90 +1819,69 @@ def fig30_geometry_ablation():
     if df is None:
         return
 
-    costs = df["ground_cost"].values
-    cr = df["collision_rate"].values
-    ci_lo = df["ci_lo"].values
-    ci_hi = df["ci_hi"].values
-    mmr = df["missed_mode_rate"].values
-    p99 = df["p99_solve_ms"].values
+    # New format: variant × ground_cost
+    # For non-OT variants, only W2-Euclidean row exists (ground cost irrelevant)
+    # For OT variants, all 5 ground costs exist
 
-    # Try to load paired data for McNemar tests
-    paired_df = load_csv("exp_y_paired.csv")
-    mcnemar_labels = {}
-    if paired_df is not None and "W2-Euclidean" in paired_df.columns:
-        from scipy.stats import chi2 as chi2_dist
-        w2_col = paired_df["W2-Euclidean"].values
-        for c in costs:
-            if c == "W2-Euclidean":
-                continue
-            if c in paired_df.columns:
-                other_col = paired_df[c].values
-                # McNemar: b = W2 safe & other collision, c = W2 coll & other safe
-                b = int(np.sum((w2_col == 0) & (other_col == 1)))
-                mc_c = int(np.sum((w2_col == 1) & (other_col == 0)))
-                if b + mc_c > 0:
-                    chi2_val = (abs(b - mc_c) - 1) ** 2 / (b + mc_c)
-                    p_val = 1 - chi2_dist.cdf(chi2_val, df=1)
-                else:
-                    p_val = 1.0
-                if p_val < 0.001:
-                    mcnemar_labels[c] = "***"
-                elif p_val < 0.01:
-                    mcnemar_labels[c] = "**"
-                elif p_val < 0.05:
-                    mcnemar_labels[c] = "*"
-                else:
-                    mcnemar_labels[c] = f"p={p_val:.2f}"
+    # Panel 1: Grouped bar chart - collision rate by variant, ground cost as groups
+    # Panel 2: For OT variants only, collision rate by ground cost
 
-    # Color W2 green (our method), controls red/orange
-    bar_colors = []
-    for c in costs:
-        if c == "W2-Euclidean":
-            bar_colors.append("#2ca02c")
-        elif c in ("Random-Permuted", "Constant"):
-            bar_colors.append("#d62728")
-        else:
-            bar_colors.append("#ff7f0e")
+    costs = df["ground_cost"].unique()
+    variants = [v for v in VARIANT_ORDER if v in df["variant"].unique()]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    n_rollouts = max(int(round(1.0 / (ci_hi[0] - ci_lo[0]) * 4)), 200)  # estimate
-    n_rollouts_str = str(n_rollouts) if paired_df is None else str(len(paired_df))
-    fig.suptitle(f"OT Geometry Ablation: Semantic vs Broken Cost Matrices (sp=0.28, S=40, N={n_rollouts_str})",
-                 fontsize=13)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    fig.suptitle("Geometry Ablation (4 obs, 4 classes, sp=0.28)", fontsize=13)
 
-    # Panel 1: Collision rate with McNemar annotations
-    x = np.arange(len(costs))
-    yerr = [cr - ci_lo, ci_hi - cr]
-    bars = axes[0].bar(x, cr, color=bar_colors, yerr=yerr, capsize=4,
-                       edgecolor="black", linewidth=0.5)
+    # Panel 1: All variants at W2-Euclidean (baseline comparison)
+    w2_df = df[df["ground_cost"] == "W2-Euclidean"]
+    x = np.arange(len(variants))
+    cr = [w2_df[w2_df["variant"] == v]["collision_rate"].values[0] if not w2_df[w2_df["variant"] == v].empty else 0 for v in variants]
+    ci_lo = [w2_df[w2_df["variant"] == v]["ci_lo"].values[0] if not w2_df[w2_df["variant"] == v].empty else 0 for v in variants]
+    ci_hi = [w2_df[w2_df["variant"] == v]["ci_hi"].values[0] if not w2_df[w2_df["variant"] == v].empty else 0 for v in variants]
+    cr, ci_lo, ci_hi = np.array(cr), np.array(ci_lo), np.array(ci_hi)
+    bar_colors = [VARIANT_COLORS.get(v, "#999") for v in variants]
+
+    axes[0].bar(x, cr, color=bar_colors, yerr=[cr - ci_lo, ci_hi - cr],
+                capsize=4, edgecolor="black", linewidth=0.5)
     axes[0].set_xticks(x)
-    axes[0].set_xticklabels(costs, rotation=30, ha="right", fontsize=8)
+    axes[0].set_xticklabels(variants, rotation=35, ha="right", fontsize=8)
     axes[0].set_ylabel("Collision rate")
-    axes[0].set_title("Collision Rate by Ground Cost")
+    axes[0].set_title("Collision Rate (W2-Euclidean cost)")
     axes[0].axhline(0.05, ls="--", color="gray", alpha=0.5, label=r"$\varepsilon$ target")
-
-    # Add McNemar p-value annotations
-    for i, c in enumerate(costs):
-        if c in mcnemar_labels:
-            axes[0].text(i, ci_hi[i] + 0.005, mcnemar_labels[c],
-                         ha="center", va="bottom", fontsize=7,
-                         color="darkred" if mcnemar_labels[c].startswith("*") else "gray")
-
     axes[0].legend(fontsize=8)
+    axes[0].grid(True, alpha=0.3, axis="y")
 
-    # Panel 2: Missed-mode rate
-    axes[1].bar(x, mmr, color=bar_colors, edgecolor="black", linewidth=0.5)
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(costs, rotation=30, ha="right", fontsize=8)
-    axes[1].set_ylabel("Missed-mode rate")
-    axes[1].set_title("Mode Coverage by Ground Cost")
+    # Panel 2: OT variants across different ground costs
+    ot_variants = [v for v in variants if "OT" in v]
+    cost_colors = {"W2-Euclidean": "#2ca02c", "Random-Permuted": "#d62728",
+                   "Constant": "#ff7f0e", "Flat-NoGeom": "#9467bd", "Mean-Only": "#8c564b"}
+    cost_list = list(costs)
+    bar_width = 0.15
+    for i, gc in enumerate(cost_list):
+        gc_df = df[df["ground_cost"] == gc]
+        positions = []
+        heights = []
+        yerr_lo = []
+        yerr_hi = []
+        for j, v in enumerate(ot_variants):
+            row = gc_df[gc_df["variant"] == v]
+            if not row.empty:
+                positions.append(j + i * bar_width - (len(cost_list) - 1) * bar_width / 2)
+                heights.append(row["collision_rate"].values[0])
+                yerr_lo.append(row["collision_rate"].values[0] - row["ci_lo"].values[0])
+                yerr_hi.append(row["ci_hi"].values[0] - row["collision_rate"].values[0])
+        if positions:
+            axes[1].bar(positions, heights, bar_width * 0.9,
+                        color=cost_colors.get(gc, "#999"),
+                        yerr=[yerr_lo, yerr_hi], capsize=2,
+                        edgecolor="black", linewidth=0.3, label=gc)
 
-    # Panel 3: P99 solve time
-    axes[2].bar(x, p99, color=bar_colors, edgecolor="black", linewidth=0.5)
-    axes[2].set_xticks(x)
-    axes[2].set_xticklabels(costs, rotation=30, ha="right", fontsize=8)
-    axes[2].set_ylabel("P99 solve time (ms)")
-    axes[2].set_title("Tail Latency (P99)")
+    axes[1].set_xticks(range(len(ot_variants)))
+    axes[1].set_xticklabels(ot_variants, rotation=35, ha="right", fontsize=8)
+    axes[1].set_ylabel("Collision rate")
+    axes[1].set_title("OT Variants: Effect of Ground Cost")
+    axes[1].legend(fontsize=7, ncol=2)
+    axes[1].grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
     out = os.path.join(OUT_DIR, "fig30_geometry_ablation.png")
@@ -1931,63 +1900,55 @@ def fig31_qualitative_rollouts():
         return
 
     seeds = df["seed"].unique()
-    variants = ["Base", "OT", "OT_SH"]
-    variant_labels = {"Base": "Base (Freq.)", "OT": "OT", "OT_SH": "OT+SH"}
-    variant_colors = {"Base": "#1f77b4", "OT": "#2ca02c", "OT_SH": "#98df8a"}
+    variants = [v for v in VARIANT_ORDER if v in df["variant"].unique()]
+    obs_colors = ["#666666", "#8c564b", "#7f7f7f", "#bcbd22"]
 
-    n_seeds = min(len(seeds), 4)
-    fig, axes = plt.subplots(n_seeds, 3, figsize=(14, 3.5 * n_seeds))
+    # Show a subset: pick 4 key variants and 2 seeds for space
+    show_variants = [v for v in ["Base", "OT", "OT+SH", "OT+DRO+SH"] if v in variants]
+    n_seeds = min(len(seeds), 2)
+    n_vars = len(show_variants)
+
+    fig, axes = plt.subplots(n_seeds, n_vars, figsize=(4.5 * n_vars, 4 * n_seeds))
     if n_seeds == 1:
         axes = axes.reshape(1, -1)
-    fig.suptitle("Qualitative Rollout Comparison: Base vs OT vs OT+SH", fontsize=14, y=1.02)
+    fig.suptitle("Qualitative Rollout Comparison (4 obstacles)", fontsize=14, y=1.02)
 
     for row, seed in enumerate(seeds[:n_seeds]):
-        for col, var in enumerate(variants):
+        for col, var in enumerate(show_variants):
             ax = axes[row, col]
             sub = df[(df["seed"] == seed) & (df["variant"] == var)]
             if sub.empty:
                 ax.set_visible(False)
                 continue
 
-            # Plot ego trajectory
-            ax.plot(sub["ego_x"], sub["ego_y"], "-", color=variant_colors[var],
+            vcolor = VARIANT_COLORS.get(var, "#333")
+            ax.plot(sub["ego_x"], sub["ego_y"], "-", color=vcolor,
                     linewidth=1.5, label="Ego", zorder=3)
 
-            # Plot obstacle trajectory
-            ax.plot(sub["obs_x"], sub["obs_y"], "--", color="#666666",
-                    linewidth=1.0, label="Obstacle", zorder=2)
+            # Plot each obstacle trajectory
+            for oi in range(4):
+                ox_col = f"obs{oi}_x"
+                oy_col = f"obs{oi}_y"
+                if ox_col in sub.columns and oy_col in sub.columns:
+                    ax.plot(sub[ox_col], sub[oy_col], "--",
+                            color=obs_colors[oi % len(obs_colors)],
+                            linewidth=0.8, alpha=0.7,
+                            label=f"Obs {oi}" if row == 0 and col == 0 else None,
+                            zorder=2)
 
             # Mark collisions
             coll = sub[sub["collision"] == 1]
             if not coll.empty:
                 ax.scatter(coll["ego_x"], coll["ego_y"], c="red", s=40,
-                           marker="x", zorder=5, label="Collision")
-
-            # Mark missed modes
-            missed = sub[sub["missed_mode"] == 1]
-            if len(missed) > 0:
-                # Sample a few to avoid clutter
-                sample_idx = missed.index[::max(1, len(missed) // 8)]
-                ax.scatter(missed.loc[sample_idx, "obs_x"],
-                           missed.loc[sample_idx, "obs_y"],
-                           c="orange", s=15, marker="^", alpha=0.6, zorder=4,
-                           label="Missed mode")
-
-            # Color background by mode
-            mode_changes = []
-            prev_mode = None
-            for _, r in sub.iterrows():
-                if r["obs_mode"] != prev_mode:
-                    mode_changes.append((r["step"], r["obs_mode"]))
-                    prev_mode = r["obs_mode"]
+                           marker="x", zorder=5, label="Collision" if row == 0 and col == 0 else None)
 
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             if row == 0:
-                ax.set_title(variant_labels[var], fontsize=11, fontweight="bold")
+                ax.set_title(var, fontsize=11, fontweight="bold")
 
             has_coll = not coll.empty
-            min_clear = sub["clearance"].min() if "clearance" in sub.columns else 0
+            min_clear = sub["min_clearance"].min() if "min_clearance" in sub.columns else 0
             ax.text(0.02, 0.98,
                     f"{'COLLISION' if has_coll else 'Safe'}\nmin d={min_clear:.2f}",
                     transform=ax.transAxes, fontsize=7, va="top",
@@ -1997,8 +1958,8 @@ def fig31_qualitative_rollouts():
             if col == 0:
                 ax.set_ylabel(f"Seed {seed}\ny", fontsize=9)
 
-            if row == 0 and col == 2:
-                ax.legend(fontsize=7, loc="lower right")
+    if n_seeds > 0 and n_vars > 0:
+        axes[0, 0].legend(fontsize=6, loc="lower right")
 
     plt.tight_layout()
     out = os.path.join(OUT_DIR, "fig31_qualitative_rollouts.png")
@@ -2017,69 +1978,75 @@ def fig32_robustness_boxplots():
         return
 
     envs = df["environment"].unique()
-    variants = ["Base", "OT", "OT+SH"]
-    var_colors = {"Base": "#1f77b4", "OT": "#2ca02c", "OT+SH": "#98df8a"}
+    variants = [v for v in VARIANT_ORDER if v in df["variant"].unique()]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-    fig.suptitle("Robustness Across Environments: Per-Seed Distributions", fontsize=14)
+    # For collision metric, use bar chart of collision rates instead of boxplots
+    # (binary data doesn't box well). For continuous metrics, use boxplots.
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    fig.suptitle("Robustness Across Environments (all 8 variants)", fontsize=14)
 
-    metrics = [
-        ("collision", "Collision (0/1)", axes[0, 0]),
+    # Panel 1: Collision rate bar chart
+    ax = axes[0, 0]
+    n_envs = len(envs)
+    n_vars = len(variants)
+    bar_width = 0.8 / n_vars
+    for j, var in enumerate(variants):
+        rates = []
+        for env in envs:
+            sub = df[(df["environment"] == env) & (df["variant"] == var)]
+            rates.append(sub["collision"].mean() if not sub.empty else 0)
+        x = np.arange(n_envs) + j * bar_width - (n_vars - 1) * bar_width / 2
+        ax.bar(x, rates, bar_width * 0.9,
+               color=VARIANT_COLORS.get(var, "#999"),
+               edgecolor="black", linewidth=0.3, label=var)
+    ax.set_xticks(np.arange(n_envs))
+    ax.set_xticklabels(envs, fontsize=8)
+    ax.set_ylabel("Collision rate")
+    ax.set_title("Collision Rate")
+    ax.axhline(0.05, ls="--", color="gray", alpha=0.5)
+    ax.legend(fontsize=6, ncol=2)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    # Panels 2-4: boxplots for continuous metrics
+    cont_metrics = [
         ("missed_mode_rate", "Missed-Mode Rate", axes[0, 1]),
-        ("progress", "Goal Progress (x)", axes[1, 0]),
+        ("progress", "Goal Progress", axes[1, 0]),
         ("min_clearance", "Min Clearance (m)", axes[1, 1]),
     ]
 
-    for metric_col, metric_label, ax in metrics:
+    for metric_col, metric_label, ax in cont_metrics:
         positions = []
         data = []
-        labels = []
         colors = []
-        width = 0.6
-        n_variants = len(variants)
-        n_envs = len(envs)
 
         for i, env in enumerate(envs):
             for j, var in enumerate(variants):
                 sub = df[(df["environment"] == env) & (df["variant"] == var)]
-                if sub.empty:
+                if sub.empty or metric_col not in sub.columns:
                     continue
-                pos = i * (n_variants + 1) + j
+                pos = i * (n_vars + 1) + j
                 positions.append(pos)
                 data.append(sub[metric_col].values)
-                labels.append(f"{env}\n{var}" if j == 1 else "")
-                colors.append(var_colors.get(var, "#999"))
+                colors.append(VARIANT_COLORS.get(var, "#999"))
 
-        bp = ax.boxplot(data, positions=positions, widths=width, patch_artist=True,
-                        showfliers=True, flierprops=dict(markersize=2))
+        if data:
+            bp = ax.boxplot(data, positions=positions, widths=0.6, patch_artist=True,
+                            showfliers=False, flierprops=dict(markersize=1))
+            for patch, color in zip(bp["boxes"], colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
 
-        for patch, color in zip(bp["boxes"], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.7)
-
-        # Set x-axis labels at environment centers
-        env_centers = [i * (n_variants + 1) + 1 for i in range(n_envs)]
+        env_centers = [i * (n_vars + 1) + n_vars // 2 for i in range(n_envs)]
         ax.set_xticks(env_centers)
-        ax.set_xticklabels(envs, fontsize=9)
+        ax.set_xticklabels(envs, fontsize=8)
         ax.set_ylabel(metric_label)
+        ax.set_title(metric_label)
 
-        # For collision, show mean rate as text
-        if metric_col == "collision":
-            for i, env in enumerate(envs):
-                for j, var in enumerate(variants):
-                    sub = df[(df["environment"] == env) & (df["variant"] == var)]
-                    if not sub.empty:
-                        cr = sub["collision"].mean()
-                        pos = i * (n_variants + 1) + j
-                        ax.text(pos, ax.get_ylim()[1] * 0.95, f"{cr:.0%}",
-                                ha="center", va="top", fontsize=7, fontweight="bold",
-                                color=var_colors.get(var, "#999"))
-
-    # Add legend
+    # Legend
     from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=var_colors[v], alpha=0.7, label=v)
+    legend_elements = [Patch(facecolor=VARIANT_COLORS.get(v, "#999"), alpha=0.7, label=v)
                        for v in variants]
-    axes[0, 0].legend(handles=legend_elements, fontsize=8, loc="upper right")
+    axes[1, 1].legend(handles=legend_elements, fontsize=6, ncol=2, loc="lower right")
 
     plt.tight_layout()
     out = os.path.join(OUT_DIR, "fig32_robustness_boxplots.png")
@@ -2097,63 +2064,60 @@ def fig33_pareto_frontier():
     if df is None:
         return
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5))
-    fig.suptitle(r"OT Regularization Pareto Frontier: Collision $\leftrightarrow$ Mode Coverage",
+    import matplotlib.colors as mcolors
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    fig.suptitle(r"OT Hyperparameter Pareto: Collision $\leftrightarrow$ Mode Coverage (4 obs, 4 classes)",
                  fontsize=13)
 
-    # Split into OT and OT+SH
-    df_ot = df[df["use_sh"] == 0]
-    df_sh = df[df["use_sh"] == 1]
-
-    # Panel 1: Pareto plane (collision vs missed-mode), colored by epsilon
-    ax = axes[0]
-
-    # Color by log(epsilon)
-    import matplotlib.colors as mcolors
+    variants = df["variant"].unique()
     norm = mcolors.LogNorm(vmin=df["epsilon"].min(), vmax=df["epsilon"].max())
     cmap = plt.cm.viridis
 
-    sc1 = ax.scatter(df_ot["collision_rate"], df_ot["missed_mode_rate"],
-                     c=df_ot["epsilon"], cmap=cmap, norm=norm,
-                     s=40, marker="o", edgecolor="black", linewidth=0.3,
-                     label="OT", alpha=0.8, zorder=3)
-    ax.scatter(df_sh["collision_rate"], df_sh["missed_mode_rate"],
-               c=df_sh["epsilon"], cmap=cmap, norm=norm,
-               s=60, marker="D", edgecolor="black", linewidth=0.5,
-               label="OT+SH", alpha=0.9, zorder=4)
+    # Panel 1: Pareto plane - each variant as different marker, colored by epsilon
+    ax = axes[0]
+    for vname in variants:
+        sub = df[df["variant"] == vname]
+        m = VARIANT_MARKERS.get(vname, "o")
+        sc = ax.scatter(sub["collision_rate"], sub["missed_mode_rate"],
+                        c=sub["epsilon"], cmap=cmap, norm=norm,
+                        s=40, marker=m, edgecolor="black", linewidth=0.3,
+                        label=vname, alpha=0.8, zorder=3)
 
-    # Mark the default operating point (eps=0.1, scale=1.0)
-    default_ot = df_ot[(df_ot["epsilon"].between(0.09, 0.11)) &
-                        (df_ot["uncertainty_scale"].between(0.9, 1.1))]
-    if not default_ot.empty:
-        ax.scatter(default_ot["collision_rate"].values[0],
-                   default_ot["missed_mode_rate"].values[0],
-                   c="red", s=150, marker="*", zorder=5,
-                   label=r"Default ($\varepsilon$=0.1, $\sigma$=1.0)")
+    # Mark default operating point (eps=0.1, scale=1.0) for OT variant
+    df_ot = df[df["variant"] == "OT"]
+    if not df_ot.empty:
+        default_ot = df_ot[(df_ot["epsilon"].between(0.09, 0.11)) &
+                           (df_ot["uncertainty_scale"].between(0.9, 1.1))]
+        if not default_ot.empty:
+            ax.scatter(default_ot["collision_rate"].values[0],
+                       default_ot["missed_mode_rate"].values[0],
+                       c="red", s=150, marker="*", zorder=5,
+                       label=r"Default ($\varepsilon$=0.1, $\sigma$=1.0)")
 
     ax.set_xlabel("Collision Rate")
     ax.set_ylabel("Missed-Mode Rate")
     ax.set_title("Safety vs Coverage Tradeoff")
     ax.axhline(0.05, ls=":", color="gray", alpha=0.3)
     ax.axvline(0.05, ls=":", color="gray", alpha=0.3)
-    ax.legend(fontsize=8)
-    cb = plt.colorbar(sc1, ax=ax, label=r"Sinkhorn $\varepsilon$")
+    ax.legend(fontsize=7, ncol=2)
+    plt.colorbar(sc, ax=ax, label=r"Sinkhorn $\varepsilon$")
 
-    # Panel 2: Collision rate vs epsilon, grouped by uncertainty_scale
+    # Panel 2: Collision rate vs epsilon for OT variant, grouped by scale
     ax2 = axes[1]
-    scales = sorted(df_ot["uncertainty_scale"].unique())
-    scale_colors = plt.cm.coolwarm(np.linspace(0, 1, len(scales)))
-
-    for sc_val, color in zip(scales, scale_colors):
-        sub = df_ot[df_ot["uncertainty_scale"] == sc_val].sort_values("epsilon")
-        ax2.plot(sub["epsilon"], sub["collision_rate"],
-                 "o-", color=color, markersize=5, linewidth=1.2,
-                 label=fr"$\sigma$={sc_val}")
+    if not df_ot.empty:
+        scales = sorted(df_ot["uncertainty_scale"].unique())
+        scale_colors = plt.cm.coolwarm(np.linspace(0, 1, len(scales)))
+        for sc_val, color in zip(scales, scale_colors):
+            sub = df_ot[df_ot["uncertainty_scale"] == sc_val].sort_values("epsilon")
+            ax2.plot(sub["epsilon"], sub["collision_rate"],
+                     "o-", color=color, markersize=5, linewidth=1.2,
+                     label=fr"$\sigma$={sc_val}")
 
     ax2.set_xscale("log")
     ax2.set_xlabel(r"Sinkhorn $\varepsilon$ (log scale)")
     ax2.set_ylabel("Collision Rate")
-    ax2.set_title(r"Collision Rate vs $\varepsilon$ by Uncertainty Scale")
+    ax2.set_title(r"OT: Collision Rate vs $\varepsilon$ by Uncertainty Scale")
     ax2.axhline(0.05, ls="--", color="gray", alpha=0.5, label=r"$\varepsilon$ target")
     ax2.legend(fontsize=7, ncol=2)
 

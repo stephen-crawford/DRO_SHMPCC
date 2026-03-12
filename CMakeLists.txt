@@ -10,27 +10,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 set(SCENARIO_MPC_SOURCES
-    src/adaptive_dro_shift.cpp
-    src/certificate_first.cpp
     src/collision_constraints.cpp
-    src/conformal_safety.cpp
-    src/contouring_mpc.cpp
     src/dynamics.cpp
     src/experiment_harness.cpp
-    src/gan_scenario_loader.cpp
-    src/hazard_switch_sampling.cpp
     src/mode_weights.cpp
     src/mpc_controller.cpp
     src/optimal_transport_predictor.cpp
     src/qp_solver.cpp
     src/reference_path.cpp
-    src/risk_directed_bandit.cpp
-    src/runtime_assurance.cpp
-    src/scenario_compiler.cpp
     src/scenario_pruning.cpp
     src/scenario_sampler.cpp
     src/trajectory_moments.cpp
-    src/dual_risk_monitor.cpp
     src/wasserstein_dro.cpp
 )
 
@@ -52,3 +42,33 @@ target_link_libraries(test_dro_framework PRIVATE scenario_mpc)
 
 add_executable(test_statistical_power tests/test_statistical_power.cpp)
 target_link_libraries(test_statistical_power PRIVATE scenario_mpc)
+
+add_executable(test_obstacle_class tests/test_obstacle_class.cpp)
+target_link_libraries(test_obstacle_class PRIVATE scenario_mpc)
+
+add_executable(test_paper_strategies tests/test_paper_strategies.cpp)
+target_link_libraries(test_paper_strategies PRIVATE scenario_mpc)
+
+add_executable(test_strategy_sweep tests/test_strategy_sweep.cpp)
+target_link_libraries(test_strategy_sweep PRIVATE scenario_mpc)
+
+add_executable(test_tuning_sweep tests/test_tuning_sweep.cpp)
+target_link_libraries(test_tuning_sweep PRIVATE scenario_mpc)
+
+add_executable(test_ot_alternatives tests/test_ot_alternatives.cpp)
+target_link_libraries(test_ot_alternatives PRIVATE scenario_mpc)
+
+add_executable(test_paper_figures tests/test_paper_figures.cpp)
+target_link_libraries(test_paper_figures PRIVATE scenario_mpc)
+
+add_executable(test_dro_benefits tests/test_dro_benefits.cpp)
+target_link_libraries(test_dro_benefits PRIVATE scenario_mpc)
+
+add_executable(test_cdc_experiments tests/test_cdc_experiments.cpp)
+target_link_libraries(test_cdc_experiments PRIVATE scenario_mpc)
+
+add_executable(test_path_obstacle_sweep tests/test_path_obstacle_sweep.cpp)
+target_link_libraries(test_path_obstacle_sweep PRIVATE scenario_mpc)
+
+add_executable(test_trajectory_dro tests/test_trajectory_dro.cpp)
+target_link_libraries(test_trajectory_dro PRIVATE scenario_mpc)

@@ -125,7 +125,7 @@ This section explains **how DRO and OT are integrated** into the Safe-Horizon MP
 | [`include/wasserstein_dro.hpp`](../include/wasserstein_dro.hpp) | Declares `WassersteinDRO`, `DROConfig`, `DROResult`; dual (lambda) formulation and ground cost types. |
 | [`src/wasserstein_dro.cpp`](../src/wasserstein_dro.cpp) | Implements `compute_worst_case_weights`, `generate_worst_case_scenario`, `generate_adversarial_scenario` (risk per mode, cost matrix, injection trajectory). |
 
-**Paper variants:** In the paper runner, **DRO** is enabled for variants that “use DRO” (e.g. OT+DRO, or DRO-only ablations). See `uses_dro(variant)` and `config.enable_dro = uses_dro(variant)` in `run_single_rollout` ([`paper_experiment_runner.cpp`](../tests/paper_experiment_runner.cpp) ~L193–194).
+**Paper variants:** In the paper runner, **DRO** is enabled for variants that “use DRO” (e.g. OT+DRO, or DRO-only ablations). The mapping is in `make_experiment_config()`: `cfg.enable_dro = uses_dro(variant)`. All rollout execution delegates to `run_experiment_rollout()` in the harness.
 
 ### 3.3 OT (Optimal Transport) in scenario weights
 
@@ -177,15 +177,21 @@ So: **DRO** uses the safe horizon to limit the risk horizon when computing worst
 
 | File | Role |
 |------|------|
-| [`cpp_mpc/tests/paper_experiment_runner.cpp`](../tests/paper_experiment_runner.cpp) | Main paper experiments A–AB. Defines `PaperVariant` (Base, OT, OT+SH, DRO, …), `run_single_rollout()`, `run_experiment_a()` … `run_experiment_ab()`, and `main()`. |
-| [`cpp_mpc/tests/test_dro_framework.cpp`](../tests/test_dro_framework.cpp) | Extra DRO/SH tests; writes e.g. `exp_h1_mode_coverage.csv`, `exp_h2_*`, `exp_h3_safe_horizon.csv`, `exp_h4_multi_disc.csv`, `exp_h5_ablation_table.csv`, `exp_h6_ground_cost_matrix.csv`. |
-| [`cpp_mpc/tests/test_statistical_power.cpp`](../tests/test_statistical_power.cpp) | High-power statistical tests; writes e.g. `exp_h1_bootstrap_ci.csv`, `exp_h2_missed_mode_significance.csv`, `exp_h4_ablation_table_1000.csv`. |
+| [`src/experiment_harness.cpp`](../src/experiment_harness.cpp) | **Canonical rollout engine.** All rollout logic lives here: `run_experiment_rollout()` handles obstacle simulation, mode observation tracking (with class sharing), multi-disc collision detection, S-curve path, OT predictor, path completion termination, distribution shift, and per-step callbacks. |
+| [`include/experiment_harness.hpp`](../include/experiment_harness.hpp) | Public API: `ExperimentConfig`, `RolloutRecord`, `ObstacleSim`, `CSVWriter`, statistical helpers (`wilson_ci`, `bootstrap_paired_delta`, `mcnemar_chi2`, `compute_effect_sizes`). |
+| [`tests/paper_experiment_runner.cpp`](../tests/paper_experiment_runner.cpp) | **Configuration layer only.** Defines experiments A–AB, maps `PaperVariant` to `ExperimentConfig` via `make_experiment_config()`, and calls `run_experiment_rollout()` through thin wrappers. No rollout logic is duplicated here. |
+| [`tests/test_dro_framework.cpp`](../tests/test_dro_framework.cpp) | Extra DRO/SH tests; writes e.g. `exp_h1_mode_coverage.csv`, `exp_h3_safe_horizon.csv`, `exp_h5_ablation_table.csv`. |
+| [`tests/test_statistical_power.cpp`](../tests/test_statistical_power.cpp) | High-power statistical tests; writes e.g. `exp_h1_bootstrap_ci.csv`, `exp_h2_missed_mode_significance.csv`. |
+| [`tests/test_obstacle_class.cpp`](../tests/test_obstacle_class.cpp) | Validates obstacle class-based mode sharing: sync, late-join inheritance, class independence, multi-obstacle rollouts. |
 
-**Important functions in `paper_experiment_runner.cpp`:**
+**How the paper runner delegates to the harness:**
 
-- `run_single_rollout(variant, switch_prob, num_scenarios, rollout_steps, seed, ...)` — one rollout for a given variant; builds `ScenarioMPCConfig` (including `weight_type`, `enable_dro`, `safe_horizon_enabled`, `safe_horizon_min`), creates `AdaptiveScenarioMPC` and (for OT variants) `OptimalTransportPredictor`, runs steps, returns `RolloutResult` (collision, missed_mode_steps, total_progress, etc.).
-- `uses_ot(variant)`, `uses_dro(variant)`, `uses_sh(variant)` — map paper variant to config flags.
-- `run_experiment_a()` … `run_experiment_ab()` — loop over variants/parameters, call `run_single_rollout` (or custom rollout logic), aggregate, write CSV(s).
+- `make_experiment_config(variant, ...)` — maps `PaperVariant` + parameters to `ExperimentConfig` fields (`weight_type`, `enable_dro`, `safe_horizon_enabled`, `use_ot_predictor`, etc.).
+- `run_single_rollout(variant, ...)` — thin wrapper: calls `make_experiment_config()` then `run_experiment_rollout()`, returns `RolloutResult::from_record()`.
+- `run_single_rollout_env(variant, ..., env_setup, baseline)` — thin wrapper for custom environments: sets `initial_obstacle_states` from `EnvironmentSetup`, maps `SamplingBaseline` to `WeightType` via `baseline_to_weight()`, injects oracle flood behavior via `step_callback`.
+- `run_multi_obstacle_rollout(variant, ..., num_obstacles, num_classes)` — thin wrapper: sets `num_obstacles` and `obstacles_per_class` on `ExperimentConfig`.
+- `uses_ot(variant)`, `uses_dro(variant)`, `uses_sh(variant)` — map paper variant to feature flags.
+- `run_experiment_a()` … `run_experiment_ab()` — loop over variants/parameters, call wrappers, aggregate, write CSV(s).
 
 ### 4.2 Core SHMPC / DRO / OT (C++)
 

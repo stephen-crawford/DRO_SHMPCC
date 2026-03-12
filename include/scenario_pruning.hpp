@@ -110,25 +110,6 @@ std::vector<Scenario> select_diverse_scenarios(
 );
 
 /**
- * @brief Reduce scenarios via quotient-space: map to low-dimensional features,
- * cluster, and keep one representative per cluster. Lowers MPC problem size.
- *
- * Each scenario is mapped to a quotient feature (e.g. mean/end obstacle positions).
- * Scenarios are clustered in this low-dim space; one representative per cluster
- * is returned. Use num_quotient < scenarios.size() for computational savings.
- *
- * @param scenarios Full set of scenarios (e.g. from sampling)
- * @param num_quotient Target number of representative scenarios (quotient dimension)
- * @param horizon Prediction horizon (inferred if -1)
- * @return Reduced set of num_quotient representative scenarios
- */
-std::vector<Scenario> reduce_scenarios_quotient_space(
-    const std::vector<Scenario>& scenarios,
-    int num_quotient,
-    int horizon = -1
-);
-
-/**
  * @brief Adaptively adjust scenario budget based on constraint violations.
  *
  * If constraints are frequently violated, increase scenarios.
