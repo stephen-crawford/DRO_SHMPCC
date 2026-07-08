@@ -15,6 +15,7 @@ set(SCENARIO_MPC_SOURCES
     src/experiment_harness.cpp
     src/mode_weights.cpp
     src/mpc_controller.cpp
+    src/primal_ot.cpp
     src/qp_solver.cpp
     src/reference_path.cpp
     src/scenario_sampler.cpp
@@ -66,3 +67,6 @@ target_link_libraries(test_generalization PRIVATE scenario_mpc)
 
 add_executable(test_trajectory_dro tests/test_trajectory_dro.cpp)
 target_link_libraries(test_trajectory_dro PRIVATE scenario_mpc)
+
+add_executable(micro_dro_probe tests/micro_dro_probe.cpp)
+target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
