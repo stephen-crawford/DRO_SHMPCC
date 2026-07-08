@@ -24,6 +24,19 @@ double normal_quantile(double alpha) {
     return 1.959963984540054;
 }
 
+// CVaR (expected-shortfall) coefficient k_alpha = phi(z_alpha) / (1 - alpha) for a
+// standard normal, z_alpha = Phi^{-1}(alpha). It is the tail-mean beyond the VaR
+// quantile, so k_alpha > z_alpha (e.g. 2.063 vs 1.645 at alpha=0.95). Using it in
+// place of the one-sided quantile makes the directional safety margin
+// R + k_alpha * sigma_dir the coherent, tail-aware CVaR analogue of the VaR margin.
+// Formal model: mpc-template-python/mpc_template/modules/samplers/CVAR_RISK_MODEL.md.
+double cvar_coefficient(double alpha) {
+    const double z = normal_quantile(alpha);
+    const double two_pi = 6.283185307179586;
+    const double phi = std::exp(-0.5 * z * z) / std::sqrt(two_pi);
+    return phi / (1.0 - alpha);
+}
+
 // Safe unit vector: returns (1,0) if input is near-zero.
 Eigen::Vector2d safe_unit(const Eigen::Vector2d& v, double eps = 1e-12) {
     const double n = v.norm();
@@ -611,7 +624,10 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
 ) {
     std::map<std::string, double> risk;
 
-    const double z_alpha = normal_quantile(config_.alpha_one_sided);
+    // CVaR (coherent, tail-aware) directional-risk coefficient. Was the one-sided
+    // VaR quantile normal_quantile(alpha); swapped to the CVaR/expected-shortfall
+    // coefficient (see cvar_coefficient + CVAR_RISK_UPDATE.md).
+    const double z_alpha = cvar_coefficient(config_.alpha_one_sided);
     const double sigma_floor = config_.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {
