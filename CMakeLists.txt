@@ -66,3 +66,6 @@ target_link_libraries(test_generalization PRIVATE scenario_mpc)
 
 add_executable(test_trajectory_dro tests/test_trajectory_dro.cpp)
 target_link_libraries(test_trajectory_dro PRIVATE scenario_mpc)
+
+add_executable(radius_probe tests/radius_probe.cpp)
+target_link_libraries(radius_probe PRIVATE scenario_mpc)

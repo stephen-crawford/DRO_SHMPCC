@@ -445,8 +445,28 @@ double WassersteinDRO::get_adaptive_rho() const {
     }
     double rho = config_.rho_base;
 
-    if (config_.adaptive_rho) {
-        // Scale up with fewer observations (more uncertainty)
+    if (config_.use_calibrated_radius) {
+        // Confidence-calibrated simplex-concentration radius.
+        //
+        // The nominal belief p_hat is an empirical categorical distribution over
+        // N behaviour modes estimated from n observed interactions. It concentrates
+        // in L1 as  P(||p_hat - p*||_1 >= eps) <= 2^N exp(-n eps^2 / 2)  (Devroye),
+        // so at target miscoverage beta the L1 half-width is
+        //   eps_n(beta) = sqrt( 2 (N ln2 + ln(1/beta)) / n ).
+        // With a metric ground cost, W1(p_hat, p*) <= (ground-metric diameter) * eps,
+        // the diameter folded into rho_base as the calibration scale. Then p* lies
+        // in the ball of radius rho_n(beta) with probability >= 1 - beta, so the
+        // reweighted worst-case risk upper-bounds the true risk at confidence 1-beta.
+        // Unlike the heuristic rho_base*(1+alpha/sqrt(n))*h_term (which plateaus at
+        // ~rho_base), this SHRINKS to rho_min as n -> inf (statistical consistency)
+        // and GROWS with the mode count N and the confidence level.
+        double N = (max_entropy_ > 1e-12) ? std::exp(max_entropy_) : 1.0;  // modes = exp(log N)
+        double n = std::max(1.0, static_cast<double>(observation_count_));
+        double beta = std::clamp(config_.confidence_beta, 1e-6, 0.5);
+        double eps = std::sqrt(2.0 * (N * std::log(2.0) + std::log(1.0 / beta)) / n);
+        rho = config_.rho_min + config_.rho_base * eps;
+    } else if (config_.adaptive_rho) {
+        // Legacy heuristic: scale up with fewer observations (more uncertainty)
         double n_term = 1.0;
         if (observation_count_ > 0) {
             n_term = 1.0 + config_.confidence_alpha / std::sqrt(
