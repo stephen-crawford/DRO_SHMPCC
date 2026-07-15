@@ -333,6 +333,13 @@ RolloutRecord run_experiment_rollout(
     if (mpc_cfg.enable_dro) {
         mpc_cfg.dro_rho_base = dro_cfg.rho_base > 0 ? dro_cfg.rho_base : config.eps_wass;
         mpc_cfg.dro_adaptive_rho = dro_cfg.adaptive_rho;
+        // Forward the rest of dro_cfg. Without these the local dro_cfg above is
+        // discarded and the controller silently falls back to W2_BURES / FULL,
+        // which made the ground-cost and risk-mode ablations no-ops.
+        mpc_cfg.dro_ground_cost = dro_cfg.ground_cost_type;
+        mpc_cfg.dro_risk_mode = dro_cfg.risk_mode;
+        mpc_cfg.dro_risk_measure = config.risk_measure;
+        mpc_cfg.dro_joint_risk_samples = config.joint_risk_samples;
     }
 
     AdaptiveScenarioMPC controller(mpc_cfg);

@@ -16,13 +16,26 @@ AdaptiveScenarioMPC::AdaptiveScenarioMPC(const ScenarioMPCConfig& config)
     config_.validate();
     default_modes_ = create_obstacle_mode_models(config_.dt);
 
-    // Initialize DRO module from config
+    // Initialize DRO module from config.
+    //
+    // This is the ONLY place the controller's WassersteinDRO gets configured, so
+    // every DROConfig field the harness needs to control must be forwarded here.
+    // It previously copied only the four rho fields, which silently pinned
+    // ground_cost_type and risk_mode to their defaults (W2_BURES / FULL) no matter
+    // what an experiment asked for -- experiment_harness.cpp set them on a LOCAL
+    // DROConfig that was discarded. Any "ground cost" or "risk mode" ablation run
+    // before this fix varied nothing but the seed.
     if (config_.enable_dro) {
         DROConfig dro_cfg;
         dro_cfg.rho_base = config_.dro_rho_base;
         dro_cfg.rho_min = config_.dro_rho_min;
         dro_cfg.rho_max = config_.dro_rho_max;
         dro_cfg.adaptive_rho = config_.dro_adaptive_rho;
+        dro_cfg.ground_cost_type = config_.dro_ground_cost;
+        dro_cfg.risk_mode = config_.dro_risk_mode;
+        dro_cfg.risk_measure = config_.dro_risk_measure;
+        dro_cfg.alpha_one_sided = config_.dro_alpha_one_sided;
+        dro_cfg.joint_risk_samples = config_.dro_joint_risk_samples;
         dro_ = WassersteinDRO(dro_cfg);
     }
 

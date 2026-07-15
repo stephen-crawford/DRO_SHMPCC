@@ -86,6 +86,15 @@ struct ScenarioMPCConfig {
     double dro_rho_min = 0.01;              ///< Minimum rho (clamped)
     double dro_rho_max = 0.5;              ///< Maximum rho (clamped)
     bool dro_adaptive_rho = true;           ///< Enable adaptive rho scaling
+    // --- fields below are forwarded verbatim into the controller's DROConfig ---
+    // They exist because ScenarioMPCConfig is the ONLY channel from the experiment
+    // harness to AdaptiveScenarioMPC's WassersteinDRO. Anything set on a DROConfig
+    // inside the harness is discarded; see the note in mpc_controller.cpp.
+    DROGroundCostType dro_ground_cost = DROGroundCostType::W2_BURES;  ///< Ground cost for the transport matrix D
+    DRORiskMode dro_risk_mode = DRORiskMode::FULL;                    ///< Covariance handling in the risk score
+    DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports
+    double dro_alpha_one_sided = 0.95;      ///< Risk level alpha
+    int dro_joint_risk_samples = 8000;      ///< MC samples when dro_risk_measure is JOINT_*
     double adversarial_sigma_scale = 1.5;    ///< Scale for adversarial injection (sigma multiplier)
     DRONominalSource dro_nominal_source = DRONominalSource::FREQUENCY;  ///< P_hat source for DRO Q*
     int dro_injection_count = 1;             ///< Number of top-K modes to inject per obstacle (0 = none, -1 = all modes)

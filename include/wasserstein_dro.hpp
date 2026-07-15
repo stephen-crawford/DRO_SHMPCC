@@ -27,90 +27,11 @@
 
 namespace scenario_mpc {
 
-/**
- * @brief Risk computation mode for DRO ablation experiments.
- */
-enum class DRORiskMode {
-    FULL,           ///< Full risk with covariance inflation (default)
-    NO_COV,         ///< Risk without covariance inflation (sigma_scale=0)
-    DISTANCE_ONLY   ///< Pure distance-based risk (no covariance term)
-};
-
-/**
- * @brief Ground cost type for the Wasserstein ball transport matrix.
- */
-enum class DROGroundCostType {
-    W2_BURES,       ///< Gaussian W2 Bures metric (default)
-    ZERO_ONE,       ///< D[i][j] = (i!=j) ? 1 : 0
-    EUCLIDEAN_MEAN  ///< ||mu_i - mu_j|| averaged over horizon
-};
-
-/**
- * @brief Which risk functional the per-mode risk score r[m] reports.
- *
- * The SURROGATE_* family is the CDC'26 formulation: the violation is LINEARISED
- * (projected on the ego->obstacle mean direction, which by Cauchy-Schwarz upper
- * -bounds the true Euclidean violation, hence "conservative"), evaluated per
- * (step, disc), and aggregated with a max. That max is NOT a risk measure of the
- * trajectory: max_k VaR(V_k) <= VaR(max_k V_k). It is a per-step score under a
- * planner that enforces a JOINT bound -- the two disagree about what "risk" means.
- *
- * Two errors run in OPPOSITE directions and partially cancel:
- *   - linearisation makes the surrogate too LARGE (Vtil >= V pointwise),
- *   - max-of-marginals makes it too SMALL (max_k VaR <= VaR of max_k).
- * Which wins is scenario-dependent. For iid steps the aggregation gap is big
- * (~1.9x at 15 steps), but a real rollout is strongly correlated through A, so the
- * effective number of independent steps is far below N_s and the gap collapses.
- * Measured on the canonical 6-mode scenario, linearisation dominates and the
- * surrogate sits ~2-5% ABOVE the true joint VaR -- i.e. conservative, the safe
- * direction. Do not assume that sign holds elsewhere; it is not a theorem.
- *
- * The JOINT_* family fixes both: it is the true risk measure of the joint-horizon
- * EUCLIDEAN collision violation
- *
- *     V := max_{k=1..N_s} max_d [ R - ||x_k - c_{d,k}|| ]_+ ,
- *
- * with x_k sampled from the mode's own linear-Gaussian rollout
- * x_{k+1} = A x_k + b + G w_k, so the temporal correlation induced by A is
- * carried exactly. No linearisation, no per-step decoupling. There is no closed
- * form (the distance is non-Gaussian and the steps are dependent), so it is
- * estimated by Monte Carlo with common random numbers across modes.
- */
-enum class DRORiskMeasure {
-    SURROGATE_VAR,   ///< DEFAULT, bit-for-bit master/CDC'26: per-step linearised VaR, max over (k,d)
-    SURROGATE_CVAR,  ///< per-step linearised CVaR, correct clamp order (closed form), max over (k,d)
-    SURROGATE_VAR_BONFERRONI,  ///< per-step linearised VaR at the union-bound-corrected level (see below)
-    JOINT_VAR,       ///< joint-horizon VaR of Euclidean collision over the whole horizon (MC)
-    JOINT_CVAR       ///< joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
-};
-
-/*
- * SURROGATE_VAR_BONFERRONI -- the only CLOSED-FORM option that actually carries a
- * joint-horizon guarantee.
- *
- * Plain SURROGATE_VAR has none. max_k VaR_a(V_k) is a max of per-step quantiles; the
- * trajectory violates if ANY step does, so the tails union and the per-step level
- * buys much less jointly (15 steps at 95% each can be ~46% jointly). It sits above
- * the true joint VaR on the canonical scenario only because the linearisation slack
- * happens to exceed the aggregation deficit -- an accident of that geometry, not a
- * bound. Tighten the linearisation and the sign flips.
- *
- * Inflating the per-step level to alpha' = 1 - (1-alpha)/(N_s*D) repairs it in one
- * line, with t := max_{k,d} VaR_{alpha'}(Vtil_{k,d}):
- *
- *   P[max_{k,d} V_{k,d} > t] <= sum_{k,d} P[V_{k,d} > t]     (union bound)
- *                            <= sum_{k,d} P[Vtil_{k,d} > t]  (V <= Vtil, Cauchy-Schwarz)
- *                            <= N_s*D*(1-alpha') = 1-alpha.
- *
- * So t upper-bounds the true joint-horizon VaR of EUCLIDEAN collision -- for free,
- * no Monte Carlo, same cost as SURROGATE_VAR. This is the risk-allocation argument
- * de Groot 2023 uses to bound joint collision probability, applied to the risk score
- * rather than the constraint, which closes the per-step/joint mismatch between the
- * two. Verified against 1M-rollout ground truth: dominates on every mode.
- *
- * Cost: conservatism. z: 1.645 -> 2.713 at N_s=15, D=1, alpha=0.95, and the level
- * loosens linearly in N_s*D (D=4 discs -> z ~ 2.94).
- */
+// NOTE: DRORiskMode / DROGroundCostType / DRORiskMeasure now live in types.hpp.
+// They are shared configuration vocabulary: ScenarioMPCConfig (config.hpp) must
+// name them to forward them into this module's DROConfig, and config.hpp cannot
+// include wasserstein_dro.hpp without inverting the layering. Both already
+// include types.hpp, so that is where they belong.
 
 /**
  * @brief Configuration for DRO worst-case weight computation.

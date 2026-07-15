@@ -252,6 +252,11 @@ struct ExperimentConfig {
     // Legacy ablation variant (used by configure_ablation helper)
     AblationVariant ablation = AblationVariant::DRO_FULL;
     DROGroundCostType ground_cost = DROGroundCostType::W2_BURES;
+    /// Risk functional r[m] reports. SURROGATE_VAR is the CDC'26 default.
+    /// JOINT_* costs ~28 ms/call vs ~0 for the surrogates -- do not use it in the
+    /// large sweeps without shrinking joint_risk_samples and accepting the error.
+    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;
+    int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
     DistributionShiftConfig shift;
 
     int dro_injection_count = 1;  ///< Top-K modes to inject per obstacle (0=none, -1=all)
