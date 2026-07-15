@@ -196,10 +196,10 @@ static void run_e1() {
     auto t0 = std::chrono::steady_clock::now();
 
     const std::vector<EnvironmentType> ENVS = {
-        EnvironmentType::STRAIGHT, EnvironmentType::NARROW_CORRIDOR,
+        EnvironmentType::OVERTAKE_SLOW_LEAD, EnvironmentType::NARROW_CORRIDOR,
         EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
     };
-    const std::vector<std::string> ENV_NAMES = {"Straight", "Narrow", "Intersection", "Oncoming"};
+    const std::vector<std::string> ENV_NAMES = {"OvertakeSlowLead", "Narrow", "Intersection", "Oncoming"};
     const std::vector<MethodDef> METHODS = {
         {"Base",            false, InjectionMode::NONE,         0.0, 0.0},
         {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE, 0.0, 0.0},
