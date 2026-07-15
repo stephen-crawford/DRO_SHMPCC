@@ -126,7 +126,18 @@ inline bool uses_sh(PaperVariant v) {
 // Environment Types
 // ============================================================================
 
-enum class EnvironmentType { STRAIGHT, NARROW_CORRIDOR, INTERSECTION, ONCOMING };
+// NOTE: every EnvironmentType below runs on the SAME S-curve reference path
+// (create_s_curve(S_CURVE_LENGTH, S_CURVE_AMPLITUDE, ...)). The variants differ
+// ONLY in obstacle placement/velocity, never in road geometry. The first value
+// was called STRAIGHT, which read as a road shape and was not one: it places a
+// SLOW obstacle (v in [0.1,0.4] m/s) travelling in the SAME direction as the ego
+// (+tangent) at arc-fraction 0.35, which the ego (1.5 m/s) overtakes. Renamed to
+// OVERTAKE_SLOW_LEAD. The old name collided with tests/test_generalization.cpp's
+// "Straight", which IS a straight road (create_straight) carrying an ONCOMING
+// obstacle -- an unrelated experiment. That collision made a 0.1% base collision
+// rate look inconsistent with a 55.6% one (see FINDINGS_CONTEXT.md 'Gap 13');
+// they were never the same scenario.
+enum class EnvironmentType { OVERTAKE_SLOW_LEAD, NARROW_CORRIDOR, INTERSECTION, ONCOMING };
 
 struct EnvironmentSetup {
     ObstacleState initial_obs;
@@ -138,7 +149,7 @@ struct EnvironmentSetup {
 
 inline std::string environment_name(EnvironmentType env) {
     switch (env) {
-        case EnvironmentType::STRAIGHT: return "Straight";
+        case EnvironmentType::OVERTAKE_SLOW_LEAD: return "OvertakeSlowLead";
         case EnvironmentType::NARROW_CORRIDOR: return "Narrow";
         case EnvironmentType::INTERSECTION: return "Intersection";
         case EnvironmentType::ONCOMING: return "Oncoming";
