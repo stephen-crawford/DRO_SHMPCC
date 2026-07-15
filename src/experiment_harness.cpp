@@ -340,6 +340,8 @@ RolloutRecord run_experiment_rollout(
         // which made the ground-cost and risk-mode ablations no-ops.
         mpc_cfg.dro_ground_cost = dro_cfg.ground_cost_type;
         mpc_cfg.dro_risk_mode = dro_cfg.risk_mode;
+        mpc_cfg.dro_use_calibrated_radius = config.use_calibrated_radius;
+        mpc_cfg.dro_confidence_beta = config.confidence_beta;
         mpc_cfg.dro_risk_measure = config.risk_measure;
         mpc_cfg.dro_joint_risk_samples = config.joint_risk_samples;
     }

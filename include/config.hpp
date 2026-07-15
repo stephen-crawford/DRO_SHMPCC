@@ -101,6 +101,15 @@ struct ScenarioMPCConfig {
     // They exist because ScenarioMPCConfig is the ONLY channel from the experiment
     // harness to AdaptiveScenarioMPC's WassersteinDRO. Anything set on a DROConfig
     // inside the harness is discarded; see the note in mpc_controller.cpp.
+    /// Use the confidence-calibrated simplex-concentration radius rho_n(beta)
+    /// instead of the ad-hoc rho_0*(1+alpha/sqrt(n)) heuristic. The heuristic is
+    /// statistically INCONSISTENT: it plateaus at ~rho_0, so Q* stays distorted
+    /// away from nominal even as n -> inf (measured Qstar_L1 pinned at 1.333 at
+    /// n=10^4, vs 0.127 and shrinking for the calibrated radius). The calibrated
+    /// form certifies p* in B_eps(p_hat) w.p. >= 1-beta and is link 1 of the
+    /// theory chain -- it MUST be reachable from an experiment.
+    bool dro_use_calibrated_radius = false;
+    double dro_confidence_beta = 0.05;  ///< Target miscoverage beta for the calibrated radius
     DROGroundCostType dro_ground_cost = DROGroundCostType::W2_BURES;  ///< Ground cost for the transport matrix D
     DRORiskMode dro_risk_mode = DRORiskMode::FULL;                    ///< Covariance handling in the risk score
     DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports

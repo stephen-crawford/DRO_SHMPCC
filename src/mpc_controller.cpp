@@ -31,6 +31,8 @@ AdaptiveScenarioMPC::AdaptiveScenarioMPC(const ScenarioMPCConfig& config)
         dro_cfg.rho_min = config_.dro_rho_min;
         dro_cfg.rho_max = config_.dro_rho_max;
         dro_cfg.adaptive_rho = config_.dro_adaptive_rho;
+        dro_cfg.use_calibrated_radius = config_.dro_use_calibrated_radius;
+        dro_cfg.confidence_beta = config_.dro_confidence_beta;
         dro_cfg.ground_cost_type = config_.dro_ground_cost;
         dro_cfg.risk_mode = config_.dro_risk_mode;
         dro_cfg.risk_measure = config_.dro_risk_measure;

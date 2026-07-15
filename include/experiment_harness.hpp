@@ -266,6 +266,11 @@ struct ExperimentConfig {
     /// Risk functional r[m] reports. SURROGATE_VAR is the CDC'26 default.
     /// JOINT_* costs ~28 ms/call vs ~0 for the surrogates -- do not use it in the
     /// large sweeps without shrinking joint_risk_samples and accepting the error.
+    /// Confidence-calibrated ambiguity radius (theory chain link 1). Off by
+    /// default so CDC'26 stays reproducible; on for anything claiming a
+    /// belief-coverage guarantee.
+    bool use_calibrated_radius = false;
+    double confidence_beta = 0.05;
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
     /// Sample mode SEQUENCES from the estimated Markov transition matrix
