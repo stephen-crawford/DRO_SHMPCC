@@ -4,14 +4,34 @@
 # the codebase stays aligned. Any code change that contradicts these
 # specifications is a discrepancy that must be resolved.
 #
-# Paper: "Scenario-based Safe Horizon MPCC with Wasserstein-DRO Mode
-#         Reweighting and Scenario Injection for Targets with Switching Dynamics"
+# Paper: "Wasserstein-DRO Mode Reweighting and Scenario Injection for
+#         Scenario-based MPC with Obstacles with Switching Dynamics"
 # Authors: Stephen Crawford and Nora Ayanian, Brown University
 #
 # Source: stephen_crawford_WDRO.tex (single, authoritative version)
 # =====================================================
 
-## Ego Vehicle Model (Section IV, Eq. ego_ct / ego_dyn_rk4)
+## Paper Structure
+#
+# Section I:   Introduction
+# Section II:  Problem Formulation (sec:problem)
+# Section III: Related Work (related)
+# Section IV:  Methodology (methods)
+#   IV.A: Baseline SH-MPCC formulation
+#   IV.B: Wasserstein-DRO mode reweighting (sec:wass_prelim)
+#   IV.C: WDRO-based scenario injection
+#   IV.D: Scenario generation (sec:scenario_gen)
+# Section V:   Results (results)
+#   V.A: Path geometry comparison (sec:res_geometry)
+#   V.B: Challenging interaction settings (sec:res_env_variants)
+#   V.C: Injection-mode selection comparison (sec:res_injection_comparison)
+#   V.D: Interpretation of sampling and injection (sec:res_interpretation)
+# Section VI:  Conclusion (conclusion)
+
+## Ego Vehicle Model (Section IV.A)
+#
+# Discretized second-order unicycle:
+#   x_{t+1}^ego = f^ego(x_t^ego, u_t)
 #
 # State: x_ego = [p_x, p_y, theta, v, s]^T in R^5
 #   - (p_x, p_y): position
@@ -23,21 +43,13 @@
 #   - a: acceleration
 #   - omega: angular velocity
 #
-# Continuous dynamics (Eq. ego_ct):
-#   dot(p_x) = v*cos(theta)
-#   dot(p_y) = v*sin(theta)
-#   dot(theta) = omega
-#   dot(v) = a
-#   dot(s) = v_s
-#
-# Discretized via RK4 (Eq. ego_dyn_rk4)
+# Discretized via RK4 (mentioned in Section V setup)
 #
 # Implementation note: s is tracked externally via closest-point
 # projection onto the reference path, not as an explicit state variable
 # in the optimization. This is a standard MPCC implementation approach.
-# The contouring/lag errors are computed from the projected s values.
 
-## MPCC Cost (Eq. mpcc_cost)
+## MPCC Cost (Eq. mpcc_cost, Section IV.A)
 #
 # l_MPCC(k) = w_c * e_c(k)^2          (contouring error)
 #           + w_l * e_l(k)^2           (lag error)
@@ -45,20 +57,18 @@
 #           + w_omega * omega(t+k|t)^2 (steering penalty)
 #           + w_v * (v(t+k|t) - v_ref)^2  (velocity tracking)
 #
-# where:
-#   e_c(k) = signed distance from ego position to closest point on Gamma
-#   e_l(k) = along-path deviation between s(t+k|t) and desired progress
-#   Gamma is represented as a cubic spline
+# where w_c, w_l, w_a, w_omega, w_v > 0 are user-specified weights
+# and v_ref is a reference velocity.
 #
 # CRITICAL: The reference path Gamma MUST be set on the controller for
 # MPCC costs to be active. Without it, the solver falls back to
-# point-goal tracking (minimizing ||position - goal||^2).
+# point-goal tracking.
 #
 # Config weights: contour_weight (w_c), lag_weight (w_l),
 #   acceleration_weight (w_a), steering_weight (w_omega),
 #   velocity_weight (w_v), terminal_heading_weight
 
-## Multi-Disc Robot Model (Eq. disc_center)
+## Multi-Disc Robot Model (Eq. disc_center, Section IV.A)
 #
 # D discs of radius r_d centered at offsets {c_1,...,c_D} along the
 # robot's longitudinal axis:
@@ -66,183 +76,176 @@
 #
 # Config: num_discs (D), vehicle_length, ego_radius (r_d)
 
-## Obstacle Model (Eq. obs_dyn)
+## Obstacle Model (Eq. obs_dyn, Section IV.A)
 #
-# Each obstacle v has finite mode set M = {1,...,M_C}
-# Mode m specifies stochastic motion model:
-#   x(t+1) = f_m(x(t), omega(t)),  omega ~ P_{omega,m}
+# Each obstacle v in {1,...,V} belongs to class C(v) with finite mode
+# set M_C = {1,...,M_C}. Mode m specifies a stochastic motion model:
+#   x_{t+1}^v = f_m(x_t^v)
+#
+# Mode evolution is unknown and may be non-Markovian.
+# Nominal belief: p_hat_t^v in Delta_{M_C}
 #
 # Available modes: constant_velocity, turn_left, turn_right,
 #   decelerating, lane_change_left, lane_change_right
-#
-# Mode switching: Unknown, may be non-Markovian.
 # Obstacles of the same class share mode observations.
 
 ## Linearized Half-Space Collision Constraints (Eq. normal, halfspace)
 #
-# Outward normal from disc d to obstacle v:
-#   n_hat = (x_obs - p_d(k)) / max(||x_obs - p_d(k)||, eps_min)
+# Outward normal from disc d to obstacle v at step k, scenario i:
+#   n_hat = (x_obs^{v,(i)}_{t+k|t} - p_d(k)) / max(||...||, eps_min)
 #
 # Half-space constraint:
 #   n_hat^T * p_d(k) <= n_hat^T * x_obs - (r_d + r_obs + r_offset)
 #
+# Enforced for all d=1..D, v=1..V, k=1..N_s, i=1..S_tot
 # Config: safety_margin (r_offset), obstacle_radius (r_obs)
 
-## Mode Coverage Metrics (Section III, sec:metrics_prelim)
+## Safe Horizon (Eq. scenario_opt, Section IV.A)
 #
-# Two diagnostics:
-#   (i) Overall missed-mode rate: fraction of rollouts where at least one
-#       demonstrated mode was not represented in the scenario set within N_s
-#   (ii) Rare-mode miss rate: fraction where the designated rare mode
-#        is not captured
+# Collision constraints enforced only over N_s <= N.
+# Baseline SH-MPCC scenario program:
+#   min_{U_t in U^N} sum_{k=0}^{N-1} l_MPCC(k)
+#   s.t. ego dynamics, collision constraints over k=1..N_s for all scenarios
+#
+# CRITICAL: Only i.i.d. sampled scenarios count toward S for safe horizon.
+# DRO-injected scenarios are additional deterministic constraints that
+# tighten the feasible set but do NOT satisfy the i.i.d. assumption
+# required by Calafiore-Campi theory.
+#
+# Config: safe_horizon_enabled, safe_horizon_mode, safe_horizon_min
 
-## Wasserstein-DRO Mode Reweighting (Section III, Eq. w_dro_modes / w_dro_dual)
+## Wasserstein-DRO Mode Reweighting (Eq. w_dro_modes / w_dro_dual, Section IV.B)
 #
 # For each obstacle v, compute worst-case mode distribution q* in a
 # Wasserstein ball around nominal belief p_hat:
 #
 #   max_{q in Delta_M} <q, r>  s.t.  W_D(q, p_hat) <= rho
 #
-# Solved via Kantorovich dual (1D search):
-#   min_{lambda>=0} { lambda*rho + sum_i p_hat_i * max_j(r_j - lambda*D_ij) }
-#
-# Recovery: map each nominal mass at mode i to j*(i) = argmax_j(r_j - lambda* D_ij),
-# then verify induced transport plan satisfies radius constraint.
-#
-# Ground cost D: W2 Bures distance between mode-conditioned Gaussians
-#   D[i][j] = (1/N) sum_k W2(P_i(k), P_j(k))
-#   where W2^2 = ||mu_1-mu_2||^2 + Bures^2(Sigma_1, Sigma_2)
-#
-# Risk vector r[m] per mode (conservative Gaussian clearance surrogate):
-#   n_{m,k,d} = (mu_{m,k} - c_d(k)) / ||mu_{m,k} - c_d(k)||
-#   sigma_{m,k,d} = sqrt(n^T Sigma n) (directional std dev toward ego)
-#   r_{m,k,d} = max(0, R + z_alpha * sigma_{m,k,d} - ||mu_{m,k} - c_d(k)||)
-#   r_m = max_k<=N_s max_d<=D r_{m,k,d}
-#   where R = r_ego + r_obs + margin, z_alpha = one-sided quantile
+# where r in R^M is a per-mode danger score, W_D is the discrete
+# Wasserstein distance induced by ground cost D, rho is the radius.
 #
 # Adaptive rho:
 #   rho = rho_0 * (1 + alpha / sqrt(n_obs))
-#   where rho_0 = base radius (default 0.1), alpha = scaling coeff (default 1.0)
-#   Contracts as observations accumulate (1/sqrt(n_obs) decays → rho → rho_0)
+#   rho_0 = 0.1 (default), alpha = 1.0 (default)
+#   Contracts as observations accumulate.
+#
+# Risk vector r[m] per mode (conservative Gaussian clearance surrogate):
+#   n_{m,k,d} = (mu_{m,k} - c_d(k)) / ||mu_{m,k} - c_d(k)||
+#   sigma_{m,k,d} = sqrt(n^T Sigma n) (directional std dev)
+#   r_{m,k,d} = max(0, R + z_alpha * sigma_{m,k,d} - ||mu_{m,k} - c_d(k)||)
+#   r_m = max_k<=N_s max_d<=D r_{m,k,d}
+#   where R = r_d + r_obs + r_offset
+#
+# Kantorovich dual (1D convex minimization):
+#   min_{lambda>=0} { lambda*rho + sum_i p_hat_i * max_j(r_j - lambda*D_ij) }
+#
+# Recovery: map each nominal mass at mode i to j*(i) = argmax_j(r_j - lambda* D_ij),
+# verify induced transport plan satisfies radius constraint.
+#
+# Key property: p_hat is always feasible (W_D(p_hat, p_hat) = 0 <= rho),
+# so <q*, r> >= <p_hat, r>. q* is a conservative mode distribution.
+#
+# Ground cost D: W2 Bures distance between mode-conditioned Gaussians
+#   D[i][j] = (1/N) sum_k W2(P_i(k), P_j(k))
 #
 # Config: enable_dro, dro_rho_base, dro_rho_min, dro_rho_max,
 #   dro_adaptive_rho, dro_coverage_alpha, dro_nominal_source
 
-## DRO Scenario Injection (Section III, "DRO scenario injection")
+## WDRO-Based Scenario Injection (Section IV.C)
 #
-# Three injection selection rules for K deterministic constraints:
+# After computing q*, select K modes with largest WDRO mass:
+#   I_K subset M_C, |I_K| = K
+#   I_K in argmax_{|I|=K} sum_{l in I} q*_l
 #
-# 1. WDRO-K: Inject K modes with largest mass under q*.
-#    Uses both risk scores r_m and transport geometry D via the
-#    Wasserstein-ball constraint. Selects I_K = argmax_{|I|=K} sum_{m in I} q*_m.
+# Inject their deterministic representatives (mode-conditioned mean
+# trajectories) as additional collision-avoidance constraints.
 #
-# 2. TopRisk-K: Greedy risk-only heuristic. Inject K modes with largest
-#    risk scores r_m. May select redundant modes with similar trajectories.
-#
-# 3. DiverseRisk-K: Risk × diversity selection.
-#    m_1 = argmax_m r_m
-#    m_l = argmax_{m not in S_{l-1}} (r_m * min_{s in S_{l-1}} D(m,s))
-#    Trades off risk against geometric diversity using ground cost D.
-#
-# Constraint tightening argument: F_{S,inj} ⊆ F_S, so injection only
-# shrinks the feasible set and does not alter scenario-theoretic guarantees.
-# Injected scenarios are NOT counted as i.i.d. samples.
+# Constraint tightening: F_{S,inj} ⊆ F_S
+# Injected constraints are NOT i.i.d. samples; they act as a
+# deterministic tightening layer on top of the S sampled constraints.
 #
 # Config: injection_mode, adversarial_sigma_scale
 
-## WDRO-Sampling (Section III)
+## Three Controller Variants (Section IV.D)
 #
-# Instead of injecting, resample ALL S scenarios with modes drawn from q*
-# instead of p_hat. This changes the sampling distribution; Calafiore-Campi
-# guarantees apply w.r.t. q* (the worst-case distribution).
-# If true P lies within B_rho(p_hat), this provides distributional robustness.
+# 1. Base SH-MPCC: modes sampled from p_hat
+# 2. WDRO-sampling: modes sampled from q* instead of p_hat
+# 3. WDRO-K injection: S scenarios from p_hat + K deterministic
+#    mode representatives injected as tightening constraints
+#
+# Baseline comparison:
+# - TopRisk-K: selects injected modes greedily by risk score only
+#   (empirical baseline, not part of main method)
 
-## Safe Horizon (Eq. scenario_opt)
+## Evaluation Metrics (Section V)
 #
-# Collision constraints enforced only over N_s <= N.
-# N_s computed from scenario theory (Calafiore-Campi):
-#   Practical: N_s = min(N, floor(S / (2*n_u)))
-#   Theoretical: S >= (2/eps)*(ln(1/beta) + d) where d = N_s * n_u
+# Three primary metrics:
+#   1. Collision rate
+#   2. Missed-mode rate (fraction of rollouts where at least one
+#      demonstrated mode was not represented in scenario set within N_s)
+#   3. Mean clearance
 #
-# CRITICAL: Only i.i.d. sampled scenarios count toward S for safe horizon.
-# DRO-injected scenarios are additional deterministic constraints that
-# tighten the feasible set but do NOT satisfy the i.i.d. assumption
-# required by Calafiore-Campi theory. They are NOT counted in S_for_sh.
-#
-# Risk scores r used in DRO reweighting are computed using only timesteps
-# k <= N_s, aligning DRO reweighting with the certified risk horizon.
-#
-# Config: safe_horizon_enabled, safe_horizon_mode, safe_horizon_min
+# Hypothesis: when scenario budget is fixed, improving which modes are
+# represented should reduce missed modes and improve safety.
 
-## Scenario Generation (Algorithm 1)
+## Paper Experiments (Section V)
 #
-# 1. For each obstacle v, obtain nominal belief p_hat and predictions
-# 2. Compute q* by Wasserstein-DRO reweighting (Eq. w_dro_modes / w_dro_dual)
-# 3. Sample S i.i.d. scenarios using modes from q* and base predictor noise
-# 4. (If injection mode) Add K deterministic worst-case scenario(s)
-# 5. Build half-space constraints over k=1,...,N_s
-# 6. Solve scenario MPCC (Eq. scenario_opt)
-# 7. Apply first control u*(t|t)
+# Two experiment groups:
+#
+# V.A Path Geometry Comparison (sec:res_geometry):
+#   Four path geometries: Straight, Gentle-S, S-curve, Tight-S
+#   Oncoming obstacle interaction held constant.
+#   Methods: Base SH-MPCC, WDRO-sampling, WDRO-K injection, TopRisk-K
+#   → Figure 1: fig_g1_path_geometry (paper_figures/)
+#   Data: g1_path_geometry.csv from test_generalization g1
+#
+# V.B Challenging Interaction Settings (sec:res_env_variants):
+#   Five environment variants: Crossing, Diagonal, Mixed (2 obs),
+#     Mixed (3 obs), Dense (4 obs)
+#   Methods: same as V.A
+#   → Figure 2: fig_g6_challenging_envs (paper_figures/)
+#   Data: g6_challenging_envs.csv from test_generalization g6
+#
+# V.C Injection-Mode Selection Comparison (sec:res_injection_comparison):
+#   WDRO-K vs TopRisk-K across environments, injection counts,
+#   switching probabilities, and noise thresholds.
+#   Finding: statistically similar performance — principal benefit
+#   comes from adding explicit coverage, not the selection heuristic.
+#   (Currently text-only, no dedicated figure)
+#
+# V.D Interpretation (sec:res_interpretation):
+#   Summary of mechanism: WDRO improves finite-sample representation
+#   of risky switching behaviors under fixed scenario budget.
+#   (Text-only discussion)
 
-## Simulation Environments (Section IV, sec:envs)
+## Key Test Binaries
 #
-# Both environments: ego at (0,0), 25m S-curve path y(x) = 3*sin(2*pi*x/L)
-#
-# Oncoming: obstacle at 60% arc length, head-on at ~1 m/s
-#   - Base collision rate ~67%, most challenging
-#   - 4 common modes + rare lane-change mode
-#
-# Intersection: obstacle 2m off-path at 40% arc length, perpendicular ~1 m/s
-#   - Base collision rate ~4-7%, sensitive to mode coverage
-#   - Cross/stop/turn ambiguity
-
-## Paper Research Questions (Section V)
-#
-# Q1: Does WDRO-sampling improve mode coverage at fixed scenario budget?
-# Q2: Does WDRO injection improve safety, and when does WDRO outperform
-#     simpler TopRisk and DiverseRisk injection?
-# Q3: Is performance robust against short mode history lengths?
-# Q4: How sensitive are results to the transport ground cost choice?
-
-## Paper Experiments (D1-D4, in stephen_crawford_WDRO.tex)
-#
-# D1: Mode-set injection under finite budgets (WDRO-K vs TopRisk-K vs DiverseRisk-K)
-#     → Fig A (fig_a_selection), both environments
-# D2: WDRO-sampling vs risk-softmax sampling
-#     → Fig B (fig_b_sampling), both environments
-# D3: Mode-history length comparison (observation sweep)
-#     → Fig C (fig_c_observation), both environments
-# D4: Ground-cost sensitivity (W2-Bures, Euclidean-mean, 0/1)
-#     → Fig D (fig_d_ground_cost) + Table (d4_ground_cost_table)
-#
-# All figures in cdc_paper_figures/ directory, generated by scripts/generate_d_figures.py
-
-## Key Experiments (code, paper_experiment_runner.cpp)
-#
-# A-D: Legacy experiments
-# E: Buffer size sensitivity with OT+DRO
-# F: Non-anticipativity & McNemar (Base, OT, DRO, OT+DRO, OT+DRO+SH)
-# H: Full ablation matrix (6 variants with DRO options)
-# I: Safe horizon at scale
-# T: Switching severity sweep
-# U: Solve time vs scenario count
-# V: Rare-mode probability sweep
-# W: Scaling with number of modes M
-# X: Coverage baselines on rare-mode stress test
-# Y: OT geometry ablation (shuffled cost matrices)
-# Z: Qualitative rollouts
-# AA: Robustness across environments
-# AB: OT regularization Pareto frontier
-#
-# DRO-specific tests (separate test binaries):
-# - test_dro_framework: H1-H6 (injection, collision rate, SH, multi-disc, ablation, W2 Bures)
-# - test_paper_strategies: 8-9 strategy comparison (Base, OT, DRO(inj), SH combos, DRO(q*))
-# - test_strategy_sweep: Strategy sweep across 60 conditions
-# - test_ot_alternatives: 5 alternative OT approaches vs DRO
-# - test_tuning_sweep: DRO rho sweep, SH min sweep, blending alpha
-# - test_statistical_power: H1-H4 high-power statistical tests
-# - test_cdc_experiments: D1-D4 experiments for the CDC paper
+# - test_generalization: G1-G8 experiments (path geometry, multi-obstacle,
+#   switching dynamics, mode diversity, path×obstacle, challenging envs,
+#   speed sweep, path×challenge). Outputs to figures/generalization/.
+# - paper_experiment_runner: Legacy experiments A-AB
+# - test_dro_framework: DRO validation H1-H6
+# - test_paper_strategies: 8-9 strategy comparison
+# - test_cdc_experiments: CDC paper D1-D4
+# - test_focused_experiments: Focused diagnostic experiments F1-F11
+# - test_robustness: Novel modes, misclassification scenarios
 #
 # All experiments MUST use MPCC (reference path set on controller).
-# The shared rollout functions run_single_rollout() and
-# run_single_rollout_env() set the reference path explicitly.
+
+## Figure Output Directory Convention
+#
+# All generated figures and CSV data MUST be written to ./figures/<subfolder>/
+# where <subfolder> corresponds to the test/experiment type:
+#
+#   figures/generalization/       - Generalization experiments (G1-G8)
+#   figures/generalization_figures/ - Generated figures from generalization data
+#   figures/paper/                - Core paper figures
+#   figures/robustness/           - Robustness experiments
+#   figures/focused_figures/      - Focused diagnostic figures
+#   paper_figures/                - Final paper-ready figures referenced in .tex
+#
+# Tests set OUTPUT_DIR = "figures/<subfolder>/" and call
+# fs::create_directories(OUTPUT_DIR) before writing.
+# Python scripts set OUT = pathlib.Path("figures/<subfolder>").
+#
+# The .tex file references figures from paper_figures/ directory.

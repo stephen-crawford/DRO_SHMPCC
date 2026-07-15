@@ -10,7 +10,6 @@
  *   - S-curve reference path (L=25m, A=3m) matching Python tests
  *   - Multi-obstacle with class-based mode observation sharing
  *   - Multi-disc collision detection (configurable num_discs)
- *   - OT predictor integration (when use_ot_predictor is set)
  *   - Path completion termination at configurable fraction (default 95%)
  *   - Distribution shift injection
  *   - Per-step callbacks for experiment-specific logic (e.g. oracle flood)
@@ -193,6 +192,14 @@ inline WeightType baseline_to_weight(SamplingBaseline bl) {
  * Used by all rollouts. Propagates obstacle state under the current mode
  * dynamics with small process noise and optional mode switching.
  */
+/// Frenet-frame state for path-following obstacle propagation.
+struct FrenetState {
+    double s      = 0.0;  ///< Arc-length position along path
+    double d      = 0.0;  ///< Lateral offset from centerline (positive = left)
+    double ds_dt  = 0.0;  ///< Longitudinal speed along path
+    double dd_dt  = 0.0;  ///< Lateral drift rate
+};
+
 struct ObstacleSim {
     ObstacleState state;
     std::string current_mode;
@@ -204,6 +211,17 @@ struct ObstacleSim {
 
     /// Switch to a random mode with the given probability.
     void maybe_switch(double switch_prob, std::mt19937& rng);
+
+    /// Initialize Frenet-frame state from current Cartesian state on a path.
+    void init_frenet(const ReferencePath& path);
+
+    // --- Path-following members ---
+    std::optional<FrenetState> frenet_state;
+    const ReferencePath* ref_path = nullptr;
+
+private:
+    /// Propagate one step using Frenet-frame path-following dynamics.
+    void step_path_following(double dt, std::mt19937& rng);
 };
 
 // ============================================================================
@@ -278,6 +296,22 @@ struct ExperimentConfig {
     std::optional<ReferencePath> custom_ref_path;
     // Custom initial ego state (overrides default (0,0,0,1.5))
     std::optional<EgoState> custom_initial_ego;
+    // Custom mode models (merged into / overrides default mode models)
+    std::map<std::string, ModeModel> custom_mode_models;
+
+    // Contouring constraints (road boundary)
+    bool enable_contouring_constraints = false;
+    double road_width = 3.5;  // Narrow default to force path adherence
+
+    // Adversarial sigma scale for injected scenarios
+    double adversarial_sigma_scale = 1.5;
+
+    // Chance constraints
+    bool use_chance_constraints = false;
+    double chance_z_alpha = 1.6449;  // 95% one-sided quantile
+
+    // Risk score noise
+    double risk_noise_sigma = 0.0;
 
     // Path and termination
     bool path_completion_termination = true;
@@ -286,6 +320,9 @@ struct ExperimentConfig {
     // Per-step callback: called after mode observation, before solve.
     // Args: (step, obstacle_id, obstacle_sim, controller, rng)
     std::function<void(int, int, ObstacleSim&, AdaptiveScenarioMPC&, std::mt19937&)> step_callback;
+
+    // Path-following obstacles (Frenet-frame simulation)
+    bool path_following_obstacles = false;
 
     // Scenario / edge-case tag
     std::string scenario_tag = "baseline";

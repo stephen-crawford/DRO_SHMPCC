@@ -16,9 +16,9 @@
  * collision CIs separate from baseline, or at a rollout cap.
  *
  * Outputs:
- *   paper_figures/strategy_comparison_results.csv   — per-rollout data
- *   paper_figures/strategy_comparison_summary.csv   — per-strategy CIs
- *   paper_figures/strategy_comparison_config.txt    — exact configuration
+ *   figures/paper/strategy_comparison_results.csv   — per-rollout data
+ *   figures/paper/strategy_comparison_summary.csv   — per-strategy CIs
+ *   figures/paper/strategy_comparison_config.txt    — exact configuration
  *
  * Usage: ./test_paper_strategies [max_rollouts] [batch_size]
  */
@@ -45,7 +45,7 @@
 using namespace scenario_mpc;
 namespace fs = std::filesystem;
 
-static const std::string OUTPUT_DIR = "paper_figures/";
+static const std::string OUTPUT_DIR = "figures/paper/";
 
 // ============================================================================
 // Strategy definition

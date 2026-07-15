@@ -12,7 +12,7 @@
  *   A1: Ground cost ablation (W2 Bures / 0-1 / Euclidean mean)
  *   A2: Radius rho sweep
  *
- * Output: cdc_paper_figures/
+ * Output: figures/cdc/
  */
 
 #include <iostream>
@@ -40,7 +40,7 @@ namespace fs = std::filesystem;
 // Constants
 // ============================================================================
 
-static const std::string OUTPUT_DIR = "cdc_paper_figures/";
+static const std::string OUTPUT_DIR = "figures/cdc/";
 
 static constexpr int    HORIZON         = DEFAULT_HORIZON;
 static constexpr double DT              = DEFAULT_DT;
@@ -89,11 +89,55 @@ struct Metrics {
         if (min_clearances.empty()) return 0;
         return std::accumulate(min_clearances.begin(), min_clearances.end(), 0.0) / min_clearances.size();
     }
-    double p5_clearance() const {
+    double clearance_percentile(double p) const {
         if (min_clearances.empty()) return 0;
         auto v = min_clearances;
         std::sort(v.begin(), v.end());
-        return v[std::max(0, (int)(0.05 * (v.size() - 1)))];
+        int idx = std::max(0, std::min(static_cast<int>(v.size()) - 1,
+                  static_cast<int>(p * (v.size() - 1))));
+        return v[idx];
+    }
+    double p5_clearance() const { return clearance_percentile(0.05); }
+    double p10_clearance() const { return clearance_percentile(0.10); }
+    double p25_clearance() const { return clearance_percentile(0.25); }
+    double p50_clearance() const { return clearance_percentile(0.50); }
+    double p75_clearance() const { return clearance_percentile(0.75); }
+    double p90_clearance() const { return clearance_percentile(0.90); }
+    double p95_clearance() const { return clearance_percentile(0.95); }
+    double std_clearance() const {
+        if (min_clearances.size() < 2) return 0;
+        double m = mean_clearance();
+        double sum = 0;
+        for (double c : min_clearances) sum += (c - m) * (c - m);
+        return std::sqrt(sum / (min_clearances.size() - 1));
+    }
+    // Mean clearance for collision vs non-collision runs separately
+    std::pair<double, double> clearance_by_collision() const {
+        double sum_coll = 0, sum_nocoll = 0;
+        int n_coll = 0, n_nocoll = 0;
+        for (size_t i = 0; i < min_clearances.size() && i < collisions.size(); ++i) {
+            if (collisions[i]) { sum_coll += min_clearances[i]; n_coll++; }
+            else               { sum_nocoll += min_clearances[i]; n_nocoll++; }
+        }
+        return {n_coll > 0 ? sum_coll / n_coll : 0.0,
+                n_nocoll > 0 ? sum_nocoll / n_nocoll : 0.0};
+    }
+    // Bootstrap CI on mean clearance
+    std::pair<double, double> clearance_mean_ci(int n_boot = 5000, unsigned boot_seed = 42) const {
+        if (min_clearances.size() < 2) return {0, 0};
+        std::mt19937 rng(boot_seed);
+        std::uniform_int_distribution<int> idx_dist(0, static_cast<int>(min_clearances.size()) - 1);
+        std::vector<double> boot_means(n_boot);
+        for (int b = 0; b < n_boot; ++b) {
+            double s = 0;
+            for (size_t j = 0; j < min_clearances.size(); ++j) {
+                s += min_clearances[idx_dist(rng)];
+            }
+            boot_means[b] = s / min_clearances.size();
+        }
+        std::sort(boot_means.begin(), boot_means.end());
+        return {boot_means[static_cast<int>(0.025 * n_boot)],
+                boot_means[static_cast<int>(0.975 * n_boot)]};
     }
     double mean_progress() const {
         if (total_progress.empty()) return 0;
@@ -855,6 +899,215 @@ static void run_d4() {
 }
 
 // ============================================================================
+// C1: Clearance Analysis — full distribution comparison across methods
+//
+// Even when collision rate CIs overlap, clearance distributions may differ
+// significantly. This experiment outputs:
+//   - Full percentile ladder (p5, p10, p25, p50, p75, p90, p95)
+//   - Mean + std + bootstrap 95% CI on mean clearance
+//   - Conditional clearance: collision runs vs non-collision runs
+//   - Per-method clearance CDFs (raw values for external plotting)
+//
+// Runs E1 methods across all 4 environments, 1000 rollouts each.
+// ============================================================================
+
+static void run_c1() {
+    std::cout << "\n================================================================\n";
+    std::cout << "  C1: Clearance Distribution Analysis\n";
+    std::cout << "  All environments × {Base, WDRO-sampling, WDRO-injection}\n";
+    std::cout << "================================================================\n";
+    auto t0 = std::chrono::steady_clock::now();
+
+    const std::vector<EnvironmentType> ENVS = {
+        EnvironmentType::STRAIGHT, EnvironmentType::NARROW_CORRIDOR,
+        EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
+    };
+    const std::vector<std::string> ENV_NAMES = {"Straight", "Narrow", "Intersection", "Oncoming"};
+    const std::vector<MethodDef> METHODS = {
+        {"Base",            false, InjectionMode::NONE,         0.0, 0.0},
+        {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE, 0.0, 0.0},
+        {"WDRO-injection",  true,  InjectionMode::DRO,          0.0, 0.0},
+    };
+    const int N = 1000;
+
+    // Summary CSV: percentile ladder + conditional stats
+    std::string summary_path = OUTPUT_DIR + "cdc_c1_clearance_analysis.csv";
+    std::ofstream ofs(summary_path);
+    ofs << "environment,method,"
+        << "collision_rate,coll_ci_lo,coll_ci_hi,"
+        << "mean_clearance,std_clearance,clearance_ci_lo,clearance_ci_hi,"
+        << "p5,p10,p25,p50,p75,p90,p95,"
+        << "mean_clearance_coll,mean_clearance_nocoll,"
+        << "n_rollouts\n";
+
+    // Raw clearance CSV: one row per rollout for CDF / histogram plotting
+    std::string raw_path = OUTPUT_DIR + "cdc_c1_clearance_raw.csv";
+    std::ofstream raw_ofs(raw_path);
+    raw_ofs << "environment,method,seed,collision,min_clearance\n";
+
+    for (size_t e = 0; e < ENVS.size(); ++e) {
+        for (const auto& method : METHODS) {
+            std::cout << "  " << ENV_NAMES[e] << " / " << method.name << ": ";
+            std::cout.flush();
+            auto t1 = std::chrono::steady_clock::now();
+
+            Metrics met;
+            met.method = method.name;
+
+            for (int i = 0; i < N; ++i) {
+                if (i > 0 && i % 250 == 0) { std::cout << i << " "; std::cout.flush(); }
+                unsigned seed = static_cast<unsigned>(
+                    e * 1000000 + static_cast<int>(method.injection_mode) * 100000 + i);
+                std::mt19937 env_rng(seed);
+                EnvironmentSetup env_setup = create_environment(ENVS[e], env_rng);
+
+                ExperimentConfig cfg = make_base_config();
+                cfg = apply_method(cfg, method);
+                cfg.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obs_modes = env_setup.obs_modes;
+
+                RolloutRecord rec = run_experiment_rollout(cfg, seed);
+                met.add(rec);
+
+                // Write raw clearance data
+                raw_ofs << ENV_NAMES[e] << "," << method.name << ","
+                        << seed << "," << (rec.collision ? 1 : 0) << ","
+                        << std::fixed << std::setprecision(6) << rec.min_clearance << "\n";
+            }
+            raw_ofs.flush();
+
+            auto [clo, chi] = met.coll_ci();
+            auto [clr_ci_lo, clr_ci_hi] = met.clearance_mean_ci();
+            auto [clr_coll, clr_nocoll] = met.clearance_by_collision();
+
+            ofs << ENV_NAMES[e] << "," << method.name << ","
+                << std::fixed << std::setprecision(6)
+                << met.coll_rate() << "," << clo << "," << chi << ","
+                << std::setprecision(4)
+                << met.mean_clearance() << "," << met.std_clearance() << ","
+                << clr_ci_lo << "," << clr_ci_hi << ","
+                << met.p5_clearance() << ","
+                << met.p10_clearance() << ","
+                << met.p25_clearance() << ","
+                << met.p50_clearance() << ","
+                << met.p75_clearance() << ","
+                << met.p90_clearance() << ","
+                << met.p95_clearance() << ","
+                << clr_coll << "," << clr_nocoll << ","
+                << N << "\n";
+            ofs.flush();
+
+            std::cout << N
+                      << " coll=" << std::setprecision(1) << (met.coll_rate() * 100) << "%"
+                      << " clr=" << std::setprecision(3) << met.mean_clearance()
+                      << " [" << clr_ci_lo << "," << clr_ci_hi << "]"
+                      << " p5=" << std::setprecision(3) << met.p5_clearance()
+                      << " p50=" << met.p50_clearance()
+                      << " (" << std::setprecision(0) << elapsed_sec(t1) << "s)\n";
+        }
+    }
+
+    ofs.close();
+    raw_ofs.close();
+    std::cout << "  Written: " << summary_path << "\n";
+    std::cout << "  Written: " << raw_path << "\n";
+    std::cout << "  (" << std::setprecision(0) << elapsed_sec(t0) << "s total)\n";
+}
+
+// ============================================================================
+// C2: Clearance Analysis — Baseline comparison (all baselines)
+//
+// Same clearance statistics for all baselines on Oncoming env.
+// Reveals whether non-WDRO baselines (softmax, eps-greedy, etc.) have
+// different clearance distributions even if collision CIs are similar.
+// ============================================================================
+
+static void run_c2() {
+    std::cout << "\n================================================================\n";
+    std::cout << "  C2: Clearance Analysis — All Baselines (Oncoming)\n";
+    std::cout << "================================================================\n";
+    auto t0 = std::chrono::steady_clock::now();
+
+    const std::vector<MethodDef> METHODS = {
+        {"Base",              false, InjectionMode::NONE,              0.0, 0.0},
+        {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0},
+        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0},
+        {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0},
+        {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     5.0, 0.0},
+        {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.3},
+        {"Top-risk-inject",   true,  InjectionMode::TOP_RISK_INJECT,  0.0, 0.0},
+    };
+    const int N = 1000;
+
+    std::string filepath = OUTPUT_DIR + "cdc_c2_clearance_baselines.csv";
+    std::ofstream ofs(filepath);
+    ofs << "method,"
+        << "collision_rate,coll_ci_lo,coll_ci_hi,"
+        << "mean_clearance,std_clearance,clearance_ci_lo,clearance_ci_hi,"
+        << "p5,p10,p25,p50,p75,p90,p95,"
+        << "mean_clearance_coll,mean_clearance_nocoll,"
+        << "n_rollouts\n";
+
+    for (const auto& method : METHODS) {
+        std::cout << "  " << method.name << ": ";
+        std::cout.flush();
+        auto t1 = std::chrono::steady_clock::now();
+
+        Metrics met;
+        met.method = method.name;
+
+        for (int i = 0; i < N; ++i) {
+            if (i > 0 && i % 250 == 0) { std::cout << i << " "; std::cout.flush(); }
+            unsigned seed = static_cast<unsigned>(
+                static_cast<int>(method.injection_mode) * 100000 + i + 8000000);
+            std::mt19937 env_rng(seed);
+            EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
+
+            ExperimentConfig cfg = make_base_config();
+            cfg = apply_method(cfg, method);
+            cfg.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obs_modes = env_setup.obs_modes;
+
+            RolloutRecord rec = run_experiment_rollout(cfg, seed);
+            met.add(rec);
+        }
+
+        auto [clo, chi] = met.coll_ci();
+        auto [clr_ci_lo, clr_ci_hi] = met.clearance_mean_ci();
+        auto [clr_coll, clr_nocoll] = met.clearance_by_collision();
+
+        ofs << method.name << ","
+            << std::fixed << std::setprecision(6)
+            << met.coll_rate() << "," << clo << "," << chi << ","
+            << std::setprecision(4)
+            << met.mean_clearance() << "," << met.std_clearance() << ","
+            << clr_ci_lo << "," << clr_ci_hi << ","
+            << met.p5_clearance() << ","
+            << met.p10_clearance() << ","
+            << met.p25_clearance() << ","
+            << met.p50_clearance() << ","
+            << met.p75_clearance() << ","
+            << met.p90_clearance() << ","
+            << met.p95_clearance() << ","
+            << clr_coll << "," << clr_nocoll << ","
+            << N << "\n";
+        ofs.flush();
+
+        std::cout << N
+                  << " coll=" << std::setprecision(1) << (met.coll_rate() * 100) << "%"
+                  << " clr=" << std::setprecision(3) << met.mean_clearance()
+                  << " [" << clr_ci_lo << "," << clr_ci_hi << "]"
+                  << " p5=" << std::setprecision(3) << met.p5_clearance()
+                  << " p50=" << met.p50_clearance()
+                  << " coll|nocoll=" << std::setprecision(3) << clr_coll << "|" << clr_nocoll
+                  << " (" << std::setprecision(0) << elapsed_sec(t1) << "s)\n";
+    }
+
+    ofs.close();
+    std::cout << "  Written: " << filepath << " (" << std::setprecision(0) << elapsed_sec(t0) << "s)\n";
+}
+
+// ============================================================================
 // Wrappers: original Oncoming variants and new Intersection variants
 // ============================================================================
 
@@ -898,6 +1151,9 @@ int main(int argc, char* argv[]) {
     if (run_all || filters.count("d3i")) run_d3_intersection();
     // Ground cost ablation
     if (run_all || filters.count("d4")) run_d4();
+    // Clearance analysis
+    if (run_all || filters.count("c1")) run_c1();
+    if (run_all || filters.count("c2")) run_c2();
 
     double total = elapsed_sec(t0);
     std::cout << "\n========================================\n";

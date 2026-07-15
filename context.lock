@@ -1,0 +1,465 @@
+# Context Lock File
+# =============================================================================
+# Comprehensive snapshot of the DRO-SHMPCC codebase structure, modules, APIs,
+# and conventions. Generated 2026-03-12 from source analysis.
+#
+# Project: DRO-SHMPCC (Wasserstein-DRO Safe-Horizon Model Predictive
+#          Contouring Control)
+# Paper:   "Scenario-based Safe Horizon MPCC with Wasserstein-DRO Mode
+#           Reweighting and Scenario Injection for Targets with Switching
+#           Dynamics"
+# Authors: Stephen Crawford and Nora Ayanian, Brown University
+# Repo:    git@github.com:stephen-crawford/DRO_SHMPCC.git
+# =============================================================================
+
+# =============================================================================
+# BUILD SYSTEM
+# =============================================================================
+#
+# CMake 3.14+, C++17, Eigen3 >= 3.3
+# Build: cmake -S . -B build && cmake --build build
+#
+# Library target: scenario_mpc (static library from src/*.cpp)
+# Executable targets built from tests/*.cpp:
+#   paper_experiment_runner    test_dro_framework     test_obstacle_class
+#   test_paper_strategies      test_strategy_sweep    test_tuning_sweep
+#   test_paper_figures         test_dro_benefits      test_cdc_experiments
+#   test_path_obstacle_sweep   test_generalization    test_trajectory_dro
+#   test_traj_dro_generalization  test_robustness     test_collision_clearance
+
+# =============================================================================
+# SOURCE MODULES (include/*.hpp + src/*.cpp)
+# =============================================================================
+
+## types.hpp (371 lines)
+#
+# Foundation data structures. All structs map to paper concepts.
+#
+# EgoState          -- [x, y, theta, v] position, heading, speed
+# EgoInput          -- [a, delta] acceleration, steering rate
+# ObstacleState     -- [x, y, vx, vy] position and velocity
+# ModeModel         -- Linear dynamics: x_{k+1} = A*x_k + b + G*w_k
+# ModeHistory       -- Per-obstacle observation log: [(timestep, mode_id)]
+#                      Tracks obstacle_class for class-based sharing
+# PredictionStep    -- Single timestep: mean position + covariance
+# ObstacleTrajectory-- Full horizon prediction for one obstacle under one mode
+# Scenario          -- Joint scenario: {obstacle_id -> ObstacleTrajectory}
+#                      Has is_injected flag for DRO-injected scenarios
+# CollisionConstraint -- Linearized half-plane a^T*p >= b at timestep k
+# MPCResult         -- Optimization output: trajectory, inputs, cost,
+#                      solve_time, safe_horizon, success flag
+#
+# Enums:
+#   WeightType: UNIFORM, FREQUENCY, RECENCY, WASSERSTEIN,
+#               TEMPERATURE, EPSILON_GREEDY
+#   InjectionMode: NONE, DRO, QSTAR_SAMPLE, ADVERSARIAL, RANDOM,
+#                  ALL_MODES, UNIFORM_COVERAGE, SOFTMAX_RISK,
+#                  EPSILON_GREEDY_INJ, TOP_RISK_INJECT, DIVERSE_RISK_INJECT
+#   SafeHorizonMode: THEORETICAL_TIGHT, THEORETICAL_SIMPLE, PRACTICAL
+#   DROGroundCostType: W2_BURES, ZERO_ONE, EUCLIDEAN_MEAN
+
+## config.hpp (290 lines)
+#
+# ScenarioMPCConfig -- All hyperparameters in one struct.
+#
+# Key parameter groups:
+#   Horizon:      horizon=20, dt=0.1
+#   Ego limits:   max_acceleration=3.0, max_steering_rate=0.8
+#   Scenario:     num_scenarios=10, confidence_level=0.95, beta=0.01
+#   DRO:          enable_dro, dro_rho_base=0.1, dro_adaptive_rho,
+#                 injection_mode, dro_risk_sigma_scale=1.0
+#   Safe horizon: safe_horizon_enabled, safe_horizon_min=12,
+#                 safe_horizon_mode=PRACTICAL
+#   MPCC costs:   contour_weight=1.0, lag_weight=0.1,
+#                 terminal_heading_weight=1.0
+#   Collision:    ego_radius, obstacle_radius, safety_margin,
+#                 num_discs, vehicle_length
+#   Solver:       use_sqp_solver, sqp_max_iterations=5,
+#                 qp_max_iterations=200, qp_tolerance
+#
+# Key methods:
+#   compute_safe_horizon(S, n_u) -- Largest N_safe satisfying scenario bound
+#   compute_required_scenarios(d, R) -- Minimum S for given dimension d
+#   compute_effective_epsilon() -- Effective violation probability
+
+## dynamics.hpp / dynamics.cpp (152 + 271 lines)
+#
+# EgoDynamics -- Unicycle/bicycle model with RK4 integration.
+#   propagate(state, input) -- Single RK4 step
+#   rollout(initial, inputs) -- N-step propagation
+#   get_jacobians(state, input) -- Finite-difference A_k, B_k for SQP
+#
+# Obstacle mode factory:
+#   create_obstacle_mode_models(dt) -- Creates 6 standard modes:
+#     constant_velocity, turn_left, turn_right,
+#     decelerating, lane_change_left, lane_change_right
+
+## reference_path.hpp / reference_path.cpp (164 + 242 lines)
+#
+# ReferencePath -- Cubic spline representation of reference path.
+#   find_closest_point(position, hint) -- Arc-length projection
+#   get_position_at(s) -- 2D position from arc-length
+#   get_orientation_at(s) -- Heading angle
+#   create_s_curve(length, amplitude, points) -- S-curve: y = A*sin(2*pi*x/L)
+#
+# Used for MPCC contouring/lag cost computation.
+# Default experiment path: L=25m, A=3m, 200 points.
+
+## mode_weights.hpp / mode_weights.cpp (small + 248 lines)
+#
+# compute_mode_weights(history, weight_type, decay, timestep)
+#   Returns {mode_id -> weight} normalized to sum 1.
+#
+# Weight strategies:
+#   UNIFORM:        w_m = 1/M
+#   FREQUENCY:      w_m = count_m / total
+#   RECENCY:        w_m ~ sum lambda^(T-t) * 1{mode_t = m}
+#   WASSERSTEIN:    0.3*freq + 0.7*recency (decay=0.85)
+#                   NOTE: This is NOT a Sinkhorn OT solver.
+#   TEMPERATURE:    w'_m = exp(ln w_m / T), T=0.5
+#   EPSILON_GREEDY: w'_m = (1-eps)*w_m + eps/M, eps=0.3
+#
+# Observation gate: modes with zero observations get weight 0.
+# Cold-start: no observations -> returns empty map.
+
+## scenario_sampler.hpp / scenario_sampler.cpp (180 + 654 lines)
+#
+# Scenario generation from mode weights.
+#
+# sample_scenarios(...)             -- Standard categorical sampling
+# sample_scenarios_with_mode_coverage(...) -- Phase 1: one per mode;
+#                                            Phase 2: fill from weights
+# sample_scenarios_with_weights(...) -- Use externally provided weights
+#
+# Trajectory generation per scenario per obstacle:
+#   1. Sample mode m ~ Categorical(w)
+#   2. For k=0..N-1: draw w_k ~ N(0,I), propagate x_{k+1} = A_m*x_k + b_m + G_m*w_k
+#   3. Record PredictionStep with mean and growing covariance
+#
+# Stationary fallback: make_stationary_trajectory() for unobserved obstacles.
+
+## collision_constraints.hpp / collision_constraints.cpp (172 + 369 lines)
+#
+# Linearized half-space collision constraints.
+#
+# Normal: n_hat = (x_obs - p_d(k)) / max(||x_obs - p_d(k)||, eps_min)
+# Constraint: n_hat^T * p_d(k) <= n_hat^T * x_obs - (r_d + r_obs + margin)
+#
+# Multi-disc support: D discs at offsets along ego longitudinal axis.
+#   p_d(k) = [p_x(k) + c_d*cos(theta(k)), p_y(k) + c_d*sin(theta(k))]
+#
+# check_collision() -- Post-hoc collision validation for diagnostics.
+
+## qp_solver.hpp / qp_solver.cpp (95 + 151 lines)
+#
+# ADMM-based QP solver.
+# Problem: min_z 0.5*z^T*H*z + g^T*z  s.t.  C*z >= d
+# Condensed QP: eliminates state variables, constrains only controls.
+
+## wasserstein_dro.hpp / wasserstein_dro.cpp (450 + 1088 lines)
+#
+# Core innovation. WassersteinDRO class.
+#
+# Kantorovich dual solver:
+#   sup_q sum_m q_m*r_m  s.t.  W_D(q, p_hat) <= rho
+#   = inf_{lambda>=0} { lambda*rho + sum_i p_hat_i * max_j(r_j - lambda*D_ij) }
+#
+# Key methods:
+#   compute_worst_case_weights(nominal, obs_state, modes, ref_traj,
+#                              ..., safe_horizon, ...)
+#     -> DROResult with worst-case weights q*, lambda*, risk vector
+#   generate_worst_case_scenario(...)
+#     -> Inject mean trajectory of argmax_m q*_m
+#   generate_adversarial_scenario(...)
+#     -> Inject tail trajectory (mean + sigma_scale * directional sigma)
+#
+# Risk computation:
+#   r_m = max_{k<=N_s} max_{d<=D} r_{m,k,d}
+#   r_{m,k,d} = max(0, R + z_alpha*sigma_{m,k,d} - ||mu_{m,k} - c_d(k)||)
+#   sigma_{m,k,d} = sqrt(n^T * Sigma * n)  (directional std dev)
+#
+# Ground cost matrix:
+#   D[i][j] = (1/N) sum_k W2(P_i(k), P_j(k))  (W2-Bures by default)
+#   Alternative: ZERO_ONE, EUCLIDEAN_MEAN
+#
+# Adaptive rho: rho = rho_0 * (1 + alpha / sqrt(n_obs))
+#
+# DRO risk modes: FULL, NO_COV, DISTANCE_ONLY
+# Injection selection: WDRO-K, TopRisk-K, DiverseRisk-K
+
+## mpc_controller.hpp / mpc_controller.cpp (267 + 1518 lines)
+#
+# AdaptiveScenarioMPC -- Main controller. Algorithm 2 implementation.
+#
+# Public API:
+#   initialize_obstacle(id, class, modes)
+#   update_mode_observation(id, class, mode, timestep)
+#     -> Broadcasts to class siblings for shared observations
+#   solve(ego_state, obstacles, goal, v_ref, path_progress, path_length)
+#   set_reference_path(path) -- Enable MPCC costs
+#   set_custom_mode_weights(obstacle_id, weights)
+#
+# Solve pipeline (per call):
+#   1. Initialize reference trajectory (warmstart or straight-line)
+#   2. Sample scenarios (standard, mode-coverage, or custom weights)
+#   3. DRO injection (if enabled): compute q*, inject scenario(s)
+#   4. Safe horizon truncation (if enabled)
+#   5. SQP loop + ADMM QP solve
+#   6. Prune inactive scenarios
+#   7. Return first control
+#
+# Members:
+#   WassersteinDRO dro_              -- DRO module (if enable_dro=true)
+#   map<int, ModeHistory> mode_histories_
+#   map<int, int> obstacle_classes_  -- Class assignments
+#   vector<Scenario> scenarios_
+#   ReferencePath reference_path_
+
+## experiment_harness.hpp / experiment_harness.cpp (554 + 736 lines)
+#
+# Canonical rollout runner. ALL rollout logic lives here.
+#
+# ExperimentConfig -- Unified experiment configuration:
+#   num_scenarios, horizon, num_discs, vehicle_length
+#   weight_type, enable_dro, injection_mode
+#   safe_horizon_enabled, safe_horizon_min
+#   switch_prob, rollout_steps, num_modes
+#   obs_modes, rare_mode, rare_switch_prob
+#   num_obstacles, obstacles_per_class
+#   initial_obstacle_states, custom_ref_path
+#   path_completion_termination, path_completion_fraction
+#   step_callback, scenario_tag, method_name
+#   dro_injection_count, softmax_tau, eps_greedy_epsilon
+#   max_history_length, ground_cost
+#
+# RolloutRecord -- Complete rollout result:
+#   collision, collision_step, min_clearance
+#   steps_completed, path_progress
+#   missed_any_mode, missed_rare_mode
+#   mode_coverage_ratio, rare_coverage_ratio
+#   avg_solve_time_ms, total_solve_time_ms
+#
+# ObstacleSim -- Ground-truth obstacle simulator with mode switching.
+#
+# run_experiment_rollout(config, seed) -> RolloutRecord
+#   S-curve reference path, multi-obstacle class sharing,
+#   multi-disc collision detection, path completion termination,
+#   per-step callbacks.
+#
+# Helper functions:
+#   run_single_rollout(), run_multi_obstacle_rollout(),
+#   run_single_rollout_env()
+#   make_experiment_config(), baseline_to_weight()
+#   wilson_ci(), bootstrap_paired_delta(), mcnemar_chi2()
+#
+# PaperVariant enum: BASE, BASE_SH, DRO, DRO_SH
+# EnvironmentType enum: STRAIGHT, NARROW_CORRIDOR, INTERSECTION, ONCOMING
+# SamplingBaseline enum: STANDARD, STRATIFIED, TEMPERATURE,
+#                        EPSILON_GREEDY, RISK_BIASED, UNIFORM_WEIGHT,
+#                        RECENCY_WEIGHT, ORACLE_FLOOD
+# AblationVariant enum: NO_INJECTION, DRO_FULL, DRO_NO_COV,
+#                        DRO_DISTANCE_ONLY, RANDOM_INJECTION, ALWAYS_INJECT
+
+# =============================================================================
+# TEST / EXPERIMENT BINARIES
+# =============================================================================
+
+## paper_experiment_runner.cpp (~3800 lines)
+#
+# Main paper experiments A-AB (28 experiments).
+# Thin configuration layer: maps PaperVariant -> ExperimentConfig
+# -> run_experiment_rollout(). No rollout logic duplicated here.
+#
+# Experiment -> CSV mapping (see docs/PAPER_FIGURES_PIPELINE.md for full table):
+#   A: exp_a_collision_vs_switching.csv, exp_a_w2_vs_time.csv, ...
+#   B: exp_b_collision_given_rare.csv
+#   C: exp_c_solve_times.csv
+#   D: exp_d_calibration.csv
+#   E: exp_e_buffer_sensitivity.csv
+#   ...
+#   AB: exp_ab_pareto_frontier.csv
+#
+# Entry: main() with should_run("X") dispatch.
+# Key helpers: make_experiment_config(), run_single_rollout(),
+#   run_single_rollout_env(), run_multi_obstacle_rollout(),
+#   uses_dro(), uses_sh()
+
+## test_dro_framework.cpp (~36KB)
+# H1-H6 DRO validation: injection, collision rate, SH interaction,
+# multi-disc, ablation, W2-Bures ground cost.
+
+## test_cdc_experiments.cpp (~41KB)
+# CDC paper experiments D1-D4:
+#   D1: Mode-set injection (WDRO-K vs TopRisk-K vs DiverseRisk-K)
+#   D2: WDRO-sampling vs risk-softmax
+#   D3: Mode-history length sweep
+#   D4: Ground-cost sensitivity (W2-Bures, Euclidean, 0/1)
+# Writes to cdc_paper_figures/ directory.
+
+## test_paper_strategies.cpp (~29KB)
+# 8-9 strategy comparison (Base, OT, DRO(inj), SH combos, DRO(q*)).
+
+## test_strategy_sweep.cpp (~21KB)
+# Sweep across 60 conditions (switch prob x rare prob x obstacle config).
+
+## test_tuning_sweep.cpp (~15KB)
+# DRO rho sweep, safe_horizon_min sweep, alpha blending.
+
+## test_generalization.cpp (~28KB)
+# Generalization experiments across path geometry, multi-obstacle,
+# switching dynamics, mode diversity. Writes to generalization_figures/.
+
+## test_trajectory_dro.cpp (~39KB)
+# Trajectory-level DRO analysis.
+
+## test_dro_benefits.cpp (~25KB)
+# DRO-specific benefit experiments.
+
+## test_path_obstacle_sweep.cpp (~20KB)
+# Path geometry variation.
+
+## test_obstacle_class.cpp (~8KB)
+# Validates class-based mode sharing: observation sync, late-join
+# inheritance, class independence.
+
+## test_paper_figures.cpp (~37KB)
+# Legacy figure generation.
+
+## test_collision_clearance.cpp
+# Collision clearance and safety behavior tests across multiple axes:
+#   C1: Clearance vs switching probability (6 switch_probs x 6 methods x 300 rollouts)
+#   C2: Clearance vs obstacle count (1-4 obs, independent + shared classes)
+#   C3: Clearance across environment types (Straight, Narrow, Intersection, Oncoming)
+#   C4: Multi-seed robustness (5 master seeds x 4 envs x 3 methods x 200 rollouts)
+#   C5: Clearance under rare-mode stress (rare_prob x switch_prob interaction)
+#   C6: Combined stress test (environment x obstacle count x switching)
+# Outputs clearance-focused CSV columns: mean/median/p5/p25/stddev of min_clearance,
+# mean collision step, collision rate with Wilson CIs.
+# CSVs: paper_figures/c1_*.csv through c6_*.csv
+
+# =============================================================================
+# FIGURE GENERATION (Python scripts/)
+# =============================================================================
+#
+# All scripts read CSVs (from build/paper_figures/ or cdc_paper_figures/
+# or generalization_figures/) and write PNGs.
+#
+# generate_results_figures.py  -- Main paper: Fig 1-33
+# generate_d_figures.py        -- CDC paper: D1-D4
+# generate_generalization_figures.py
+# generate_strategy_figures.py
+# generate_dro_benefit_figures.py
+# generate_sweep_figures.py
+# generate_tuning_figures.py
+# generate_injection_count_figures.py
+# generate_algorithm_figure.py
+# generate_q1q2q3_figures.py
+# generate_path_obstacle_figures.py
+# generate_paper_figures.py    -- Legacy
+# draw_environments.py         -- Environment visualization
+#
+# Style: matplotlib, serif font, publication-quality.
+# Dependencies: numpy, pandas, matplotlib.
+
+# =============================================================================
+# DATA DIRECTORIES
+# =============================================================================
+#
+# cdc_paper_figures/    -- CDC paper CSVs (16 files):
+#   cdc_a1_ground_cost.csv, cdc_a2_rho_sweep.csv, cdc_baselines.csv,
+#   cdc_d1_selection_*.csv, cdc_d2_sampling_*.csv,
+#   cdc_d3_observation_*.csv, cdc_d4_ground_cost_ablation.csv,
+#   cdc_e1_method_comparison.csv, cdc_e2_injection_sweep.csv,
+#   cdc_e4_runtime.csv, d4_ground_cost_table.tex
+#
+# generalization_figures/ -- Generalization CSVs (4 files):
+#   g1_path_geometry.csv, g2_multi_obstacle.csv,
+#   g3_switch_dynamics.csv, g4_mode_diversity.csv
+#
+# traj_paper_figures/   -- Trajectory paper: summary_table.tex
+#
+# build/paper_figures/  -- Runtime output: CSVs + PNGs from experiments
+
+# =============================================================================
+# KEY ALGORITHMS
+# =============================================================================
+
+## Algorithm 1: Scenario Generation with DRO
+# 1. Compute nominal mode distribution p_hat from observations
+# 2. Solve Wasserstein DRO: max_{q in B_rho(p_hat)} sum_m q_m*r_m
+# 3. Sample S scenarios from q* (or p_hat) depending on injection mode
+# 4. Inject K worst-case scenarios (deterministic)
+# 5. Build constraints over k=1,...,N_s
+
+## Algorithm 2: AdaptiveScenarioMPC (mpc_controller.cpp)
+# 1. Mode observation update -> broadcast to class siblings
+# 2. Reference trajectory warmstart
+# 3. Scenario sampling (standard, mode-coverage, or custom weights)
+# 4. DRO injection (if enabled)
+# 5. Safe horizon truncation
+# 6. SQP + ADMM QP solve
+# 7. Prune inactive scenarios
+# 8. Return first control u*(t|t)
+
+## Algorithm 3: Scenario Pruning
+# Remove scenarios that violate collision constraints at current state.
+
+## Algorithm 4: Mode-Coverage Sampler
+# Phase 1: Force one scenario per observed mode (coverage guarantee)
+# Phase 2: Fill remaining budget from weighted distribution
+
+# =============================================================================
+# PAPER VARIANTS
+# =============================================================================
+#
+# Base     -- FREQUENCY weights, no DRO, no safe horizon
+# Base+SH  -- FREQUENCY weights, safe_horizon_enabled=true
+# DRO      -- FREQUENCY weights + Wasserstein DRO injection
+# DRO+SH   -- DRO + safe_horizon_enabled=true
+#
+# The "OT" label in experiments refers to WeightType::WASSERSTEIN
+# (0.3*freq + 0.7*recency blend), NOT a Sinkhorn OT solver.
+# The OptimalTransportPredictor class was removed from this export.
+
+# =============================================================================
+# MATHEMATICAL FORMULATIONS (from paper)
+# =============================================================================
+#
+# See PAPER_CONTEXT.lock for authoritative formulations:
+# - Ego dynamics (bicycle model, RK4)
+# - MPCC cost (contouring + lag + control penalties)
+# - Multi-disc collision model
+# - Obstacle mode dynamics
+# - Linearized half-space constraints
+# - Wasserstein DRO (Kantorovich dual)
+# - Safe horizon (Calafiore-Campi scenario bound)
+# - DRO injection selection rules (WDRO-K, TopRisk-K, DiverseRisk-K)
+
+# =============================================================================
+# REMOVED / NON-EXISTENT MODULES
+# =============================================================================
+#
+# The following are referenced in some older documentation or comments
+# but do NOT exist in this codebase:
+#
+# optimal_transport_predictor.hpp/cpp -- Removed (comment in paper_experiment_runner.cpp:58)
+# trajectory_moments.hpp              -- Never existed in this export
+# scenario_pruning.hpp                -- Pruning is inline in mpc_controller.cpp
+# FORMULATION.md                      -- Never existed in this export
+# test_statistical_power.cpp          -- Never existed in this export
+# test_ot_alternatives.cpp            -- Never existed in this export
+
+# =============================================================================
+# CONVENTIONS
+# =============================================================================
+#
+# - All rollout logic in experiment_harness.cpp, never duplicated in tests
+# - Test files are thin config layers over run_experiment_rollout()
+# - CSVs written to build/paper_figures/ (relative to working directory)
+# - CDC CSVs in cdc_paper_figures/ (checked into repo)
+# - S-curve reference path: L=25, A=3, 200 points (all experiments)
+# - Default obstacle: 35% arc-length placement
+# - Path completion: 95% arc-length termination
+# - Ego initial state: (0, 0, 0, 1.5)
+# - Default collision radii: ego=0.5, obs=0.35, margin=0.2
+# - Wilson 95% confidence intervals for statistical reporting

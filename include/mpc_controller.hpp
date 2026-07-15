@@ -156,6 +156,11 @@ public:
                            const Eigen::Vector4d& b_new,
                            const Eigen::Matrix4d& G_new);
 
+    /// Clear cached scenarios so they are re-sampled on the next solve().
+    /// Use this from a step_callback when setting custom mode weights
+    /// that must take effect immediately (e.g. trajectory-level DRO).
+    void reset_scenarios() { scenarios_.clear(); }
+
 private:
     /**
      * @brief Initialize reference trajectory for constraint linearization.

@@ -119,6 +119,61 @@ std::vector<CollisionConstraint> compute_linearized_constraints(
     return constraints;
 }
 
+std::vector<CollisionConstraint> compute_chance_constraints(
+    const std::vector<EgoState>& reference_trajectory,
+    const std::vector<Scenario>& scenarios,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin,
+    int num_discs,
+    double vehicle_length,
+    double z_alpha
+) {
+    std::vector<CollisionConstraint> constraints;
+    double combined_radius = ego_radius + obstacle_radius + safety_margin;
+    int horizon = static_cast<int>(reference_trajectory.size()) - 1;
+
+    for (const auto& scenario : scenarios) {
+        for (int k = 0; k <= horizon; ++k) {
+            const EgoState& ref_state = reference_trajectory[k];
+            std::vector<Eigen::Vector2d> disc_positions =
+                compute_ego_disc_positions(ref_state, num_discs, vehicle_length);
+
+            for (const auto& [obs_id, trajectory] : scenario.trajectories) {
+                if (k >= static_cast<int>(trajectory.steps.size())) continue;
+
+                const PredictionStep& obs_step = trajectory.steps[k];
+                Eigen::Vector2d obs_position = obs_step.mean;
+                const Eigen::Matrix2d& cov = obs_step.covariance;
+
+                for (const auto& disc_pos : disc_positions) {
+                    Eigen::Vector2d diff = disc_pos - obs_position;
+                    double dist = diff.norm();
+
+                    Eigen::Vector2d a;
+                    if (dist < 1e-6) {
+                        a = Eigen::Vector2d(1.0, 0.0);
+                    } else {
+                        a = diff / dist;
+                    }
+
+                    // Directional variance: sigma_dir = sqrt(a^T Sigma a)
+                    double var_dir = a.transpose() * cov * a;
+                    double sigma_dir = std::sqrt(std::max(1e-12, var_dir));
+
+                    // Chance constraint: b = a^T mu + r + z_alpha * sigma_dir
+                    double b = a.dot(obs_position) + combined_radius + z_alpha * sigma_dir;
+
+                    CollisionConstraint c(k, obs_id, scenario.scenario_id, a, b);
+                    c.linearization_point = disc_pos;
+                    constraints.push_back(c);
+                }
+            }
+        }
+    }
+    return constraints;
+}
+
 std::vector<Eigen::Vector2d> compute_ego_disc_positions(
     const EgoState& state,
     int num_discs,

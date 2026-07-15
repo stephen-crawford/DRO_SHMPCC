@@ -29,7 +29,7 @@
  *   C: Trajectory DRO variant comparison (resampling vs injection)
  *   D: Trajectory particle count sweep
  *
- * Outputs CSV files to paper_figures/.
+ * Outputs CSV files to figures/paper/.
  */
 
 #include <iostream>
@@ -60,7 +60,7 @@ namespace fs = std::filesystem;
 // Constants
 // ============================================================================
 
-static const std::string OUTPUT_DIR = "paper_figures/";
+static const std::string OUTPUT_DIR = "figures/paper/";
 
 static constexpr int    HORIZON         = DEFAULT_HORIZON;
 static constexpr double DT              = DEFAULT_DT;
@@ -458,18 +458,21 @@ static ExperimentConfig make_config(
         case TrajDROMethod::TRAJ_DRO_INJECT:
         case TrajDROMethod::TRAJ_DRO_COMBINED:
             // Trajectory DRO: base SHMPCC + step callback that performs
-            // trajectory-level DRO using the controller's inject_scenario API.
-            // We leave enable_dro=false so the controller does normal sampling,
-            // then our callback overrides with DRO-reweighted scenarios.
+            // trajectory-level DRO. The callback:
+            //   1. Samples fresh trajectory particles from the nominal distribution
+            //   2. Computes per-trajectory collision risk
+            //   3. Computes pairwise trajectory transport costs
+            //   4. Solves the Kantorovich dual over trajectory particles
+            //   5. Aggregates Q* weights back to mode weights for resampling,
+            //      or injects the worst-case trajectory as an extra scenario
             cfg.step_callback = [method, rho, num_scenarios](
                 int step, int obs_id, ObstacleSim& obs_sim,
                 AdaptiveScenarioMPC& controller, std::mt19937& rng
             ) {
-                // Only act on the first obstacle callback per step
+                // Only act on the last obstacle callback per step
+                // (so all observations have been recorded before we act)
                 if (obs_id != 0) return;
 
-                // Sample trajectory particles from the nominal distribution
-                // by propagating each mode's dynamics with noise
                 const auto& modes = obs_sim.mode_models;
                 int horizon = controller.config().horizon;
                 double ego_r = controller.config().ego_radius;
@@ -479,46 +482,93 @@ static ExperimentConfig make_config(
                 int n_discs = controller.config().num_discs;
                 double veh_len = controller.config().vehicle_length;
 
-                // Get the ego reference trajectory (from controller's scenarios)
-                // We'll use the controller's current state as a proxy
-                const auto& scenarios = controller.scenarios();
-                if (scenarios.empty()) return;
-
-                // Build a simple ego reference trajectory from the current
-                // solution. If no previous solution, skip this step.
-                // (In practice the controller has already initialized its
-                // reference trajectory before step_callback fires.)
-
-                // Collect all obstacle trajectories from the currently-sampled
-                // scenarios for obs_id=0. These are our trajectory particles.
+                // Sample fresh trajectory particles from the nominal
+                // mode distribution by propagating mode dynamics with noise.
+                // Use the obstacle's current state as the starting point.
+                int S_particles = num_scenarios;
                 std::vector<ObstacleTrajectory> traj_particles;
-                for (const auto& sc : scenarios) {
-                    auto it = sc.trajectories.find(0);
-                    if (it != sc.trajectories.end()) {
-                        traj_particles.push_back(it->second);
+                traj_particles.reserve(S_particles);
+
+                // Build mode weights from observation frequency
+                std::map<std::string, double> freq_weights;
+                int total_obs_count = 0;
+                for (const auto& [mode_id, _] : modes) {
+                    freq_weights[mode_id] = 0.0;
+                }
+                // Count mode observations from the controller's
+                // previously-sampled scenarios as proxy for observation freq.
+                // Alternatively, use uniform over available modes.
+                // Here: weight proportional to how many scenarios used each mode.
+                const auto& prev_scenarios = controller.scenarios();
+                if (!prev_scenarios.empty()) {
+                    for (const auto& sc : prev_scenarios) {
+                        auto it = sc.trajectories.find(0);
+                        if (it != sc.trajectories.end()) {
+                            freq_weights[it->second.mode_id] += 1.0;
+                            total_obs_count++;
+                        }
+                    }
+                    if (total_obs_count > 0) {
+                        for (auto& [_, w] : freq_weights) w /= total_obs_count;
+                    }
+                }
+                // Fallback: uniform weights if no previous data
+                if (total_obs_count == 0) {
+                    for (auto& [_, w] : freq_weights) {
+                        w = 1.0 / freq_weights.size();
                     }
                 }
 
-                if (traj_particles.size() < 3) return;
+                // Sample S trajectory particles from nominal distribution
+                std::normal_distribution<double> normal_dist(0.0, 1.0);
+                for (int s = 0; s < S_particles; ++s) {
+                    // Sample a mode
+                    std::string sampled_mode = sample_mode_from_weights(
+                        freq_weights, rng);
+                    if (modes.find(sampled_mode) == modes.end()) continue;
+                    const ModeModel& mode = modes.at(sampled_mode);
 
-                // Build a simple ego reference from the first scenario's
-                // ego trajectory. Since we don't have direct access to the
-                // controller's internal reference, we'll approximate using
-                // a constant-velocity projection from current ego state.
-                // The step_callback doesn't receive ego state directly,
-                // but we can infer from obstacle-relative geometry.
+                    // Propagate trajectory with noise
+                    std::vector<PredictionStep> steps;
+                    steps.reserve(horizon + 1);
 
-                // Use a straight-line ego reference as approximation
-                // (The actual ego reference is internal to the controller,
-                //  but for risk computation this is a reasonable proxy.)
+                    Eigen::Vector4d x = obs_sim.state.to_array();
+                    Eigen::Matrix4d cov = Eigen::Matrix4d::Zero();
+                    steps.emplace_back(0, x.head<2>(), cov.block<2,2>(0,0));
+
+                    for (int k = 0; k < horizon; ++k) {
+                        Eigen::VectorXd noise(mode.noise_dim());
+                        for (int d = 0; d < mode.noise_dim(); ++d) {
+                            noise(d) = normal_dist(rng);
+                        }
+                        x = mode.A * x + mode.b + mode.G * noise;
+                        cov = mode.A * cov * mode.A.transpose()
+                            + mode.G * mode.G.transpose();
+                        steps.emplace_back(k + 1, x.head<2>(),
+                                           cov.block<2,2>(0,0));
+                    }
+
+                    ObstacleTrajectory traj(0, sampled_mode, steps,
+                                            freq_weights[sampled_mode]);
+                    traj_particles.push_back(std::move(traj));
+                }
+
+                if (static_cast<int>(traj_particles.size()) < 3) return;
+
+                // Build ego reference trajectory.
+                // The obstacle's position relative to origin gives us a
+                // rough sense of the ego's direction of travel. We use a
+                // simple forward-moving ego approximation.
                 std::vector<EgoState> ego_ref;
-                // We'll create a placeholder ego trajectory that moves
-                // forward at constant velocity along x-axis as proxy
+                ego_ref.reserve(horizon + 1);
+                // Approximate: ego is near origin heading toward the obstacle
+                Eigen::Vector2d obs_pos = obs_sim.state.position();
+                double heading = std::atan2(obs_pos.y(), obs_pos.x());
                 for (int k = 0; k <= horizon; ++k) {
                     EgoState es;
-                    es.x = 1.5 * k * 0.1;  // approx v=1.5 m/s
-                    es.y = 0.0;
-                    es.theta = 0.0;
+                    es.x = 1.5 * k * 0.1 * std::cos(heading);
+                    es.y = 1.5 * k * 0.1 * std::sin(heading);
+                    es.theta = heading;
                     es.v = 1.5;
                     ego_ref.push_back(es);
                 }
@@ -537,7 +587,6 @@ static ExperimentConfig make_config(
 
                 // Solve trajectory-level DRO
                 auto dro_result = solve_trajectory_dro(risks, D, rho);
-
                 if (dro_result.worst_trajectory_idx < 0) return;
 
                 // Apply the DRO result based on method variant
@@ -547,7 +596,6 @@ static ExperimentConfig make_config(
                     int worst_idx = dro_result.worst_trajectory_idx;
                     const auto& worst_traj = traj_particles[worst_idx];
 
-                    // Build a scenario containing just this trajectory
                     Scenario inj_scenario;
                     inj_scenario.scenario_id = num_scenarios + 100 + step;
                     inj_scenario.is_injected = true;
@@ -560,10 +608,12 @@ static ExperimentConfig make_config(
 
                 if (method == TrajDROMethod::TRAJ_DRO_RESAMPLE ||
                     method == TrajDROMethod::TRAJ_DRO_COMBINED) {
-                    // Set custom mode weights based on trajectory DRO result.
                     // Aggregate trajectory-level Q* weights back to mode weights:
                     //   q_mode[m] = sum_{s: mode_s == m} q_traj[s]
                     std::map<std::string, double> mode_weights;
+                    for (const auto& [mode_id, _] : modes) {
+                        mode_weights[mode_id] = 0.0;
+                    }
                     for (int s = 0; s < S; ++s) {
                         const std::string& mode = traj_particles[s].mode_id;
                         mode_weights[mode] += dro_result.weights[s];
@@ -576,6 +626,9 @@ static ExperimentConfig make_config(
                         for (auto& [_, w] : mode_weights) w /= sum_w;
                     }
 
+                    // Clear cached scenarios so the next solve() re-samples
+                    // using the trajectory-DRO-derived mode weights
+                    controller.reset_scenarios();
                     controller.set_custom_mode_weights(0, mode_weights);
                 }
             };

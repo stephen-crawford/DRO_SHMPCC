@@ -25,8 +25,8 @@ plt.rcParams.update({
     'axes.spines.right': False,
 })
 
-DATA = Path('paper_figures')
-OUT = Path('paper_figures')
+DATA = Path('figures/paper')
+OUT = Path('figures/paper')
 
 STYLES = {
     'DRO':         dict(color='#2ca02c', marker='^', label='DRO (mean)', ls='-', zorder=3),

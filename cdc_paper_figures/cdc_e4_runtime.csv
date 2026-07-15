@@ -1,8 +1,0 @@
-method,mean_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,n_rollouts
-Base,0.865,0.831,1.415,1.654,500
-WDRO-sampling,0.978,0.935,1.628,1.822,500
-WDRO-injection,0.986,0.944,1.646,1.844,500
-Uniform-coverage,0.971,0.931,1.607,1.776,500
-Softmax-risk,0.963,0.921,1.601,1.792,500
-Eps-greedy,0.974,0.931,1.622,1.821,500
-Top-risk-inject,0.963,0.927,1.593,1.786,500

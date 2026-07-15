@@ -2,26 +2,27 @@
 
 \IEEEoverridecommandlockouts
 \overrideIEEEmargins
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{1em}
 
-% math + refs
 \usepackage{amsmath,amssymb,amsfonts,mathtools}
 \usepackage[table]{xcolor}
 \newcommand{\chg}[1]{\textcolor{red}{#1}}
 
-% (optional but common)
 \usepackage{graphicx}
 \usepackage{subcaption}
 \usepackage{cite}
 \usepackage{hyperref}
-\usepackage{amsmath,amssymb}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{booktabs}
 
+\newcommand{\thales}[1]{{\color{teal}#1}}
+
 \begin{document}
 
 \title{\LARGE \bf
-Scenario-based Safe Horizon MPCC with Wasserstein-DRO Mode Reweighting and Scenario Injection for Targets with Switching Dynamics
+Wasserstein-DRO Mode Reweighting and Scenario Injection for Scenario-based MPC with Obstacles with Switching Dynamics
 }
 
 \author{Stephen Crawford%
@@ -36,8 +37,7 @@ Nora Ayanian%
 \maketitle
 
 \begin{abstract}
-Scenario-based MPC offers finite-sample guarantees for chance-constrained planning under i.i.d.\ uncertainty samples, but switching behaviors can cause rare yet safety-critical modes to be under-represented at realistic scenario budgets. We present a Safe Horizon Model Predictive Contouring Control (SH-MPCC) framework coupled with a Wasserstein distributionally robust optimization (WDRO) mechanism. Given a nominal mode belief $\widehat p_t^v$, WDRO produces a high-danger distribution $q^\star$ in a Wasserstein ball that redistributes weight to modes with larger predicted safe-horizon clearance violations.
-We study two uses of $q^\star$: a sampling strategy, which samples modes from $q^\star$ to improve finite-sample mode coverage under switching, and scenario injection, which injects $K$ deterministic high-risk mode constraints as an additional constraint layer. These strategies are tested across a number of environements and scenario budgets and compared against base SH-MPCC. Across two environments, WDRO-sampling reduces missed-mode rates by approximately 10 percentage points relative to risk-softmax sampling at comparable collision rates. For injection, WDRO provides its largest safety gains when multiple distinct risky behaviors must be represented under a finite injection budget ($K>1$), improving mode-set selection. A history-length sweep further shows WDRO-injection is the most stable method under limited mode observations, and ground-cost ablations indicate performance is not sensitive to the exact transport cost choice. Overall, WDRO mode reweighting and lightweight injection provide a practical mechanism for improved coverage and safety in SH-MPCC with low computational overhead.
+Scenario-based Safe Horizon MPC is attractive for chance-constrained motion planning because it preserves tractability while providing finite-sample guarantees for i.i.d.\ sampled constraints. However, switching obstacle behaviors create significant problems for these appraoches as under a fixed scenario budget, rare but safety-critical dyanmic modes may be underrepresented. This paper addresses this problem in context of Safe Horizon Model Predictive Contouring Control (SH-MPCC). We model obstacle behavior using discrete dynamic modes with nominal belief $\widehat p_t^v$ and introduce a Wasserstein distributionally robust optimization (WDRO) layer that computes a conservative mode distribution $q^\star$ inside a Wasserstein ball around $\widehat p_t^v$. The resulting distribution is used in two ways: 1) to reweight scenario sampling; 2) to select a small number of deterministic high-risk mode representatives for injection as additional tightening constraints. Across multiple path geometries and interaction settings, the proposed method reduces missed-mode rate and collision rate relative to baseline SH-MPCC, showing that improving which modes are represented can substantially improve closed-loop safety without replacing the underlying scenario-based controller.
 \end{abstract}
 
 %==============================================================================
@@ -45,187 +45,52 @@ We study two uses of $q^\star$: a sampling strategy, which samples modes from $q
 %==============================================================================
 
 \section{Introduction}
+Scenario-based MPC provides finite-sample guarantees for chance-constrained planning when uncertainty samples are drawn i.i.d.\ from the true distribution \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory}. In multi-agent planning, however, nearby obstacles may switch between discrete maneuver modes, and rare but safety-critical behaviors can be under-represented at practical scenario budgets. This leads to optimistic collision-risk estimates even when the underlying scenario program is theoretically sound.
 
-Autonomous systems operating in shared environments must make decisions under uncertainty caused by other dynamic agents.
-Even when the ego dynamics are well modeled, safe motion planning becomes difficult when nearby agents exhibit switching behaviors.
-This is commonly seen in the context of driving where human drivers infer intent from subtle cues and remain cautious about rare but plausible actions (e.g., an unexpected turn or lane change). This has motivated extensive work on behavior modeling and perception \cite{Ha2013pedestrianBehavior,He1995socialForce,Zi2015youngOldCrossing,Hu2017bikeSocial,Hu2017bikeBehavior}.
+We study this issue in the context of Safe Horizon Model Predictive Contouring Control (SH-MPCC) used to control a self-driving car, where collision constraints are enforced over a truncated safe horizon \cite{degroot2023SBMotionBounded}. The central problem of this paper is therefore how to improve the way that obstacle behaviors are sampled or selected so that SH-MPCC does not miss rare but dangerous switching modes.
 
-A broad set of approaches for planning under uncertainty falls under robust and stochastic model predictive control (RMPC/SMPC).
-RMPC addresses bounded (set-membership) uncertainty, while SMPC incorporates probabilistic uncertainty via chance constraints \cite{Mesbah2016SMPCOverview}.
-Chance-constrained MPC offers a principled way to minimize risk at the cost of performance, but exact chance constraints are typically intractable in nonlinear, multi-agent settings \cite{Ch1959CCP,schwarm1999chance}.
+Our contribution is not a new vehicle model or a new SH-MPCC formulation. Rather, we add a mode-aware scenario-generation layer on top of SH-MPCC. Starting from a nominal mode belief $\widehat p_t^v$, we use Wasserstein distributionally robust optimization (WDRO) to compute a conservative distribution $q^\star$ that shifts probability mass toward high-risk modes while respecting transport geometry between modes. We then use $q^\star$ in two ways: 1) to reweight scenario sampling; 2) to select a small number of deterministic mode representatives for injection as additional tightening constraints.
 
-A key limitation of many existing methods is that they control collision risk either per time step or per obstacle.
-Per-time-step approaches often use Boole's inequality across the horizon, yielding conservative risk allocation.
-Per-obstacle approaches do not directly capture the joint event of colliding with any obstacle at any step.
-In contrast, Safe Horizon MPC (SH-MPC) \cite{degroot2023SBMotionBounded} constrains the joint collision probability over the planning horizon.
-Scenario optimization \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory} provides a surrogate by sampling finitely many obstacle-trajectory realizations and enforcing collision avoidance on each sample. This results in a tractable scenario program with probabilistic feasibility guarantees.
-
-Despite these benefits, scenario-optimization based MPC approaches remain only as reliable as its sampling distribution.
-When obstacles switch between modes (e.g., ``go straight'' versus ``turn''), sampling from the currently dominant mode can under-represent rare transitions.
-At practical scenario budgets, safety-critical behaviors may be missed, leading to optimistic collision-risk estimates.
-This issue worsens as trajectory dimension increases and as more complex agents are considered.
-
-To address under-sampling of rare switching behaviors at practical scenario budgets, we focus on improving which modes are represented in the scenario set rather than increasing the number of sampled trajectories.
-We introduce a Wasserstein-DRO mode reweighting strategy that computes a high-danger distribution $q^\star$ in a Wasserstein ball around a nominal belief $\widehat p_t^v$. 
-We study two complementary mechanisms: sampling scenarios from $q^\star$, and injecting an additional deterministic scenario corresponding to the highest-risk mode under $q^\star$. 
-We pair these mechanisms with SH-MPCC (SH-MPC with contouring control), which provides the primary collision avoidance mechanism.
-
-Our paper contributes: (i) a WDRO mode reweighting rule for SH-MPCC under switching, (ii) empirical evidence that WDRO-sampling improves finite-sample mode coverage relative to risk-softmax sampling, (iii) a mode-set injection strategy where WDRO is demonstated to inject better modes than a greedy risk baseline, and (iv) robustness results across observation regimes and ground-cost choices with low runtime overhead.
-
-The remainder of this paper is organized as follows.
-Section~\ref{related} reviews related work.
-Section~\ref{preliminaries} introduces scenario MPC preliminaries and our Wasserstein-DRO reweighting and injection mechanisms.
-Section~\ref{methods} presents the methodology.
-Section~\ref{results} reports results and ablations.
-Section~\ref{conclusion} concludes.
+The paper makes three main contributions. First, we formulate the mode-underrepresentation problem that arises in scenario-based SH-MPCC under switching obstacle dynamics. Second, we introduce a WDRO-based mode-reweighting rule that improves which behaviors are represented under fixed scenario budget. Third, we show empirically across multiple path geometries and challenging interaction settings that this mode-aware scenario generation reduces missed-mode rate and improves closed-loop safety relative to baseline SH-MPCC.
 
 %==============================================================================
-% SECTION II: RELATED WORK
+% SECTION II: PROBLEM FORMULATION
+%==============================================================================
+
+\section{Problem Formulation}\label{sec:problem}
+
+We consider Safe Horizon Model Predictive Contouring Control (SH-MPCC) with planning horizon $N$ and safe horizon $N_s \le N$. At each time $t$, the controller solves a finite-scenario optimization problem using $S$ sampled obstacle trajectories. The ego state is denoted by $x_t$, and the control sequence is $U_t=(u_{t|t},\dots,u_{t+N-1|t})$.
+
+Each obstacle $v \in \{1,\dots,V\}$ is assumed to belong to a class $\mathcal{C}(v)$ possessing a finite maneuver-mode set $\mathcal{M}_{\mathcal{C}}=\{1,\dots,M_{\mathcal{C}}\}$. A predictor provides a nominal belief $\widehat p_t^v \in \Delta_{M_{\mathcal{C}}}$ over these modes. Conditioned on a mode $m \in \mathcal{M}_{\mathcal{C}}$, the predictor generates a trajectory realization over the safe horizon. In baseline scenario-based SH-MPCC, scenarios are generated by sampling modes from $\widehat p_t^v$ and then sampling trajectories conditioned on those modes.
+
+The difficulty is that, when $S$ is limited, directly sampling from $\widehat p_t^v$ can under-represent rare but safety-critical modes. As a result, the controller may solve the correct scenario program for the sampled trajectories while still failing to account for the obstacle behaviors that matter most for safety.
+
+Thus we can formalize the problem at hand as follows.
+Given a fixed scenario budget $S$ and nominal mode beliefs $\{\widehat p_t^v\}_{v=1}^V$, we want to create a mode-aware scenario-generation rule for SH-MPCC that:
+\begin{enumerate}
+    \item preserves the sampled-constraint structure of the baseline scenario program;
+    \item increases representation of rare but dangerous switching modes;
+    \item improves closed-loop safety without replacing the underlying SH-MPCC optimization problem.
+\end{enumerate}
+
+The method proposed in this paper addresses this problem by placing a Wasserstein-DRO layer on top of the nominal mode beliefs. The resulting conservative distribution $q^\star$ is then used either to reweight scenario sampling or to select a small number of deterministic mode representatives for injection as additional constraints.
+
+%==============================================================================
+% SECTION III: RELATED WORK
 %==============================================================================
 
 \section{Related Work}\label{related}
+Scenario-based optimization provides a tractable surrogate for chance-constrained control by enforcing constraints on finitely many sampled realizations of the uncertainty \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory}. In motion planning and MPC, this paradigm has been used to reduce conservatism relative to analytic convex approximations while preserving real-time feasibility \cite{de2021ScenarioBasedTraj,degroot2023SBMotionBounded}.
 
-Scenario-based optimization provides a tractable surrogate for chance-constrained control by enforcing constraints on finitely many sampled ``scenarios'' of the uncertainty \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory}. In motion planning and MPC, this approach has been used to reduce conservatism relative to convex relaxations while preserving real-time feasibility \cite{de2021ScenarioBasedTraj,degroot2023SBMotionBounded}.
+De Groot et al.\ \cite{de2021ScenarioBasedTraj} control collision risk via per-step chance constraints in a receding-horizon replanning framework. In follow-up work, the same authors \cite{degroot2023SBMotionBounded} bound the joint probability of collision over the trajectory, reducing conservatism while retaining scenario-based tractability. This Safe Horizon MPC (SH-MPC) framework forms the basis of our implementation. Other scenario-based MPC variants introduce candidate-path representations \cite{Shang2021SceMPC} or reinforcement-learning-based components \cite{Jekl2025SceVelPlanning}, which are complementary to our focus.
 
-De Groot et al.\ \cite{de2021ScenarioBasedTraj} control collision risk via per-step chance constraints within a receding-horizon replanning loop. The same authors \cite{degroot2023SBMotionBounded} extend this framework to bound the joint probability of collision over the trajectory, reducing conservatism while retaining scenario-based tractability; this is the Safe Horizon MPC (SH-MPC) method upon which our implementation builds. Other scenario optimization-based MPC variants introduce candidate-path representations \cite{Shang2021SceMPC} or reinforcement-learning-based components \cite{Jekl2025SceVelPlanning}, which are complementary to our focus.
+More broadly, chance-constrained MPC for multi-agent collision avoidance has been studied using particle approximations, surrogate constraints, and parametric distributional assumptions, often Gaussian \cite{Blackmore2010ProbParticle,Gopalakrishnan2016CCMulti,Lyons2012CCMPCMulti,Zhu2019CCColl,wang2020NonGauss}. These methods typically assume a fixed probabilistic uncertainty model rather than explicitly addressing unknown switching behavior. Approaches that do model context-dependent or switching behaviors often rely on intent inference or structured prediction modules \cite{Kooij2019Context-based}.
 
-More broadly, chance-constrained MPC for multi-agent collision avoidance has been studied using particle approximations, surrogate constraints, and distributional assumptions (often Gaussian) \cite{Blackmore2010ProbParticle,Gopalakrishnan2016CCMulti,Lyons2012CCMPCMulti,Zhu2019CCColl,wang2020NonGauss}. These methods typically address uncertainty under fixed probabilistic models rather than unknown switching. Approaches that explicitly model context-dependent or switching behaviors often rely on intent inference or structured prediction modules \cite{Kooij2019Context-based}.
+A related but distinct line of work studies Wasserstein distributionally robust MPC, where ambiguity sets are embedded directly into the control problem to robustify against uncertain disturbance distributions, uncertain dynamics, or risk constraints through worst-case expectation or CVaR formulations \cite{Esfahani2017DDRDRO,kuhn2019wdro,Hakobyan2020WDRO,Zhong2021DDRMPC,gao2022distributionallyrobuststochasticoptimization,gao2023drso}. Representative examples include data-driven DR-MPC for uncertain linear systems, Wasserstein tube MPC with exact uncertainty propagation, and iterative DR risk-constrained MPC for motion planning with uncertain obstacles \cite{Aolaritei2023WTMPC,Zolanvari2023WDRRC,Micheli2022DDRMPC}. In these approaches, Wasserstein ambiguity sets are used to define robustified state, input, or risk constraints inside the MPC problem.
 
-Model Predictive Contouring Control (MPCC) has become a popular formulation for path-following, where a contouring error and lag error are penalized with respect to a reference path parametrized by a progress variable \cite{Liniger2014MPCCRacing}. Our framework embeds contouring control within the scenario-based optimization, allowing path tracking and collision avoidance to be jointly optimized.
+Our setting is different. We do not replace the scenario MPC problem with a Wasserstein-robust reformulation. Instead, we use Wasserstein-DRO as a mode-reweighting and mode-selection layer on top of SH-MPCC. Given a nominal belief $\widehat p_t^v$ over maneuver modes, we compute a worst-case distribution $q^\star$ within a Wasserstein ball and use it either to (i) sample scenarios from a more conservative, geometry-aware mode distribution or (ii) select a small set of mode constraints to inject into the optimization problem. In this way, DRO is used to improve finite-sample representation of rare but safety-critical modes at fixed scenario budget, rather than to impose a fully distributionally robust MPC constraint set.
 
-In contrast to Wasserstein-DRO reformulations of MPC that aim to robustify the disturbance model inside the optimization \cite{kuhn2019wdro,gao2023drso,Hakobyan2020WDRO,Zhong2021DDRMPC},
-we use Wasserstein-DRO as a mode reweighting and scenario selection layer.
-Given a nominal belief $\widehat p_t^v$ over discrete motion modes, we compute a worst-case
-distribution $q^\star$ in a Wasserstein ball and either (i) sample scenarios from $q^\star$
-or (ii) inject deterministic mode-representative constraints as an additional set of constraints.
-Thus, DRO is used to improve finite-sample coverage of rare but safety-critical modes at
-fixed scenario budget, rather than to replace the MPC constraints with a DRO counterpart.
-
-%==============================================================================
-% SECTION III: PRELIMINARIES
-%==============================================================================
-
-\section{Preliminaries}\label{preliminaries}
-
-\subsection{Chance-constrained MPC}\label{sec:cc_prelim}
-
-We consider discrete-time stochastic control with state $x_t\in\mathbb{R}^n$, input $u_t\in\mathbb{U}\subset\mathbb{R}^m$, and disturbance $\omega_t$ drawn from some probability distribution $\mathbb{P}_\omega$:
-\begin{equation}\label{eq:dyn_general}
-x_{t+1} = f(x_t,u_t,\omega_t), \qquad \omega_t \sim \mathbb{P}_\omega,
-\end{equation}
-with outputs $y_t = h(x_t,u_t,\psi_t)$ and $\psi_t \sim \mathbb{P}_\psi$ \cite{Mesbah2016SMPCOverview}.
-At time $t$, MPC plans over a horizon of length $N$ using predicted states $x_{t+k|t}$ for $k=0,\dots,N$ and a control sequence $U_t = (u_{t|t},\dots,u_{t+N-1|t})$.
-
-A generic joint chance-constrained MPC problem can be written as
-\begin{subequations}\label{eq:cc_mpc}
-\begin{align}
-\min_{U_t\in\mathbb{U}^N}\quad &
-\mathbb{E}\!\left[\sum_{k=0}^{N-1} \ell(x_{t+k|t},u_{t+k|t}) + \ell_f(x_{t+N|t})\right] \\
-\text{s.t.}\quad &
-x_{t+k+1|t}=f(x_{t+k|t},u_{t+k|t},\omega_{t+k}),\quad x_{t|t}=x_t,\\
-& \mathbb{P}\!\left(g_j(x_{t+1:t+N|t},\boldsymbol{\delta})\le 0,\ \forall j=1,\dots,s\right) \ge 1-\epsilon.
-\end{align}
-\end{subequations}
-where $\ell$ denotes the cost function, $\ell_f$ is a terminal cost, $g_j(\cdot)$ encodes constraint violations (e.g., collision avoidance), $\boldsymbol{\delta}$ denotes the random quantities entering the constraints (e.g., obstacle trajectories), and $\epsilon$ is a defined threshold.
-
-\subsection{Scenario approximation}
-
-Scenario optimization replaces the chance constraint by finitely many sampled constraints \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory}. Let $\boldsymbol{\delta}\in\Delta$ denote an uncertainty instance and let $\{\boldsymbol{\delta}^{(i)}\}_{i=1}^S$ be i.i.d.\ samples. The scenario program enforces
-\begin{equation}\label{eq:scenario_generic}
-g(u,\boldsymbol{\delta}^{(i)}) \le 0,\quad i=1,\dots,S,
-\end{equation}
-where $g$ is the constraint violation function and $u$ is the decision variable. Under convexity and i.i.d.\ sampling, scenario theory provides bounds on $S$ sufficient to guarantee that the optimizer violates the original chance constraint with probability at most $\epsilon$ \cite{Cal2006ScenarioApproach,Ca2018ScenarioTheory}.
-
-\subsection{Mode coverage metrics (diagnostic)}\label{sec:metrics_prelim}
-
-We use two diagnostics throughout:
-(i) overall missed-mode rate which is the fraction of rollouts where at least one obstacle mode that was demonstrated was not represented in the sampled scenario set within the safe horizon; and
-(ii) rare-mode miss rate, which is the fraction a designated rare mode is not captured.
-
-\subsection{Wasserstein-DRO reweighting} \label{sec:wass_prelim}
-
-Let $\widehat p_t^v\in\Delta_M$ denote a nominal belief over the $M$ modes for obstacle $v$ at time $t$.
-To reshape mode weights in a geometry-aware way, we compute a worst-case distribution $q\in\Delta_M$ in a Wasserstein ball around $\widehat p_t^v$:
-\begin{equation}\label{eq:w_dro_modes}
-\max_{q\in\Delta_M}\ \langle q,r\rangle
-\quad\text{s.t.}\quad
-W_D(q,\widehat p_t^v)\le \rho,
-\end{equation}
-where $r\in\mathbb{R}^M$ is a per-mode danger score computed from predicted safe-horizon clearance violations (higher indicates greater risk), $W_D$ is the discrete Wasserstein distance induced by ground cost $D$, and $\rho$ is the Wasserstein radius \cite{Esfahani2017DDRDRO,Zhong2021DDRMPC,kuhn2024WDRO}. We scale the Wasserstein ambiguity radius to reflect the reliability of the empirical mode belief.
-Let $n_{\mathrm{obs}}$ denote the number of mode observations available in the history window for obstacle class $C_v$.
-We set
-\[
-\rho \;=\; \rho_0\!\left(1+\frac{\alpha}{\sqrt{n_{\mathrm{obs}}}}\right),
-\]
-where $\rho_0$ is a base radius (default $\rho_0=0.1$) and $\alpha$ is a user-set scaling coefficient (default $\alpha=1.0$).
-This choice inflates the Wasserstein ball when observations are scarce and contracts as data accumulates, since $1/\sqrt{n_{\mathrm{obs}}}$ decays, yielding $\rho\to\rho_0$ in the well-observed regime. 
-
-We form $r$ using a conservative Gaussian clearance surrogate \cite{blackmore2012CCOPPW}. For mode $m$ and safe-horizon step $k$, let the predicted obstacle position satisfy $x_{t+k|t}^{v,m}\sim\mathcal N(\mu_{m,k}^v,\Sigma_{m,k}^v)$ and let $c_d(k)$ denote the center of ego disc $d$ at step $k$.
-We then define a normalized straight line from the center of the ego disc to the obstacle $n_{m,k,d}:=(\mu_{m,k}^v-c_d(k))/\|\mu_{m,k}^v-c_d(k)\|$ and calculate the directional standard deviation for the obstacle $\sigma_{m,k,d}:=\sqrt{n_{m,k,d}^\top \Sigma_{m,k}^v\, n_{m,k,d}}$. 
-Given a one-sided quantile $z_\alpha$, the per-step violation is
-\[
-r_{m,k,d} := \bigl[R + z_\alpha \sigma_{m,k,d} - \|\mu_{m,k}^v-c_d(k)\|\bigr]_+,
-\]
-where $R=r_d+r_{\mathrm{obs}}^v+r_{\mathrm{offset}}$ is the total safety radius and $[x]_+:=\max\{0,x\}$ is a functional taken over the quantity. We then set $r_m := \max_{k\le N_s}\max_{d\le D} r_{m,k,d}$.
-
-Note that $\widehat p_t^v$ is feasible for the Wasserstein ambiguity set
-$\{q \in \Delta : W_D(q,\widehat p_t^v)\le \rho\}$ since
-$W_D(\widehat p_t^v,\widehat p_t^v)=0\le \rho$.
-Therefore, for the worst-case reweighting problem
-$q^\star \in \arg\max_{W_D(q,\widehat p_t^v)\le \rho}\langle q, r\rangle$,
-we have
-$\langle q^\star, r\rangle \ge \langle \widehat p_t^v, r\rangle$.
-That is, the WDRO produced $q^\star$ is at least as conservative as the nominal
-distribution in terms of expected clearance violation. This means we can generate scenarios
-according to $q^\star$ when forming the scenario constraints, because the reweighted dsitribtuion is within the orignal. 
-
-Using the Kantorovich dual for the $W_1$-type objective, \eqref{eq:w_dro_modes} reduces to a 1D convex minimization in $\lambda\ge 0$:
-\begin{equation}\label{eq:w_dro_dual}
-\min_{\lambda\ge 0}\ \Bigl\{
-\lambda\rho+\sum_{i=1}^M \widehat p_{t,i}^v\ \max_{j\in\mathcal M}\bigl(r_j-\lambda D_{ij}\bigr)
-\Bigr\},
-\end{equation}
-which we solve via a 1D search \cite{gao2022distributionallyrobuststochasticoptimization}.
-Here, $\lambda$ is the Lagrange multiplier (price per unit transport), and $\max_j(r_j-\lambda D_{ij})$ selects the best destination mode $j$ for mass starting at mode $i$ under the transport geometry.
-
-We recover a candidate worst-case distribution by mapping each nominal mass at mode $i$ to
-$j^\star(i)\in\operatorname*{arg\,max}_{j\in\mathcal M}(r_j-\lambda^\star D_{ij})$ and verify that the induced transport plan satisfies the radius constraint (up to numerical tolerance) before using the resulting weights for sampling.
-
-\subsection{DRO scenario injection}
-
-Beyond using WDRO to reweight the sampling distribution, we also use it to inject a small number of deterministic, mode-conditioned constraints into the SH-MPCC. Concretely, we select a set of $K$ modes and add the corresponding deterministic trajectory constraints directly to the optimization problem. We refer to the WDRO-based selection as WDRO-$K$. For comparison, we also consider two baseline selection rules that do not solve the WDRO problem: TopRisk-$K$ and DiverseRisk-$K$. Importantly, this injection step is not treated as additional i.i.d.\ scenario sampling. Instead, we interpret it as constraint tightening and add deterministic injected constraints which can only shrink the feasible set of the original scenario program. This therefore maintains the standard scenario-theoretic guarantee for the $S$ i.i.d.\ sampled constraints in like with the tehoretical requirements of \cite{Cal2006ScenarioApproach}.
-
-\paragraph{WDRO-$K$ injection.}
-WDRO-$K$ injects the $K$ modes receiving the largest mass under the WDRO worst-case distribution
-$q^\star \in \Delta_M$, obtained by solving \eqref{eq:w_dro_modes} (via the dual \eqref{eq:w_dro_dual}).
-Let $q^\star_m$ denote the weight assigned to mode $m\in\mathcal{M}$.
-We select the index set
-\[
-\mathcal{I}_K \subset \mathcal{M}, \qquad |\mathcal{I}_K|=K, \qquad 
-\mathcal{I}_K \in \operatorname*{arg\,max}_{|\mathcal{I}|=K}\ \sum_{m\in\mathcal{I}} q^\star_m,
-\]
-equivalently the $K$ largest components of $q^\star$, and inject the corresponding deterministic
-representatives (e.g., mode-conditioned mean trajectories) as hard constraints. Unlike TopRisk-$K$,
-WDRO-$K$ incorporates both the per-mode risk scores $r_m$ and the transport geometry induced by $D$
-through the Wasserstein-ball constraint $W_D(q,\widehat p_t^v)\le \rho$, thereby emphasizing modes
-that are dangerous and reachable under the Wasserstein cost structure.
-
-\paragraph{TopRisk-$K$ injection.}
-TopRisk-$K$ is a greedy risk-only heuristic. For each mode $m$, we compute a scalar risk score $r_m$ (e.g., the maximum clearance-surrogate violation over steps $k\le N_s$ and ego discs $d\le D$). We then select the $K$ modes with the largest risk scores and inject their deterministic representatives as trajectory constraints. This ensures the optimizer explicitly accounts for the most dangerous modes, but it may select redundant modes with nearly identical predicted trajectories.
-
-\paragraph{DiverseRisk-$K$ injection.}
-To reduce redundancy among injected modes, DiverseRisk-$K$ explicitly trades off risk against geometric diversity. Let $D(m,m')$ denote the pairwise transport-based distance between modes induced by the WDRO ground-cost matrix (e.g., $W_2$-Bures). The method initializes with the highest-risk mode and then greedily adds modes that are simultaneously high-risk and far from those already selected:
-\begin{align}
-m_1 &\in \arg\max_m r_m, \notag\\
-m_{\ell} &\in \arg\max_{m\notin S_{\ell-1}}
-\Bigl(r_m \cdot \min_{s\in S_{\ell-1}} D(m,s)\Bigr), \notag\\
-S_{\ell} &= S_{\ell-1}\cup\{m_{\ell}\},
-\qquad \ell=2,\dots,K. \notag
-\end{align}
-The resulting $K$ injected modes yield a set of hard constraints that better covers distinct failure patterns than TopRisk-$K$, while still prioritizing high-risk behaviors.
-
-\paragraph{Constraint tightening.}
-Let $\mathcal F_S$ denote the feasible set defined by the $S$ i.i.d.\ sampled scenario constraints, and let $\mathcal F_{S,\mathrm{inj}}$ denote the feasible set after adding injected deterministic constraints. Then $\mathcal F_{S,\mathrm{inj}}\subseteq \mathcal F_S$, so injection acts as a tightening heuristic and does not alter the scenario-theoretic guarantee on the sampled constraints.
+In particular, unlike iterative DR-MPC approaches that construct Wasserstein-robust safe sets or CVaR-based motion-planning constraints over continuous uncertainty distributions (such as \cite{Zolanvari2023WDRRC}), our method operates on a discrete maneuver-mode representation and targets improved coverage of switching behaviors in scenario-based planning.
 
 %==============================================================================
 % SECTION IV: METHODOLOGY
@@ -233,101 +98,38 @@ Let $\mathcal F_S$ denote the feasible set defined by the $S$ i.i.d.\ sampled sc
 
 \section{Methodology}\label{methods}
 
-We present a scenario-based MPCC framework for autonomous navigation under obstacle uncertainty with switching dynamics.
-Collision avoidance is enforced through Safe Horizon-style scenario constraints \cite{degroot2023SBMotionBounded} using linearized half-space constraints.
-To mitigate under-sampling of rare switching modes at practical scenario budgets, we introduce Wasserstein-DRO mode reweighting and a scenario-injection heuristic based on the worst-case distribution $q^\star$.
+This section formalizes the main components realted to the contribution. Specifically, we detail the baseline SH-MPCC scenario program, the WDRO mode-reweighting layer, and the WDRO-based injection rule. Common implementation details of the controller such as the ego model and use of fourth-order Runge--Kutta are not specific to the contribution and are therefore summarized only briefly in the experimental setup.
 
-\subsection{Ego vehicle model}\label{sec:ego_model}
+\subsection{Baseline SH-MPCC formulation}
 
-The ego vehicle uses a second-order unicycle model with contouring control. The ego state is
-\begin{equation}\label{eq:ego_state}
-x_t^{\mathrm{ego}}
-=
-\begin{bmatrix}
-p_{x,t} & p_{y,t} & \theta_t & v_t & s_t
-\end{bmatrix}^\top
-\in \mathbb{R}^5,
-\end{equation}
-where $(p_{x,t}, p_{y,t})$ is position, $\theta_t$ is heading, $v_t$ is longitudinal speed, and $s_t$ is progress along a reference path $\Gamma$.
-The control input is
+The ego vehicle is modeled by a discretized second-order unicycle model, written compactly as
 \begin{equation}
-u_t =
-\begin{bmatrix}
-a_t \\ \omega_t
-\end{bmatrix}.
+x_{t+1}^{\mathrm{ego}} = f^{\mathrm{ego}}(x_t^{\mathrm{ego}},u_t).
 \end{equation}
+Given a reference path $\Gamma$, the MPCC objective penalizes contouring error ($e_c(k)$), lag error ($e_l(k)$), control effort (acceleration $a_{t+k|t}$, angular velocity $ \omega_{t+k|t}$), and velocity tracking error ($ v_{t+k|t} - v_{\mathrm{ref}}$) at each step $k$, over the planning horizon.
 
-The continuous-time dynamics are
-\begin{subequations}\label{eq:ego_ct}
-\begin{align}
-\dot p_x &= v\cos\theta, &
-\dot p_y &= v\sin\theta, \\
-\dot \theta &= \omega, &
-\dot v &= a, \\
-\dot s &= v_s,
-\end{align}
-\end{subequations}
-where $v_s$ denotes the progress rate along $\Gamma$ and $u_t$ is held constant over each integration interval of length $\Delta t$.
-We discretize \eqref{eq:ego_ct} using one step of fourth-order Runge--Kutta (RK4):
-\begin{subequations}\label{eq:ego_dyn_rk4}
-\begin{align}
-x_{t+1}^{\mathrm{ego}} &= x_t^{\mathrm{ego}} + \frac{\Delta t}{6}\left(k_1 + 2k_2 + 2k_3 + k_4\right),\\
-k_1 &= f\!\left(x_t^{\mathrm{ego}},u_t\right),\quad
-k_2 = f\!\left(x_t^{\mathrm{ego}} + \frac{\Delta t}{2}k_1,\ u_t\right),\\
-k_3 &= f\!\left(x_t^{\mathrm{ego}} + \frac{\Delta t}{2}k_2,\ u_t\right), \\
-k_4 & = f\!\left(x_t^{\mathrm{ego}} + \Delta t\,k_3,\ u_t\right),
-\end{align}
-\end{subequations}
-with
-\[
-f(x,u)=
-\begin{bmatrix}
-v\cos\theta\\
-v\sin\theta\\
-\omega\\
-a\\
-v_s
-\end{bmatrix}.
-\]
-
-\subsection{Model Predictive Contouring Control cost}
-
-Given the reference path $\Gamma$, the MPCC cost penalizes two geometric errors at each horizon step $k$:
-\begin{itemize}
-    \item \textbf{Contouring error} $e_c(k)$: the signed distance from the predicted ego position to the closest point on $\Gamma$ at progress $s_{t+k|t}$.
-    \item \textbf{Lag error} $e_l(k)$: the along-path deviation between $s_{t+k|t}$ and the desired progress.
-\end{itemize}
 The MPCC stage cost at step $k$ is
 \begin{align}
-    \ell_{\mathrm{MPCC}}(k) = w_c\, e_c(k)^2 + w_l\, e_l(k)^2 + \notag \\ w_a\, a_{t+k|t}^2 + w_\omega\, \omega_{t+k|t}^2 + w_v (v_{t+k|t} - v_{\mathrm{ref}})^2, \label{eq:mpcc_cost}
+    \ell_{\mathrm{MPCC}}(k) = w_c\, e_c(k)^2 + w_l\, e_l(k)^2 + \notag \\
+    w_a\, a_{t+k|t}^2 + w_\omega\, \omega_{t+k|t}^2 + w_v (v_{t+k|t} - v_{\mathrm{ref}})^2, \label{eq:mpcc_cost}
 \end{align}
-where $w_c, w_l, w_a, w_\omega, w_v > 0$ are user-specified weights and $v_{\mathrm{ref}}$ is a reference velocity. The reference path $\Gamma$ is represented as a cubic spline, and the contouring/lag errors are computed from the spline evaluation at $s_{t+k|t}$.
-
-\subsection{Multi-disc robot model}\label{sec:multidisc}
+where $w_c, w_l, w_a, w_\omega, w_v > 0$ are user-specified weights and $v_{\mathrm{ref}}$ is a reference velocity.
 
 The robot footprint is approximated by $D$ discs of radius $r_d$ centered at offsets $\{c_1,\dots,c_D\}$ along the robot's longitudinal axis. The center of disc $d$ at horizon step $k$ is
 \begin{equation}\label{eq:disc_center}
 p_d(k) = \begin{bmatrix} p_x(k) + c_d \cos\theta(k) \\ p_y(k) + c_d \sin\theta(k) \end{bmatrix},
 \end{equation}
-where we abbreviate $p_x(k) := p_{x,t+k|t}$, etc. Multi-disc models provide tighter footprint coverage than a single bounding circle, which is critical for non-circular robots.
+where we abbreviate $p_x(k) := p_{x,t+k|t}$, etc.
 
-\subsection{Obstacle model, uncertainty, and switching}
-
-Obstacle agents are indexed by $v \in \{1,\dots,V\}$. For each obstacle $v$, a motion predictor provides a predicted distribution over future positions. We assume access to a fast base predictor from which particles can be sampled, e.g., Gaussian or Gaussian mixture models.
-
-We assume each obstacle $v$ belongs to a class $\mathcal{C}(v)$ with a finite mode set $\mathcal{M}_{\mathcal{C}} = \{1,\dots,M_{\mathcal{C}}\}$, where mode $m$ specifies a stochastic motion model
+Obstacle agents are indexed by $v \in \{1,\dots,V\}$. For each obstacle $v$, a motion predictor provides a distribution over future positions. We assume each obstacle belongs to a class $\mathcal{C}(v)$ with a finite mode set $\mathcal{M}_{\mathcal{C}} = \{1,\dots,M_{\mathcal{C}}\}$, where mode $m$ specifies a stochastic motion model
 \begin{equation}\label{eq:obs_dyn}
-x_{t+1}^v = f_m(x_t^v, \omega_t^v), \qquad \omega_t^v \sim \mathbb{P}_{\omega,m}.
+x_{t+1}^v = f_m(x_t^v).
 \end{equation}
-The obstacles follow the identical state formulation to the ego vehicle as descibed in Section~\ref{sec:cc_prelim}. Here, $\mathbb{P}_{\omega,m}$ denotes the distribution of all uncertainties associted with given mode $m$.
 The mode evolution process is unknown and may be non-Markovian.
-
-\subsection{Linearized half-space collision constraints}\label{sec:linearized}
 
 Collision avoidance between each robot disc $d$ and obstacle $v$ at horizon step $k$
 is enforced using a linearized half-space constraint for each scenario $i$.
-Let $x^{v,(i)}_{t+k|t}\in\mathbb{R}^2$ denote the sampled obstacle position at step $k$ in
-scenario $i$. Define the outward normal from disc $d$ to obstacle $v$:
+Let $x^{v,(i)}_{t+k|t}\in\mathbb{R}^2$ denote the sampled obstacle position at step $k$ in scenario $i$. Define the outward normal from disc $d$ to obstacle $v$:
 \begin{equation}\label{eq:normal}
 \hat{n}_{d,v,k}^{(i)} =
 \frac{x^{v,(i)}_{t+k|t} - p_d(k)}
@@ -343,57 +145,10 @@ constraint is
 \end{equation}
 where $r_{\mathrm{offset}}\ge 0$ is an additional safety margin.
 
-\subsection{Simulation Environments}
-\label{sec:envs}
-
-We evaluate the proposed SH-MPCC with WDRO reweighting and mode-injection in two canonical
-interaction scenarios designed to stress different failure modes of probabilistic prediction and planning.
-In both environments, the ego vehicle initializes at $(0,0)$ and tracks a fixed $25$\,m reference path given
-by an S-curve
-\[
-y(x) \;=\; 3\sin\!\Bigl(\tfrac{2\pi x}{L}\Bigr), \qquad L=25\ \mathrm{m},
-\]
-and we parameterize locations along the path by arc length to specify obstacle placement consistently.
-
-\paragraph{Oncoming environment.}
-The obstacle is initialized directly on the ego path at $60\%$ of the path arc length (approximately
-$15$\,m ahead of the ego) and moves head-on toward the ego at roughly $1$\,m/s, yielding an
-adversarial, near-worst-case interaction on a direct collision course. The obstacle behavior is modeled
-as a multimodal predictor with a small discrete set of maneuver modes: four common modes
-(\emph{constant velocity}, \emph{turn left}, \emph{turn right}, \emph{decelerate}) together with a rare
-\emph{lane-change} mode. Under the nominal predictor (no WDRO reweighting and no injection),
-this environment exhibits a high base collision rate of approximately $67\%$, making it the most
-challenging setting and a stringent test of conservativeness and safe-horizon constraint tightening.
-
-\paragraph{Intersection environment.}
-To probe performance under crossing interactions and mode ambiguity, we consider an intersection-like
-setup on the same S-curve reference path. Here the obstacle is initialized $2$\,m laterally off the path at
-$40\%$ of the path arc length and moves approximately perpendicular to the ego path at $\sim 1$\,m/s,
-mimicking a vehicle crossing the ego lane (a T-intersection geometry). In this setting, the ego must
-anticipate whether the obstacle will \emph{cross}, \emph{stop}, or \emph{turn} as it enters the interaction
-region. The nominal base collision rate is comparatively low ($\approx 4$--$7\%$), but performance is more
-sensitive to mode coverage: the crossing angle and short time-to-interaction make prediction errors
-and missed modes more consequential, providing a complementary stress test to the oncoming case.
-
-\subsection{Scenario generation}\label{sec:scenario_gen}
-
-A scenario consists of obstacle trajectories for all obstacles over the safe horizon.
-For each obstacle $v$, let the base predictor define a distribution over the stacked
-vector $\xi_t^v \in \mathbb{R}^{2N_s}$ (concatenated obstacle positions across the safe horizon).
-For each rollout, we generate scenarios by first sampling a mode $m$ and then sampling
-trajectory noise from the base predictor conditioned on that mode.
-In base SH-MPCC, modes are sampled from $\widehat{p}_t^v$. In WDRO-sampling tests, modes are sampled from $q^\star$. In injection variants, the $S$ sampled scenarios are drawn from the chosen sampling distribution and $K$ additional deterministic mode constraints are injected.
-
-\subsection{Safe Horizon scenario optimization}\label{sec:safe_horizon}
-
 We enforce collision avoidance constraints only over a safe horizon $N_s \le N$
 \cite{degroot2023SBMotionBounded}. All collision constraints and mode-risk computations
 are truncated to $N_s$, while the control horizon for optimization remains $N$.
-This keeps the scenario program manageable (we certify safety only on the truncated
-horizon) while still planning controls over the full horizon. All risk scores $r$
-being used in equations \eqref{eq:w_dro_modes} and \eqref{eq:w_dro_dual} are computed using only timesteps
-$k\le N_s$, aligning DRO reweighting with the certified risk horizon. With the assumption of no disturbances, the optimization follows:
-
+This yields the baseline SH-MPCC scenario program
 \begin{subequations}\label{eq:scenario_opt}
 \begin{align}
 \min_{U_t \in \mathbb{U}^N}\quad &
@@ -405,33 +160,97 @@ x_{t+k+1|t}^{\mathrm{ego}} = f^{\mathrm{ego}}(x_{t+k|t}^{\mathrm{ego}}, u_{t+k|t
 \le
 \hat{n}_{d,v,k}^{(i)\top} x^{v,(i)}_{t+k|t}
 - (r_d + r_{\mathrm{obs}}^v + r_{\mathrm{offset}}), \label{eq:coll_constr}\\
-& \quad \forall\, d=1,\dots,D,\ v=1,\dots,V \notag \\
-& \quad \forall\, k=1,\dots,N_s,\ i=1,\dots,S_{\mathrm{tot}},
+& \quad \forall\, d=1,\dots,D,\ v=1,\dots,V, \notag \\
+& \quad \forall\, k=1,\dots,N_s,\ i=1,\dots,S_{\mathrm{tot}}.
 \nonumber
 \end{align}
 \end{subequations}
+The contribution of this paper is again to modify how the scenarios in \eqref{eq:scenario_opt} are generated, not to replace the SH-MPCC optimization problem itself.
 
-\subsection{Algorithm}\label{sec:algorithm}
+\subsection{Wasserstein-DRO mode reweighting} \label{sec:wass_prelim}
 
-Algorithm~\ref{alg:full_method} summarizes the full method, including WDRO reweighting.
-\begin{algorithm}[ht!]
-\caption{Scenario Safe Horizon MPCC with WDRO reweighting}\label{alg:full_method}
-\begin{algorithmic}[1]
-\Require Ego state $x_t^{\mathrm{ego}}$, obstacles $\{x_t^v\}_{v=1}^V$, horizon $N$, safe horizon $N_s$, risk $(\epsilon,\beta)$, discs $D$
-\State Compute scenario sample size $S$ from scenario theory (implementation bound)
-\For{$t=0,1,2,\dots$}
-    \For{each obstacle $v=1,\dots,V$}
-        \State Obtain nominal mode belief $\widehat{p}_t^v$ and mode-conditioned predictions
-       \State Compute $q^\star$ by Wasserstein-DRO reweighting in \eqref{eq:w_dro_modes}
-(equivalently dual \eqref{eq:w_dro_dual}) using ground cost $D$
-    \EndFor
-    \State Sample $S$ i.i.d.\ scenarios using modes $q^\star$ and base predictor noise
-    \State Build half-space constraints over $k=1,\dots,N_s$ via \eqref{eq:normal}--\eqref{eq:halfspace}
-    \State Solve scenario MPCC \eqref{eq:scenario_opt} to obtain $U_t^\star$
-    \State Apply $u_{t|t}^\star$
-\EndFor
-\end{algorithmic}
-\end{algorithm}
+We now describe the key mechanism used to address the problem of Section~\ref{sec:problem}. Starting from the nominal belief $\widehat p_t^v$, we want to create an alternative distribution over obstacle modes that places more mass on dangerous behaviors while respecting geometric similarity between modes.
+
+Let $\widehat p_t^v\in\Delta_{M_{\mathcal{C}}}$ denote a nominal belief over the $M_{\mathcal{C}}$ modes for obstacle $v$ belonging to class $\mathcal{C}(v)$ at time $t$.
+To reshape mode weights in a geometry-aware way, we compute a worst-case distribution $q\in\Delta_{M_{\mathcal{C}}}$ in a Wasserstein ball around $\widehat p_t^v$:
+\begin{equation}\label{eq:w_dro_modes}
+\max_{q\in\Delta_{M_{\mathcal{C}}}}\ \langle q,r\rangle
+\quad\text{s.t.}\quad
+W_D(q,\widehat p_t^v)\le \rho,
+\end{equation}
+where $r\in\mathbb{R}^M$ is a per-mode danger score computed from predicted safe-horizon clearance violations (higher indicates greater risk), $W_D$ is the discrete Wasserstein distance induced by ground cost $D$, and $\rho$ is the Wasserstein radius \cite{Esfahani2017DDRDRO,Zhong2021DDRMPC,kuhn2024WDRO}. We scale the Wasserstein ambiguity radius to reflect the reliability of the empirical mode belief.
+Let $n_{\mathrm{obs}}$ denote the number of mode observations available in the history window for obstacle class $C_v$.
+We set
+\[
+\rho \;=\; \rho_0\!\left(1+\frac{\alpha}{\sqrt{n_{\mathrm{obs}}}}\right),
+\]
+where $\rho_0$ is a base radius (default $\rho_0=0.1$) and $\alpha$ is a user-set scaling coefficient (default $\alpha=1.0$).
+This choice inflates the Wasserstein ball when observations are scarce and contracts as data accumulates (because $1/\sqrt{n_{\mathrm{obs}}}$ decays), yielding $\rho\to\rho_0$ in the well-observed regime.
+
+We form $r$ using a conservative Gaussian clearance surrogate \cite{blackmore2012CCOPPW}. For mode $m$ and safe-horizon step $k$, let the predicted obstacle position satisfy $x_{t+k|t}^{v,m}\sim\mathcal N(\mu_{m,k}^v,\Sigma_{m,k}^v)$ and let $c_d(k)$ denote the center of ego disc $d$ at step $k$.
+We then define a normalized straight line from the center of the ego disc to the obstacle
+\[
+n_{m,k,d}:=(\mu_{m,k}^v-c_d(k))/\|\mu_{m,k}^v-c_d(k)\|
+\]
+and calculate the directional standard deviation for the obstacle
+\[
+\sigma_{m,k,d}:=\sqrt{n_{m,k,d}^\top \Sigma_{m,k}^v\, n_{m,k,d}}.
+\]
+Given a one-sided quantile $z_\alpha$, the per-step violation is
+\[
+r_{m,k,d} := \bigl[R + z_\alpha \sigma_{m,k,d} - \|\mu_{m,k}^v-c_d(k)\|\bigr]_+,
+\]
+where $R=r_d+r_{\mathrm{obs}}^v+r_{\mathrm{offset}}$ is the total safety radius. We then set
+\[
+r_m := \max_{k\le N_s}\max_{d\le D} r_{m,k,d}.
+\]
+
+Note that $\widehat p_t^v$ is feasible for the Wasserstein ambiguity set
+$\{q \in \Delta_{M_{\mathcal{C}}} : W_D(q,\widehat p_t^v)\le \rho\}$ since
+$W_D(\widehat p_t^v,\widehat p_t^v)=0\le \rho$.
+Therefore, for the worst-case reweighting problem
+$q^\star \in \arg\max_{W_D(q,\widehat p_t^v)\le \rho}\langle q, r\rangle$,
+we have
+$\langle q^\star, r\rangle \ge \langle \widehat p_t^v, r\rangle$.
+
+Thus $q^\star$ can be interpreted as a conservative mode distribution inside the Wasserstein ambiguity set. In our framework, $q^\star$ is used as Wasserstein-geometry-aware distribution guiding the sampling of dynamic modes over discrete. It affects the sampling such that the scenario set becomes biased towards behaviors that are both risky and reachable under the prescribed transport cost. This preserves the i.i.d.\ sampled structure of the scenario program while empirically improving representation of rare but safety-critical modes under fixed scenario budget.
+
+For computational consideratoins, we make use of the Kantorovich dual. Using the Kantorovich dual for the $W_1$-type objective, \eqref{eq:w_dro_modes} reduces to a 1D convex minimization in $\lambda\ge 0$:
+\begin{equation}\label{eq:w_dro_dual}
+\min_{\lambda\ge 0}\ \Bigl\{
+\lambda\rho+\sum_{i=1}^{M_{\mathcal{C}}} \widehat p_{t,i}^v\ \max_{j\in\mathcal M_{\mathcal{C}}}\bigl(r_j-\lambda D_{ij}\bigr)
+\Bigr\},
+\end{equation}
+which we solve via a 1D search \cite{gao2022distributionallyrobuststochasticoptimization}.
+Here, $\lambda$ is the Lagrange multiplier (price per unit transport), $\rho$ and $\widehat p_{t, i}^v$ are defined as before, and $\max_j(r_j-\lambda D_{ij})$ selects the best destination mode $j$ for mass starting at mode $i$ under the transport geometry.
+
+We recover a candidate worst-case distribution by mapping each nominal mass at mode $i$ to
+$j^\star(i)\in\operatorname*{arg\,max}_{j\in\mathcal M_{\mathcal{C}}}(r_j-\lambda^\star D_{ij})$ and verify that the induced transport plan satisfies the radius constraint (up to numerical tolerance) before using the resulting weights for sampling.
+
+\subsection{WDRO-based scenario injection}
+
+In addition to sampling from $q^\star$, we consider a second use of the WDRO solution in the form of deterministic mode injection. After computing $q^\star$, we select a small number of modes with the largest WDRO mass and inject their deterministic representatives (for example, mode-conditioned mean trajectories) as additional collision-avoidance constraints. This gives the optimizer explicit coverage of a few high-risk behaviors even when the stochastic scenario budget is small.
+
+Formally, let $q^\star \in \Delta_{M_{\mathcal{C}}}$ denote the solution of \eqref{eq:w_dro_modes}. For a given injection budget $K$, we select the index set
+\[
+\mathcal{I}_K \subset \mathcal{M_{\mathcal{C}}}, \qquad |\mathcal{I}_K|=K, \qquad 
+\mathcal{I}_K \in \operatorname*{arg\,max}_{|\mathcal{I}|=K}\ \sum_{l\in\mathcal{I}} q^\star_l,
+\]
+that is, the $K$ largest components of $q^\star$, and inject the corresponding deterministic representatives as hard constraints.
+
+Importantly, these injected constraints are not treated as additional i.i.d.\ scenario samples. They act as a deterministic tightening layer on top of the $S$ sampled constraints. Therefore, if $\mathcal F_S$ denotes the feasible set defined by the $S$ sampled scenario constraints and $\mathcal F_{S,\mathrm{inj}}$ denotes the feasible set after injection, then $\mathcal F_{S,\mathrm{inj}} \subseteq \mathcal F_S$.
+
+In the experiments, we compare this WDRO-based injection rule against a simpler TopRisk-$K$ baseline that selects injected modes greedily by their risk scores only. We keep that comparison in the results section, since it is used as an empirical baseline rather than as part of the main method development.
+
+\subsection{Scenario generation}\label{sec:scenario_gen}
+
+A scenario consists of obstacle trajectories for all obstacles over the safe horizon.
+For each obstacle $v$, let the base predictor define a distribution over the stacked
+vector $\xi_t^v \in \mathbb{R}^{2N_s}$ (concatenated obstacle positions across the safe horizon).
+For each rollout, we generate scenarios by first sampling a mode $m$ and then sampling
+trajectory noise from the base predictor conditioned on that mode.
+
+This yields three controller variants. In base SH-MPCC, modes are sampled from $\widehat p_t^v$. In WDRO-sampling, modes are sampled from $q^\star$. In WDRO-$K$ injection, the $S$ sampled scenarios are drawn from $\widehat p_t^v$ and $K$ additional deterministic mode representatives are injected as tightening constraints.
 
 %==============================================================================
 % SECTION V: RESULTS
@@ -439,77 +258,51 @@ Algorithm~\ref{alg:full_method} summarizes the full method, including WDRO rewei
 
 \section{Results}\label{results}
 
-We evaluate safety (collision rate), mode coverage (missed-mode rate), clearance, and runtime in two environments (Oncoming and Intersection). We focus on four empirical questions: (Q1) does WDRO-sampling improve mode coverage at fixed scenario budget? (Q2) does WDRO injection improve safety, and when does WDRO out perform simpler TopRisk and DiverseRisk injection? (Q3) is performance robust against short mode history lengths? (Q4) how sensitive are results to the transport ground cost choice?
+We evaluate whether the proposed WDRO layer improves representation of switching obstacle behaviors under a fixed scenario budget, and whether that improved representation translates into safer closed-loop behavior. The controller uses a second-order unicycle ego model with fourth-order Runge--Kutta discretization. We compare four methods: base SH-MPCC, WDRO-sampling, WDRO-$K$ injection, and a TopRisk-$K$ baseline that selects injected modes greedily by risk score only.
 
-\paragraph{Methods compared.}
-We report base SH-MPCC (sample modes from $\widehat p_t^v$),
-WDRO-sampling (sample modes from $q^\star$),
-TopRisk and Softmax-risk baselines,
-and three injection policies for injection budget $K$: WDRO-$K$, TopRisk-$K$, and DiverseRisk-$K$.
+The experiments are organized in two groups. First, we vary the reference-path geometry while keeping an oncoming obstacle interaction. Second, we study more difficult interaction settings including crossing, diagonal, mixed-obstacle, and dense multi-obstacle scenarios. These experiments are designed to test the same hypothesis across increasing difficulty under varying conditions. when the scenario budget is fixed, improving which modes are represented should reduce missed modes and improve safety. We evaluate safety and finite-sample mode representation using three primary metrics: collision rate, missed-mode rate, and mean clearance.
+
 
 %------------------------------------------------------------------------------
-\subsection{Mode-set injection under finite budgets (D1)}\label{sec:res_d1}
-We first study \emph{mode-set injection}: injecting $K\ge 1$ deterministic scenarios corresponding to a selected set of modes. Figure~\ref{fig:figA_selection} compares WDRO-$K$, TopRisk-$K$, and DiverseRisk-$K$. In the Oncoming situation, WDRO-$K$ achieves the lowest collision rates and provides its largest gains when $K>1$, indicating that transport structure helps avoid redundant injections. In Intersection, overall collision rates are lower and confidence intervals overlap more; here the diversity baseline is competitive at larger $K$. These results suggest WDRO is most beneficial when a finite injection budget must represent multiple distinct risky behaviors rather than only the single most dangerous mode. 
+\subsection{Path geometry comparison}\label{sec:res_geometry}
 
-\paragraph{Effect size and interpretability.}
-DiverseRisk-$K$ already leverages the same transport ground cost \(D\) by formulation, and empirically its performance is close to WDRO-$K$ (differences are typically \(<1\) percentage point and sometimes change sign across \(K\)).
-With finite rollouts, these small effects are difficult to separate statistically, so we avoid claiming a consistent empirical advantage of WDRO-$K$ over DiverseRisk-$K$.
-Instead, our results support the broader point that transport geometry is the key ingredient for improving injection beyond risk-only baselines, while WDRO offers a principled selection rule derived from a worst-case expectation objective and a theoretical backing.
+To test whether the proposed mode-reweighting mechanism is tied to a single benchmark geometry or remains effective across different road shapes, we compare four path geometries: Straight, Gentle-S, S-curve, and Tight-S. In each case, the obstacle begins ahead of the ego and moves on an approximately oncoming trajectory.
 
-\chg{\begin{figure*}[t]
+Figure~\ref{fig:fig_path_geometry} compares base SH-MPCC, WDRO-sampling, and WDRO injection across these four reference-path geometries.
+
+Across all path geometries, the base SH-MPCC method exhibits the highest collision rates and the highest missed-mode rates. In contrast, WDRO-sampling substantially reduces missed-mode rate in every geometry, indicating that the Wasserstein reweighting consistently improves finite-sample representation of switching behaviors. These coverage gains are accompanied by strong safety improvements: both WDRO-sampling and WDRO injection reduce collision rate markedly relative to the base planner, with especially pronounced gains on the more difficult S-shaped paths. The results suggest that the proposed mode-reweighting mechanism is not narrowly tuned to a single road layout, but instead remains effective across different road shapes.
+
+\begin{figure*}[t]
   \centering
-  \includegraphics[width=\linewidth]{paper_figures/fig_a_selection.png}
-  \caption{D1: WDRO-$K$ vs TopRisk-$K$ vs DiverseRisk-$K$ ($K=1,2,3,4$) in Oncoming and Intersection. WDRO provides its largest gains when $K>1$, consistent with improved mode-set selection under finite budgets.}
-  \label{fig:figA_selection}
-\end{figure*}}
+  \includegraphics[width=\linewidth]{paper_figures/fig_g1_path_geometry.png}
+  \caption{Performance across path geometries with an oncoming obstacle. Base SH-MPCC has the highest collision and missed-mode rates across all geometries. WDRO-sampling sharply reduces missed-mode rate, while both sampling and injection reduce collision rate substantially, especially on more difficult S-shaped paths. Note that both WDRO-$1$ and WDRO-$2$ injection strategies miss no modes in any geometry.}
+  \label{fig:fig_path_geometry}
+\end{figure*}
 
 %------------------------------------------------------------------------------
-\subsection{WDRO-sampling vs risk-softmax sampling (D2)}\label{sec:res_d2}
-We next evaluate WDRO-sampling against risk-softmax sampling $p_\tau(m)\propto \exp(\tau r_m)$ for multiple configurations. Figure~\ref{fig:figB_sampling} shows that WDRO-sampling reduces missed-mode rates by approximately 8--10 percentage points relative to all softmax variants in both environments, while achieving comparable collision rates. This indicates WDRO redistributes probability mass in a structured way that improves finite-sample coverage under switching, rather than merely amplifying the highest-risk mode.
+\subsection{Challenging interaction settings}\label{sec:res_env_variants}
 
-\chg{\begin{figure*}[t]
+To probe more difficult multi-agent interactions, we additionally consider a family of challenging situations. We compare across four varirations: Crossing, Diagonal, Mixed (2 obstacles), Mixed (3 obstacles), and Dense (4 obstacles). These settings increase ambiguity in obstacle behavior and place greater pressure on finite-sample scenario selection.
+
+Figure~\ref{fig:fig_challenging_envs} reports results for these five environment variants.
+
+Again, the base planner performs worst across all variants, with substantially higher collision rates and lower mean clearance. All WDRO-based methods improve safety relative to the base planner. WDRO-sampling consistently lowers collision rate while maintaining or improving clearance, showing that better mode coverage translates into more conservative avoidance behavior. Injection also performs well, particularly when the environment contains multiple interacting obstacles and a small deterministic budget must cover several distinct risky behaviors. These results reinforce the main mechanism of the method: under limited scenario budgets, performance depends critically on which behaviors are represented, and Wasserstein-based mode reweighting improves that representation.
+
+\begin{figure*}[t]
   \centering
-  \includegraphics[width=\linewidth]{paper_figures/fig_b_sampling.png}
-  \caption{D2: WDRO-sampling vs risk-softmax sampling (multiple temperatures) in Oncoming and Intersection. WDRO-sampling yields substantially better mode coverage (lower missed-mode rate) at comparable collision rates.}
-  \label{fig:figB_sampling}
-\end{figure*}}
+  \includegraphics[width=\linewidth]{paper_figures/fig_g6_challenging_envs.png}
+  \caption{Performance in challenging environment variants. Base SH-MPCC shows the highest collision rate and lowest clearance. WDRO-based sampling and injection improve both safety and clearance across crossing, diagonal, mixed-obstacle, and dense settings.}
+  \label{fig:fig_challenging_envs}
+\end{figure*}
+
+\subsection{Injection-mode selection comparison}\label{sec:res_injection_comparison}
+
+We also compare the proposed WDRO-$K$ injection rule against the simpler TopRisk-$K$ baseline across environments, injection counts, switching probabilities, and noise thresholds. In these experiments, WDRO-$K$ and TopRisk-$K$ show statistically similar performance. This suggests that, once deterministic mode representatives are injected, the principal benefit comes from adding explicit coverage of risky behaviors rather than from the particular heuristic used to choose among plausible high-risk modes.
 
 %------------------------------------------------------------------------------
-\subsection{Mode-history length comparison (D3)}\label{sec:res_d3}
-We vary the maximum history length used to estimate the nominal belief $\widehat p_t^v$ and to set the adaptive radius $\rho$. Figure~\ref{fig:figC_observation} shows WDRO-injection is the most stable method across history lengths in Oncoming, while TopRisk injection degrades as history grows. In Intersection, collision rates are uniformly low, but the mode-coverage advantage persists: injection policies achieve lower missed-mode rates than base SH-MPCC. These results support uncertainty-adaptive ambiguity sets for switching environments.
+\subsection{Interpretation of sampling and injection}\label{sec:res_interpretation}
 
-\chg{\begin{figure*}[t]
-  \centering
-  \includegraphics[width=\linewidth]{paper_figures/fig_c_observation.png}
-  \caption{D3: History-length sweep in Oncoming and Intersection. WDRO-injection is most stable in the hardest environment, and coverage benefits persist across regimes.}
-  \label{fig:figC_observation}
-\end{figure*}}
-
-%------------------------------------------------------------------------------
-\subsection{Ground-cost sensitivity (D4)}\label{sec:res_d4}
-We evaluate sensitivity to the transport ground cost $D$ using W2--Bures, Euclidean-mean, and zero--one costs. Figure~\ref{fig:figD_ground_cost} and Table~\ref{tab:d4_ground_cost} show performance is broadly consistent across costs for WDRO injection, while WDRO-sampling is mildly degraded under the zero--one cost. Overall, WDRO does not hinge on a fragile cost choice, which is favorable for practitioners.
-
-\chg{\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{paper_figures/fig_d_ground_cost.png}
-  \caption{D4: Ground-cost ablation. Injection performance is similar across costs; WDRO-sampling is mildly worse under the zero--one cost.}
-  \label{fig:figD_ground_cost}
-\end{figure}}
-
-\begin{table}[t]
-\centering
-\caption{Collision rate (Coll.\%) and Missed Mode rate (MM\%) across ground costs.}
-\label{tab:d4_ground_cost}
-\resizebox{\columnwidth}{!}{%
-\input{paper_figures/d4_ground_cost_table}%
-}
-\end{table}
-
-\subsection{Takeaway}
-Overall, the results indicate that WDRO yields several practical benefits. 
-First, WDRO-based reweighting improves mode coverage---reflected in lower missed-mode rates---relative to baselines.
-Second, WDRO is particularly helpful when used for mode selection in constraint injection: WDRO-$K$ injection is most effective when multiple modes are injected ($K>1$), where it can capture distinct high-risk behaviors that would otherwise be missed.
-Third, the uncertainty-adaptive Wasserstein radius stabilizes performance under limited mode observations, and the qualitative ranking of methods is largely consistent across ground-cost choices, suggesting limited sensitivity to the specific cost metric and supporting practical deployment.
+Taken together, the results suggest that the principal benefit of WDRO lies in improving finite-sample representation of risky switching behaviors under a fixed scenario budget. WDRO-sampling directly addresses this issue by redistributing mass toward high-risk modes while respecting the transport geometry between modes, which leads to lower missed-mode rates and improved safety. WDRO-based injection provides an additional tightening mechanism by forcing the optimizer to explicitly account for a small set of deterministic high-risk mode representatives. This is particularly useful when several distinct risky behaviors must be captured with only a small injection budget. In contrast, the base planner suffers because rare but safety-critical behaviors are often absent from the sampled scenario set altogether.
 
 %==============================================================================
 % SECTION VI: CONCLUSION
@@ -517,13 +310,10 @@ Third, the uncertainty-adaptive Wasserstein radius stabilizes performance under 
 
 \section{Conclusion}\label{conclusion}
 
-We studied Safe Horizon MPCC under switching obstacle dynamics and addressed a key practical failure mode of sampling based techniques. Namely, finite sample budgets can under-represent rare but safety-critical behaviors. We introduced a Wasserstein-DRO mode reweighting module over discrete motion modes and evaluated two complementary uses: WDRO-sampling and mode-based scenario injection.
-WDRO-sampling consistently improved mode coverage under switching, reducing missed-mode rates by approximately 8--10 percentage points relative to baselines at comparable collision rates in two realistic environments.
-For deterministic injection, greedy TopRisk injection is often competitive when only a single scenario is injected ($K=1$), but WDRO provides its largest gains when finite budgets must represent multiple distinct risky behaviors ($K>1$), improving injected mode-set selection relative to baselines.
-A comparison across observation counts showed WDRO-injection is the most stable method as mode beliefs become uncertain, and ground-cost ablations indicated performance is not sensitive to the exact transport cost choice.
-Overall, Wasserstein-DRO mode reweighting and lightweight injection provide a practical, low-overhead way to improve finite-sample coverage and safety in SH-MPCC under switching dynamics. Furture work will adapt these techniques to obstacles with non-discrete modes where DRO's geometric properties may further shine.
+This paper considered a specific failure mode of scenario-based SH-MPCC under switching obstacle dynamics. With limited scenario budget, rare but safety-critical dynamic modes may be under-represented. This can lead to poor practical safety performance even when the sampled optimization problem is solved correctly. We addressed that issue by introducing a Wasserstein-DRO layer over discrete dynamic modes.
+
+The main role of the WDRO layer is not to replace SH-MPCC with a fully robust reformulation, but to improve which obstacle behaviors are represented by the limited sampling. We showed two ways to use the resulting worst-case distribution $q^\star$: WDRO-sampling and WDRO-based scenario injection. Across multiple path geometries and challenging interaction settings, these mechanisms reduced missed-mode rate and improved closed-loop safety relative to baseline SH-MPCC. Ultimately, this suggests that in switching-dynamics settings, safety depends not only on how many scenarios are used, but also on which behaviors those scenarios represent. Wasserstein-based mode reweighting provides a lightweight way to make the scenario set more informative under practical online sampling budgets. Future work will explore the use of continuous dynamic modes. 
 
 \bibliographystyle{IEEEtran}
 \bibliography{tex}
 \end{document}
-```

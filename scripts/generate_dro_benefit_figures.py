@@ -22,8 +22,8 @@ COLORS = {
 }
 MARKERS = {'Base': 'o', 'WDRO-sampling': 's', 'WDRO-injection': '^', 'WDRO-combined': 'D'}
 
-DATA = Path('paper_figures')
-OUT = Path('paper_figures')
+DATA = Path('figures/paper')
+OUT = Path('figures/paper')
 
 
 def fig_env_sweep():

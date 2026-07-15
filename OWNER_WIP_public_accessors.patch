@@ -1,0 +1,53 @@
+commit 20a8f08568738ca117796c794d38137db8aa7600
+Author: Stephen Crawford <stephenec99@gmail.com>
+Date:   Wed Jul 8 12:35:47 2026 -0400
+
+    CVaR risk swap + behavioral probe (branch cvar-risk)
+    
+    Swap the one-sided directional risk coefficient from VaR (Phi^{-1}(alpha)) to
+    CVaR / expected-shortfall (phi(Phi^{-1}(alpha))/(1-alpha)) via new
+    cvar_coefficient(). At alpha=0.95: 1.645 -> 2.063 (1.25x margin).
+    
+    Add tests/micro_dro_probe.cpp: a fast deterministic before/after probe of the
+    DRO risk vector + Q* reweighting on the canonical 6-mode scenario, since the
+    full experiment suites time out (>280s).
+    
+    Result (CVAR_RISK_BEHAVIOR.md): CVaR inflates every mode's risk uniformly by
+    +0.070 but PRESERVES the risk ranking, so Q* is identical (100% decelerating)
+    and only the absolute worst_case_risk rises 0.786 -> 0.856. Confirms Q38: the
+    LP reweighting is invariant to a monotone risk-measure change.
+    
+    Build wiring for the probe (2-line add_executable in CMakeLists.txt) left
+    unstaged to avoid bundling unrelated uncommitted test-target additions already
+    present in the working tree.
+    
+    Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/include/wasserstein_dro.hpp b/include/wasserstein_dro.hpp
+index 5368766..127b496 100644
+--- a/include/wasserstein_dro.hpp
++++ b/include/wasserstein_dro.hpp
+@@ -286,6 +286,23 @@ public:
+     /// Get config (const)
+     const DROConfig& config() const { return config_; }
+ 
++    // Public wrappers for re-solving dual with noisy risk vectors
++    std::pair<double, double> solve_kantorovich_dual_public(
++        const std::map<std::string, double>& nominal_weights,
++        const std::map<std::string, double>& risk_vector,
++        const std::vector<std::vector<double>>& D,
++        const std::vector<std::string>& mode_ids,
++        double rho
++    ) { return solve_kantorovich_dual(nominal_weights, risk_vector, D, mode_ids, rho); }
++
++    WorstCaseRecoveryResult recover_feasible_qstar_public(
++        const std::map<std::string, double>& nominal_weights,
++        const std::map<std::string, double>& risk_vector,
++        const std::vector<std::vector<double>>& D,
++        const std::vector<std::string>& mode_ids,
++        double rho
++    ) { return recover_feasible_qstar(nominal_weights, risk_vector, D, mode_ids, rho); }
++
+ private:
+     /**
+      * @brief Compute inter-mode transport cost matrix D[i][j].

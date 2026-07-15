@@ -93,6 +93,9 @@ struct ScenarioMPCConfig {
     double eps_greedy_epsilon = 0.3;         ///< Epsilon for EPSILON_GREEDY_INJ baseline
     int max_history_length = -1;             ///< Max observation history length (-1 = default horizon*10)
 
+    // Risk score noise (for testing robustness of injection selection)
+    double risk_noise_sigma = 0.0;           ///< Additive Gaussian noise on risk scores (0 = deterministic)
+
     // Multi-disc collision model (Section 7)
     int num_discs = 3;                    ///< Number of discs for ego vehicle (D=3 default)
     double vehicle_length = 4.0;          ///< Vehicle length for disc placement [m]
@@ -106,6 +109,10 @@ struct ScenarioMPCConfig {
     // Contouring constraints (road boundary halfplanes)
     bool enable_contouring_constraints = false;  ///< Enable road boundary constraints
     double road_width = 7.0;          ///< Road width [m] (symmetric about reference path)
+
+    // Chance constraint parameters
+    bool use_chance_constraints = false;  ///< Use covariance-tightened chance constraints
+    double chance_z_alpha = 1.6449;       ///< Quantile for chance constraints (1.645 = 95%)
 
     // Constraint parameters
     double safety_margin = 0.1;       ///< Additional safety margin [m]

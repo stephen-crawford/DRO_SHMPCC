@@ -17,7 +17,7 @@
  *   ./test_paper_figures fig41        # run only figure 41
  *   ./test_paper_figures fig40 fig45  # run figures 40 and 45
  *
- * Outputs CSV files to paper_figures/.
+ * Outputs CSV files to figures/paper/.
  */
 
 #include <iostream>
@@ -51,7 +51,7 @@ namespace fs = std::filesystem;
 // Constants
 // ============================================================================
 
-static const std::string OUTPUT_DIR = "paper_figures/";
+static const std::string OUTPUT_DIR = "figures/paper/";
 
 static constexpr int    HORIZON         = DEFAULT_HORIZON;   // 15
 static constexpr double DT              = DEFAULT_DT;        // 0.1

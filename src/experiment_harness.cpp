@@ -29,6 +29,10 @@ namespace scenario_mpc {
 // ============================================================================
 
 void ObstacleSim::step(double dt, std::mt19937& rng) {
+    if (frenet_state.has_value() && ref_path != nullptr) {
+        step_path_following(dt, rng);
+        return;
+    }
     if (mode_models.find(current_mode) == mode_models.end()) return;
     const auto& model = mode_models.at(current_mode);
     Eigen::VectorXd noise = Eigen::VectorXd::Zero(model.noise_dim());
@@ -37,6 +41,71 @@ void ObstacleSim::step(double dt, std::mt19937& rng) {
     state = model.propagate(state, &noise);
     double spd = std::sqrt(state.vx * state.vx + state.vy * state.vy);
     if (spd > 2.0) { state.vx *= 2.0 / spd; state.vy *= 2.0 / spd; }
+}
+
+void ObstacleSim::init_frenet(const ReferencePath& path) {
+    ref_path = &path;
+    double s = path.find_closest_point(state.position());
+    double d = path.compute_lateral_offset(state.position(), s);
+    PathPoint pp = path.get_point_at(s);
+    double ch = std::cos(pp.heading), sh = std::sin(pp.heading);
+    double ds_dt = state.vx * ch + state.vy * sh;
+    double dd_dt = -state.vx * sh + state.vy * ch;
+    frenet_state = FrenetState{s, d, ds_dt, dd_dt};
+}
+
+void ObstacleSim::step_path_following(double dt, std::mt19937& rng) {
+    auto& f = *frenet_state;
+    std::normal_distribution<double> nd(0, 1);
+    double noise_s = nd(rng) * 0.02;
+    double noise_d = nd(rng) * 0.02;
+
+    // Map mode to Frenet-frame behavior
+    if (current_mode == "constant_velocity") {
+        // Maintain longitudinal speed, damp lateral drift toward zero
+        f.dd_dt *= 0.8;
+    } else if (current_mode == "decelerating") {
+        f.ds_dt -= 0.5 * dt;
+        f.dd_dt *= 0.8;
+    } else if (current_mode == "turn_left") {
+        f.dd_dt = 0.3;
+    } else if (current_mode == "turn_right") {
+        f.dd_dt = -0.3;
+    } else if (current_mode == "lane_change_left") {
+        f.dd_dt = 0.3;
+    } else if (current_mode == "lane_change_right") {
+        f.dd_dt = -0.3;
+    }
+
+    // Apply noise and integrate
+    f.ds_dt += noise_s;
+    f.dd_dt += noise_d;
+
+    // Speed clamp
+    f.ds_dt = std::clamp(f.ds_dt, -2.5, 2.5);
+    f.dd_dt = std::clamp(f.dd_dt, -1.0, 1.0);
+
+    f.s += f.ds_dt * dt;
+    f.d += f.dd_dt * dt;
+
+    // Clamp arc-length to path bounds
+    double total = ref_path->total_length();
+    if (f.s >= total) { f.s = total; f.ds_dt = 0; }
+    if (f.s < 0) { f.s = 0; f.ds_dt = 0; }
+
+    // Clamp lateral offset
+    f.d = std::clamp(f.d, -3.0, 3.0);
+
+    // Convert back to Cartesian
+    PathPoint pp = ref_path->get_point_at(f.s);
+    double ch = std::cos(pp.heading), sh = std::sin(pp.heading);
+    Eigen::Vector2d tangent(ch, sh);
+    Eigen::Vector2d normal(-sh, ch);
+    Eigen::Vector2d pos = pp.position + f.d * normal;
+    state.x  = pos.x();
+    state.y  = pos.y();
+    state.vx = f.ds_dt * tangent.x() + f.dd_dt * normal.x();
+    state.vy = f.ds_dt * tangent.y() + f.dd_dt * normal.y();
 }
 
 void ObstacleSim::maybe_switch(double switch_prob, std::mt19937& rng) {
@@ -297,6 +366,10 @@ RolloutRecord run_experiment_rollout(
 
     constexpr double DT = 0.1;
     auto mode_models = create_obstacle_mode_models(DT);
+    // Merge custom mode models (allows tests to define novel modes)
+    for (const auto& [id, model] : config.custom_mode_models) {
+        mode_models[id] = model;
+    }
 
     // ---- Configure MPC ----
     ScenarioMPCConfig mpc_cfg;
@@ -307,7 +380,7 @@ RolloutRecord run_experiment_rollout(
     mpc_cfg.obstacle_radius = 0.35;
     mpc_cfg.safety_margin = 0.2;
     mpc_cfg.use_sqp_solver = true;
-    mpc_cfg.ensure_mode_coverage = true;
+    mpc_cfg.ensure_mode_coverage = false;
     mpc_cfg.num_discs = config.num_discs;
     mpc_cfg.vehicle_length = config.vehicle_length;
     mpc_cfg.safe_horizon_enabled = config.safe_horizon_enabled;
@@ -321,6 +394,12 @@ RolloutRecord run_experiment_rollout(
     mpc_cfg.softmax_tau = config.softmax_tau;
     mpc_cfg.eps_greedy_epsilon = config.eps_greedy_epsilon;
     mpc_cfg.max_history_length = config.max_history_length;
+    mpc_cfg.enable_contouring_constraints = config.enable_contouring_constraints;
+    mpc_cfg.road_width = config.road_width;
+    mpc_cfg.adversarial_sigma_scale = config.adversarial_sigma_scale;
+    mpc_cfg.use_chance_constraints = config.use_chance_constraints;
+    mpc_cfg.chance_z_alpha = config.chance_z_alpha;
+    mpc_cfg.risk_noise_sigma = config.risk_noise_sigma;
 
     // Legacy ablation path: if enable_dro not set directly, derive from ablation
     DROConfig dro_cfg;
@@ -390,6 +469,10 @@ RolloutRecord run_experiment_rollout(
             ? "constant_velocity" : config.obs_modes[i % config.obs_modes.size()];
         obs_sims[i].available_modes = all_modes;
         obs_sims[i].mode_models = obs_mode_models;
+
+        if (config.path_following_obstacles) {
+            obs_sims[i].init_frenet(ref_path);
+        }
     }
 
     // ---- Initial mode observations (5 warmup steps) ----

@@ -48,6 +48,30 @@ std::vector<CollisionConstraint> compute_linearized_constraints(
 );
 
 /**
+ * @brief Compute Gaussian chance-constrained collision constraints.
+ *
+ * Instead of a^T p_ego >= a^T mu_obs + r_combined, enforces:
+ *   a^T p_ego >= a^T mu_obs + r_combined + z_alpha * sqrt(a^T Sigma_obs a)
+ *
+ * The extra term z_alpha * sqrt(a^T Sigma a) tightens the constraint
+ * based on directional variance of the prediction.  This makes the
+ * constraint sensitive to the covariance shape, unlike plain half-spaces.
+ *
+ * Still produces linear constraints (compatible with QP), but the bound
+ * now depends on each mode's prediction covariance.
+ */
+std::vector<CollisionConstraint> compute_chance_constraints(
+    const std::vector<EgoState>& reference_trajectory,
+    const std::vector<Scenario>& scenarios,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin = 0.0,
+    int num_discs = 1,
+    double vehicle_length = 4.0,
+    double z_alpha = 1.6449  ///< quantile for 95% one-sided (default)
+);
+
+/**
  * @brief Compute ego disc positions for collision checking.
  *
  * Following Eq. 16:
