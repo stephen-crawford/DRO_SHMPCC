@@ -359,6 +359,10 @@ RolloutRecord run_experiment_rollout(
     }
 
     // ---- Reference path (custom or default S-curve) ----
+    // Reference velocity used both by controller.solve() and by the conservatism
+    // metrics, so tracking error is measured against the same target the MPCC
+    // objective tracks.
+    constexpr double METRICS_V_REF = 1.5;
     ReferencePath ref_path = config.custom_ref_path.has_value()
         ? config.custom_ref_path.value()
         : ReferencePath::create_s_curve(25.0, 3.0, 200);
@@ -450,7 +454,7 @@ RolloutRecord run_experiment_rollout(
             obstacles[oi] = obs_sims[oi].state;
         }
 
-        auto mpc_result = controller.solve(ego, obstacles, goal, 1.5, path_progress, path_length);
+        auto mpc_result = controller.solve(ego, obstacles, goal, METRICS_V_REF, path_progress, path_length);
         rec.solve_times_raw.push_back(mpc_result.solve_time);
         rec.total_dro_injected += mpc_result.num_dro_injected;
         if (mpc_result.safe_horizon > 0)
@@ -511,6 +515,27 @@ RolloutRecord run_experiment_rollout(
                 rec.rare_mode_active++;
                 if (!mode_found) rec.rare_mode_missed++;
             }
+        }
+
+        // --- Conservatism metrics (Reviewer 3, major comment 5) ---
+        // Measured on the REALISED closed-loop state against the same reference the
+        // MPCC objective tracks, so the numbers are directly comparable across arms.
+        // e_c: lateral (contouring) deviation; e_l: along-path (lag) deviation.
+        {
+            const ReferencePath& rp = ref_path;
+            const double s_closest = rp.find_closest_point(ego.position());
+            const PathPoint pp = rp.get_point_at(s_closest);
+            const Eigen::Vector2d d = ego.position() - pp.position;
+            const Eigen::Vector2d tangent(std::cos(pp.heading), std::sin(pp.heading));
+            const Eigen::Vector2d normal(-std::sin(pp.heading), std::cos(pp.heading));
+            const double e_c = d.dot(normal);
+            const double e_l = d.dot(tangent);
+            // v_ref matches the value passed to controller.solve() below.
+            const double v_err = ego.v - METRICS_V_REF;
+            rec.sum_contouring_sq += e_c * e_c;
+            rec.sum_lag_sq += e_l * e_l;
+            rec.sum_velocity_err_sq += v_err * v_err;
+            rec.metric_steps++;
         }
 
         // Apply control

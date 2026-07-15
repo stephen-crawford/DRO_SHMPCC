@@ -27,6 +27,7 @@
 #define SCENARIO_MPC_EXPERIMENT_HARNESS_HPP
 
 #include "types.hpp"
+#include <cmath>
 #include "config.hpp"
 #include "wasserstein_dro.hpp"
 #include "reference_path.hpp"
@@ -343,6 +344,25 @@ struct RolloutRecord {
     double total_progress = 0.0;
     bool completed_path = false;
     double control_effort = 0.0;
+    // --- Conservatism metrics (CDC'26 Reviewer 3, major comment 5) ---
+    // WDRO-sampling changes the sampled constraint set and WDRO-injection adds
+    // deterministic constraints; both may shrink the feasible set and raise the
+    // optimal objective. Without these the harness cannot report whether the
+    // collision-rate gain is bought with conservative planning.
+    // NOTE: the raw components are reported rather than a single weighted MPCC
+    // cost, because the controller's stage-cost weights (w_c, w_l, w_a, w_omega)
+    // are not exposed on ScenarioMPCConfig. Synthesising a weighted sum here
+    // would invent numbers; the components answer the reviewer directly.
+    double sum_contouring_sq = 0.0;   ///< sum_k e_c(k)^2  (lateral deviation from path)
+    double sum_lag_sq = 0.0;          ///< sum_k e_l(k)^2  (along-path deviation)
+    double sum_velocity_err_sq = 0.0; ///< sum_k (v_k - v_ref)^2
+    int metric_steps = 0;             ///< steps contributing to the sums (for means)
+    double mean_contouring_error() const {
+        return metric_steps > 0 ? std::sqrt(sum_contouring_sq / metric_steps) : 0.0;
+    }
+    double mean_velocity_error() const {
+        return metric_steps > 0 ? std::sqrt(sum_velocity_err_sq / metric_steps) : 0.0;
+    }
     int constraint_active_count = 0;
     int missed_mode_steps = 0;
     int total_mode_checks = 0;
