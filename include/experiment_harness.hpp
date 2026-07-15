@@ -158,6 +158,25 @@ inline std::string environment_name(EnvironmentType env) {
     return "?";
 }
 
+/**
+ * @brief When the ground-truth obstacle is allowed to change mode.
+ *
+ * PER_STEP           -- switch may fire at every rollout step (realistic; CDC'26).
+ * HOLD_OVER_HORIZON  -- mode frozen for `horizon` steps, so the mode is constant
+ *                       across any one prediction horizon. This is the regime in
+ *                       which the mode-conditional violation probability v_m, and
+ *                       hence Theorem 1, is well defined.
+ */
+enum class ModeSwitchRegime { PER_STEP, HOLD_OVER_HORIZON };
+
+inline std::string switch_regime_name(ModeSwitchRegime r) {
+    switch (r) {
+        case ModeSwitchRegime::PER_STEP:          return "PerStep";
+        case ModeSwitchRegime::HOLD_OVER_HORIZON: return "HoldOverHorizon";
+    }
+    return "?";
+}
+
 // ============================================================================
 // Sampling Baselines
 // ============================================================================
@@ -253,6 +272,26 @@ struct ExperimentConfig {
     int forced_safe_horizon = -1;
     int safe_horizon_min = 3;              ///< Minimum safe horizon (default matches harness)
     double switch_prob = 0.1;
+    /// Mode-switching regime of the GROUND-TRUTH obstacle simulator.
+    ///
+    /// THEORY GATE. Theorem 1 (see paper_lcss_mode_coverage/paper_lcss_draft.tex,
+    /// Sec. IV-E) is stated in terms of the mode-conditional violation probability
+    ///     v_m(U) := P[ U violates the collision constraint | mode m ].
+    /// That object is only well defined if the obstacle's mode is CONSTANT over the
+    /// prediction horizon. It is not, by default: maybe_switch() fires every rollout
+    /// step with probability switch_prob, so the true mode can change mid-horizon and
+    /// "conditioned on mode m" becomes ambiguous -- the honest index would be the
+    /// mode SEQUENCE, which inflates the mode set from M to M^{N_s} and changes what
+    /// the likelihood ratio L in Lemma 1 means.
+    ///
+    /// HOLD_OVER_HORIZON freezes the mode for `horizon` steps at a time, making v_m
+    /// well defined and Theorem 1 exactly testable. PER_STEP is the realistic regime
+    /// and the one CDC'26 used; the theorem there needs the sequence-indexed form.
+    ///
+    /// Use HOLD_OVER_HORIZON to validate the theory, PER_STEP to measure reality.
+    /// Reporting a Theorem-1 certificate on PER_STEP data without the sequence-indexed
+    /// extension is a claim the math does not support.
+    ModeSwitchRegime switch_regime = ModeSwitchRegime::PER_STEP;
     int rollout_steps = 60;
     int num_modes = 4;
 

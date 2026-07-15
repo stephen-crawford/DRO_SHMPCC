@@ -422,9 +422,22 @@ RolloutRecord run_experiment_rollout(
     int constraint_active_total = 0;
 
     for (int step = 0; step < config.rollout_steps; ++step) {
-        // Mode switching and observation for each obstacle
+        // Mode switching and observation for each obstacle.
+        //
+        // THEORY GATE (see ExperimentConfig::switch_regime): under
+        // HOLD_OVER_HORIZON the mode is frozen for `horizon` steps at a time, so it
+        // is constant across any one prediction horizon and the mode-conditional
+        // violation probability v_m of Theorem 1 is well defined. Under PER_STEP the
+        // mode may change mid-horizon and v_m is ambiguous (the honest index is the
+        // mode SEQUENCE).
+        const bool switch_allowed =
+            (config.switch_regime == ModeSwitchRegime::PER_STEP) ||
+            (config.horizon > 0 && step % config.horizon == 0);
+
         for (int oi = 0; oi < n_obs; ++oi) {
-            if (!config.rare_mode.empty() && config.rare_switch_prob > 0) {
+            if (!switch_allowed) {
+                // mode held; fall through to observation/propagation below
+            } else if (!config.rare_mode.empty() && config.rare_switch_prob > 0) {
                 std::uniform_real_distribution<double> u(0, 1);
                 if (u(rng) < config.rare_switch_prob) {
                     obs_sims[oi].current_mode = config.rare_mode;
