@@ -5,10 +5,12 @@
 
 #include "wasserstein_dro.hpp"
 #include "collision_constraints.hpp"
+#include "primal_ot.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
 #include <limits>
+#include <cstdlib>
 
 namespace {
 
@@ -110,7 +112,27 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     result.optimal_lambda = opt_lambda;
     result.worst_case_risk = dual_val;
 
-    // Step 5: Recover feasible Q* via dual-guided bracketing + plan mixing
+    // Step 5: Recover Q*.
+    //
+    // Default path: dual-guided bracketing + plan mixing (a heuristic primal
+    // recovery restricted to convex mixtures of two deterministic transport
+    // plans). Opt-in path (env USE_PRIMAL_OT=1): the TRUE Wasserstein-metric
+    // reweighting -- solve the primal OT LP exactly, allowing fractional
+    // source-splits. See src/primal_ot.cpp.
+    const char* use_primal_ot = std::getenv("USE_PRIMAL_OT");
+    if (use_primal_ot && use_primal_ot[0] == '1') {
+        PrimalOTResult ot = solve_primal_ot(
+            nominal_weights, result.risk_per_mode,
+            result.transport_cost_matrix, mode_ids, rho);
+        if (ot.solved) {
+            result.worst_case_weights = std::move(ot.q);
+            result.implied_transport_cost = ot.transport_cost;
+            result.recovery_feasible = (ot.transport_cost <= rho + 1e-6);
+            return result;
+        }
+        // Fall through to the heuristic recovery if the LP failed.
+    }
+
     auto recovery = recover_feasible_qstar(
         nominal_weights, result.risk_per_mode,
         result.transport_cost_matrix, mode_ids, rho
