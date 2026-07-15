@@ -316,6 +316,10 @@ enum class WeightType {
  * @brief Linearized collision avoidance constraint.
  *
  * Form: a^T @ p_ego >= b
+ *
+ * Built from a fixed numerical half-space
+ *     n^T c_d <= n^T x_obs - R
+ * via a = -n and b = -upper_bound. The normal is frozen before the QP solve.
  */
 struct CollisionConstraint {
     int k;                    ///< Timestep index
@@ -324,6 +328,8 @@ struct CollisionConstraint {
     Eigen::Vector2d a;        ///< Constraint normal vector (2,)
     double b;                 ///< Constraint offset (scalar)
     Eigen::Vector2d linearization_point = Eigen::Vector2d::Zero();  ///< Ego disc position at linearization
+    int disc_index = 0;       ///< Disc used for this constraint (Case B Jacobian)
+    double disc_offset = 0.0; ///< Longitudinal disc offset ℓ_d used at linearization
 
     CollisionConstraint() : k(0), obstacle_id(0), scenario_id(0), b(0) {}
     CollisionConstraint(int k, int obstacle_id, int scenario_id,
@@ -450,6 +456,118 @@ enum class DRORiskMeasure {
  * Cost: conservatism. z: 1.645 -> 2.713 at N_s=15, D=1, alpha=0.95, and the level
  * loosens linearly in N_s*D (D=4 discs -> z ~ 2.94).
  */
+
+/**
+ * @brief Symmetric Dirichlet prior on a categorical distribution.
+ *
+ * The pseudocount `a` gives the posterior-predictive mean
+ *
+ *     p_m = (n_m + a) / sum_j (n_j + a),
+ *
+ * and a > 0 is what prevents a known-but-unobserved mode from receiving exactly
+ * zero mass. That matters more than it looks: sampling S times from a
+ * distribution that assigns 0 to mode m yields mode m exactly 0 times for EVERY
+ * S, so a zero there is unrecoverable by any scenario budget.
+ *
+ * There is no universally minimax choice of `a`, so this is an explicit modelling
+ * decision rather than a default to be asserted:
+ *
+ *  - LAPLACE (a = 1). Optimal when the true distribution is drawn from a uniform
+ *    prior on the simplex (Dirichlet(1)).
+ *  - KRICHEVSKY_TROFIMOV (a = 1/2). Jeffreys prior; ASYMPTOTICALLY minimax for
+ *    CUMULATIVE regret, and optimal under a Dirichlet(1/2) prior.
+ *    Krichevsky & Trofimov, "The performance of universal encoding",
+ *    IEEE Trans. Inf. Theory, 1981.
+ *  - PERKS (a = 1/M). Keeps the total pseudocount mass at 1 independent of the
+ *    mode-set size, so the prior does not strengthen as M grows.
+ *
+ * IMPORTANT (Orlitsky & Suresh, "Competitive Distribution Estimation: Why is
+ * Good-Turing Good", NeurIPS 2015, arXiv:1503.07940): NEITHER Laplace nor
+ * Krichevsky-Trofimov is asymptotically minimax over the full range of possible
+ * sequences. Any claim of the form "a = 1 is the principled default" is false.
+ * Whichever is chosen, the paper must name the criterion it is optimal under.
+ */
+enum class DirichletPrior {
+    LAPLACE,              ///< a = 1      (uniform prior on the simplex)
+    KRICHEVSKY_TROFIMOV,  ///< a = 1/2    (Jeffreys; asymptotically minimax, cumulative regret)
+    PERKS                 ///< a = 1/M    (total prior mass 1, M-invariant)
+};
+
+/**
+ * @brief Prior hyperparameters for the Bayesian mode-belief estimator.
+ *
+ * Shared vocabulary: config.hpp names these to forward them into the samplers;
+ * mode_weights.hpp consumes them. Both already include types.hpp.
+ *
+ * Design note -- why the transition matrix and not the marginal:
+ *   Each ROW of the transition matrix is conditionally multinomial given the
+ *   current mode, so a Dirichlet prior per row is exactly conjugate. Smoothing
+ *   the MARGINAL counts is not on that footing: a mode-observation history is a
+ *   single trajectory of a Markov chain, not i.i.d. draws, so the marginal
+ *   estimator is mis-specified for a switching process. The transition matrix is
+ *   the object the data actually identifies.
+ *
+ * Design note -- why self_persistence_prior (theta) and NOT a raw sticky bonus:
+ *   The sticky-HMM self-transition bias adds kappa to the diagonal of the row
+ *   prior: alpha_ij = alpha + kappa * 1{i=j}. Fox, Sudderth, Jordan & Willsky
+ *   ("A sticky HDP-HMM with application to speaker diarization", Annals of
+ *   Applied Statistics 5(2A), 2011, arXiv:0905.2592) parameterise this by the
+ *   RATIO theta = kappa/(alpha+kappa) -- the prior mean of the transition-matrix
+ *   diagonal -- and LEARN it (Gamma priors on alpha+kappa), rather than fixing
+ *   kappa. Raw kappa is the wrong knob for two reasons:
+ *
+ *     1. It is not M-invariant. With the finite row prior above,
+ *            E[T_ii] = (alpha + kappa) / (M*alpha + kappa),
+ *        so a fixed kappa silently changes meaning as the mode set grows. The
+ *        previous hardcoded (alpha=1, kappa=2) gives E[T_ii] = 0.60 at M=3 but
+ *        0.43 at M=5.
+ *     2. It has no physical reading. theta does: expected dwell time in a mode
+ *        is 1/(1 - theta) steps, which is directly comparable to the obstacle's
+ *        true switching rate. The old (alpha=1, kappa=2) at M=5 encodes a dwell
+ *        of ~1.75 steps; against a simulator with switch_prob = 0.2 (dwell 5)
+ *        that prior actively fights the data.
+ *
+ *   So theta is the stated modelling assumption and kappa is DERIVED from it:
+ *        kappa = alpha * (theta*M - 1) / (1 - theta),
+ *   which inverts E[T_ii] = theta exactly. Requires theta > 1/M for kappa > 0;
+ *   theta = 1/M gives kappa = 0 (uniform row prior, no stickiness).
+ */
+struct ModeBeliefConfig {
+    /// Which symmetric Dirichlet prior to use for the initial belief AND for the
+    /// per-row transition prior. Default KRICHEVSKY_TROFIMOV: it is the choice
+    /// with a named optimality criterion (asymptotic minimax, cumulative regret).
+    DirichletPrior prior = DirichletPrior::KRICHEVSKY_TROFIMOV;
+
+    /// theta: prior mean of the transition-matrix diagonal, E[T_ii]. Equivalently
+    /// the prior probability a mode persists one more step; expected dwell time is
+    /// 1/(1 - theta). Set from the application's known/assumed switching rate:
+    /// theta = 1 - switch_prob. Values <= 1/M disable the sticky bias (kappa = 0).
+    /// Default 0.0 => no stickiness, i.e. no unstated assumption is smuggled in.
+    double self_persistence_prior = 0.0;
+
+    /// Symmetric Dirichlet pseudocount `a` for a mode set of size M.
+    double alpha(int num_modes) const {
+        const int M = (num_modes > 0) ? num_modes : 1;
+        switch (prior) {
+            case DirichletPrior::LAPLACE:             return 1.0;
+            case DirichletPrior::KRICHEVSKY_TROFIMOV: return 0.5;
+            case DirichletPrior::PERKS:               return 1.0 / static_cast<double>(M);
+        }
+        return 0.5;
+    }
+
+    /// Sticky self-transition pseudocount kappa, DERIVED from theta so that
+    /// E[T_ii] = (alpha + kappa)/(M*alpha + kappa) = self_persistence_prior.
+    /// Returns 0 when theta <= 1/M (no stickiness) or theta >= 1 (degenerate).
+    double kappa(int num_modes) const {
+        const int M = (num_modes > 0) ? num_modes : 1;
+        const double theta = self_persistence_prior;
+        const double uniform_diag = 1.0 / static_cast<double>(M);
+        if (!(theta > uniform_diag) || theta >= 1.0) return 0.0;
+        const double a = alpha(M);
+        return a * (theta * static_cast<double>(M) - 1.0) / (1.0 - theta);
+    }
+};
 
 }  // namespace scenario_mpc
 

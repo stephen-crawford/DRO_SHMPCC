@@ -268,6 +268,12 @@ struct ExperimentConfig {
     /// large sweeps without shrinking joint_risk_samples and accepting the error.
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
+    /// Sample mode SEQUENCES from the estimated Markov transition matrix
+    /// instead of one i.i.d. mode held for the horizon. Off by default so
+    /// CDC'26 numbers stay reproducible.
+    bool use_markov_mode_sampling = false;
+    /// Dirichlet / sticky prior hyperparameters for the mode belief.
+    ModeBeliefConfig mode_belief;
     DistributionShiftConfig shift;
 
     int dro_injection_count = 1;  ///< Top-K modes to inject per obstacle (0=none, -1=all)

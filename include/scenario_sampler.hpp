@@ -133,6 +133,37 @@ std::vector<Scenario> sample_scenarios_with_mode_sequences(
 );
 
 /**
+ * @brief Markov mode-sequence sampling with an explicit initial belief.
+ *
+ * The live entry point for use_markov_mode_sampling. Differs from
+ * sample_scenarios_with_mode_sequences in two ways that matter:
+ *
+ *  1. It accepts a per-obstacle INITIAL BELIEF. Pass the DRO Q* here and the
+ *     Markov propagation starts from the reweighted distribution; pass nullptr
+ *     and the belief is computed from weight_type + belief_cfg. Without this the
+ *     DRO path could not use Markov sampling at all, since Q* is a weight map and
+ *     sample_scenarios_with_mode_sequences only takes a WeightType.
+ *  2. The belief and transition matrix are built ONCE per obstacle rather than
+ *     once per (scenario, obstacle) -- they do not depend on the scenario index,
+ *     so recomputing them S times was pure waste.
+ *
+ * @param per_obstacle_belief Optional initial belief per obstacle (e.g. DRO Q*).
+ *        nullptr => derive from weight_type. Obstacles absent from the map fall
+ *        back to the derived belief.
+ * @param belief_cfg Dirichlet / sticky prior hyperparameters.
+ */
+std::vector<Scenario> sample_scenarios_markov(
+    const std::map<int, ObstacleState>& obstacles,
+    const std::map<int, ModeHistory>& mode_histories,
+    const std::map<int, std::map<std::string, double>>* per_obstacle_belief,
+    int horizon,
+    int num_scenarios,
+    WeightType weight_type,
+    const ModeBeliefConfig& belief_cfg,
+    std::mt19937* rng = nullptr
+);
+
+/**
  * @brief Sample scenarios with stratified allocation across modes.
  *
  * Allocates floor(S * w_m) scenarios per mode m, fills remainder proportionally.

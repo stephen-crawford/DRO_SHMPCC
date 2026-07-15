@@ -315,6 +315,8 @@ RolloutRecord run_experiment_rollout(
     mpc_cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
     mpc_cfg.forced_safe_horizon = config.forced_safe_horizon;
     mpc_cfg.weight_type = config.weight_type;
+    mpc_cfg.use_markov_mode_sampling = config.use_markov_mode_sampling;
+    mpc_cfg.mode_belief = config.mode_belief;
     mpc_cfg.enable_dro = config.enable_dro;
     mpc_cfg.injection_mode = config.injection_mode;
     mpc_cfg.dro_injection_count = config.dro_injection_count;

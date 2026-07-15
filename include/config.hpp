@@ -80,6 +80,17 @@ struct ScenarioMPCConfig {
     bool ensure_mode_coverage = false;    ///< Guarantee ≥1 scenario per observed mode per obstacle
 
     // DRO (Distributionally Robust Optimization) parameters
+    /// Sample each scenario's mode SEQUENCE from the estimated Markov transition
+    /// matrix instead of drawing one mode i.i.d. and holding it for the horizon.
+    /// The obstacle simulator switches modes mid-rollout (switch_prob > 0), so an
+    /// i.i.d. draw is a mis-specified predictor of it. Off by default: the CDC'26
+    /// results were produced with i.i.d. mode draws and stay reproducible.
+    bool use_markov_mode_sampling = false;
+    /// Prior hyperparameters for the Bayesian mode belief (see ModeBeliefConfig).
+    /// Forwarded into the samplers; exposed so alpha / sticky_bonus are sweepable
+    /// rather than hardcoded default arguments.
+    ModeBeliefConfig mode_belief;
+
     bool enable_dro = false;                 ///< Enable Wasserstein DRO weight reweighting
     InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;  ///< Injection strategy when enable_dro=true
     double dro_rho_base = 0.1;               ///< Base Wasserstein ball radius rho

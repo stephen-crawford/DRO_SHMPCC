@@ -425,11 +425,22 @@ MPCResult AdaptiveScenarioMPC::solve(
             }
 
             if (!per_obs_weights_dro.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_weights_dro,
-                    config_.horizon, S,
-                    config_.ensure_mode_coverage, &rng_
-                );
+                if (config_.use_markov_mode_sampling) {
+                    // Seed the Markov chain from Q*: the reweighted belief sets the
+                    // initial mode distribution, then the estimated transition
+                    // matrix propagates it over the horizon.
+                    scenarios_ = sample_scenarios_markov(
+                        obstacles, mode_histories_, &per_obs_weights_dro,
+                        config_.horizon, S, config_.weight_type,
+                        config_.mode_belief, &rng_
+                    );
+                } else {
+                    scenarios_ = sample_scenarios_with_weights(
+                        obstacles, mode_histories_, per_obs_weights_dro,
+                        config_.horizon, S,
+                        config_.ensure_mode_coverage, &rng_
+                    );
+                }
             }
         }
     }
@@ -445,7 +456,15 @@ MPCResult AdaptiveScenarioMPC::solve(
     }
 
     if (scenarios_.empty()) {
-        if (config_.ensure_mode_coverage) {
+        if (config_.use_markov_mode_sampling) {
+            // Base (non-DRO) Markov path: belief derived from weight_type +
+            // the Dirichlet prior, no Q* override.
+            scenarios_ = sample_scenarios_markov(
+                obstacles, mode_histories_, nullptr,
+                config_.horizon, config_.num_scenarios, config_.weight_type,
+                config_.mode_belief, &rng_
+            );
+        } else if (config_.ensure_mode_coverage) {
             scenarios_ = sample_scenarios_with_mode_coverage(
                 obstacles, mode_histories_, config_.horizon,
                 config_.num_scenarios, config_.weight_type,
@@ -529,7 +548,9 @@ MPCResult AdaptiveScenarioMPC::solve(
         }
     }
 
-    // Step 4: Compute linearized constraints (multi-disc D=num_discs)
+    // Step 4: Fixed collision normals from the numerical linearization trajectory.
+    // Normals are held constant for the subsequent QP (Case B also linearizes
+    // heading-dependent disc centers about the same numerical reference).
     auto constraint_start = std::chrono::high_resolution_clock::now();
     auto constraints = compute_linearized_constraints(
         reference_trajectory_,
@@ -1273,9 +1294,13 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     }
 
     // Step 5: Build constraint matrix C and RHS d
-    // For constraint i at timestep k: a_i^T * p_ego[k] >= b_i
-    // Linearized: a_i^T * (p_ref[k] + P[k] * delta_u) >= b_i
-    // => a_i^T * P[k] * delta_u >= b_i - a_i^T * p_ref[k]
+    // Fixed-normal collision half-spaces (normals frozen from numerical x_ref):
+    //   a^T c_d(x) >= b
+    // with disc center c_d = [p_x, p_y] + ℓ [cos θ, sin θ].
+    // Linearize c_d about x_ref[k]:
+    //   c_d ≈ c_bar + J [Δp_x, Δp_y, Δθ]^T
+    //   J = [[1, 0, -ℓ sin θ̄], [0, 1, ℓ cos θ̄]]
+    // Condensed: a^T J [P; Θ] δu >= b - a^T c_bar
 
     int n_constraints = static_cast<int>(constraints.size());
     Eigen::MatrixXd C = Eigen::MatrixXd::Zero(n_constraints, n_dec);
@@ -1286,13 +1311,27 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
         int k = con.k;  // Timestep of this constraint
         if (k < 1 || k > N) continue;
 
-        // C[i,:] = a^T * P[k]
-        Eigen::RowVector2d aT = con.a.transpose();
-        C.row(i) = aT * P_all[k];
+        const Eigen::Vector2d lin_pt =
+            (con.linearization_point.squaredNorm() > 1e-20)
+                ? con.linearization_point
+                : x_ref[k].position();
 
-        // d[i] = b - a^T * p_ref[k] (uses disc linearization point for multi-disc)
-        Eigen::Vector2d lin_pt = (con.linearization_point.squaredNorm() > 1e-20) ?
-            con.linearization_point : x_ref[k].position();
+        const double offset = con.disc_offset;
+        const double theta = x_ref[k].theta;
+        const Eigen::Vector2d j_theta(
+            -offset * std::sin(theta),
+             offset * std::cos(theta)
+        );
+
+        // a^T J maps (Δp_x, Δp_y, Δθ) → scalar
+        const double cx = con.a(0);
+        const double cy = con.a(1);
+        const double ctheta = con.a.dot(j_theta);
+
+        C.row(i) = cx * P_all[k].row(0)
+                 + cy * P_all[k].row(1)
+                 + ctheta * THETA_all[k];
+
         d(i) = con.b - con.a.dot(lin_pt);
     }
 

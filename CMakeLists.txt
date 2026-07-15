@@ -41,6 +41,9 @@ target_link_libraries(test_dro_framework PRIVATE scenario_mpc)
 add_executable(test_obstacle_class tests/test_obstacle_class.cpp)
 target_link_libraries(test_obstacle_class PRIVATE scenario_mpc)
 
+add_executable(test_collision_halfspaces tests/test_collision_halfspaces.cpp)
+target_link_libraries(test_collision_halfspaces PRIVATE scenario_mpc)
+
 add_executable(test_paper_strategies tests/test_paper_strategies.cpp)
 target_link_libraries(test_paper_strategies PRIVATE scenario_mpc)
 
@@ -73,3 +76,6 @@ target_link_libraries(radius_probe PRIVATE scenario_mpc)
 
 add_executable(micro_dro_probe tests/micro_dro_probe.cpp)
 target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
+
+add_executable(test_mode_belief tests/test_mode_belief.cpp)
+target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
