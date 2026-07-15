@@ -1,8 +1,17 @@
 # CVaR risk swap — behavioral result (branch `cvar-risk`)
 
+> **Status on `lcss-mode-coverage`.** The unconditional swap described below is
+> **gated behind a config flag** on this branch: `DROConfig::use_cvar_risk`,
+> which defaults to **`false` (VaR)**. Rationale: the CDC'26 results were produced
+> with the VaR quantile, so VaR stays the default and new runs remain comparable
+> to the published numbers; CVaR is opt-in. The measured table below is reproduced
+> exactly by `tests/micro_dro_probe.cpp` Section 1, which now runs *both*
+> coefficients side by side on the identical scenario. The text below describes
+> the original `cvar-risk` branch, where the swap is unconditional.
+
 **Change.** The one-sided directional risk in `WassersteinDRO::compute_risk_vector`
 previously used the **VaR** (quantile) coefficient `z_alpha = Phi^{-1}(alpha)`.
-On this branch it uses the **CVaR** (expected-shortfall) coefficient
+On the `cvar-risk` branch it uses the **CVaR** (expected-shortfall) coefficient
 
 ```
 k_alpha = phi(Phi^{-1}(alpha)) / (1 - alpha)

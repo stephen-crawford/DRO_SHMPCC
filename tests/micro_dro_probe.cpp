@@ -59,23 +59,40 @@ int main() {
     std::cout << std::fixed << std::setprecision(6);
 
     // ---------------------------------------------------------------------
-    // Section 1 -- risk model (VaR vs CVaR) at the default radius.
+    // Section 1 -- risk model: VaR (default) vs CVaR (config_.use_cvar_risk).
+    // Runs both coefficients on the identical scenario so the swap is directly
+    // visible. Expected (CVAR_RISK_BEHAVIOR.md, alpha=0.95, 1.25x inflation):
+    //   decelerating      VaR 0.7860 -> CVaR 0.8561
+    //   turn_left/right   VaR 0.6773 -> CVaR 0.7470
+    //   constant_velocity VaR 0.6757 -> CVaR 0.7457
+    //   lane_change_l/r   VaR 0.5351 -> CVaR 0.6052
     // ---------------------------------------------------------------------
-    std::cout << "=== SECTION 1: risk model (VaR vs CVaR) ===\n";
+    std::cout << "=== SECTION 1: risk model (VaR default vs CVaR opt-in) ===\n";
     {
-        DROResult r = dro.compute_worst_case_weights(
-            nominal, obs, mode_models, ego_ref, /*horizon=*/15,
-            /*ego_r=*/0.5, /*obs_r=*/0.35, /*margin=*/0.2);
+        DROConfig var_cfg;                      // use_cvar_risk = false (default)
+        DROConfig cvar_cfg;  cvar_cfg.use_cvar_risk = true;
 
-        std::cout << "SCALAR worst_case_risk=" << r.worst_case_risk
-                  << " rho_used=" << r.rho_used
-                  << " optimal_lambda=" << r.optimal_lambda
-                  << " implied_transport_cost=" << r.implied_transport_cost
-                  << " recovery_feasible=" << (r.recovery_feasible ? 1 : 0) << "\n";
-        for (const auto& kv : r.risk_per_mode)
-            std::cout << "RISK " << kv.first << " " << kv.second << "\n";
-        for (const auto& kv : r.worst_case_weights)
-            std::cout << "QSTAR " << kv.first << " " << kv.second
+        WassersteinDRO dro_var(var_cfg);
+        WassersteinDRO dro_cvar(cvar_cfg);
+
+        DROResult rv = dro_var.compute_worst_case_weights(
+            nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
+        DROResult rc = dro_cvar.compute_worst_case_weights(
+            nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
+
+        std::cout << "DEFAULT(VaR) worst_case_risk=" << rv.worst_case_risk
+                  << "  CVAR worst_case_risk=" << rc.worst_case_risk
+                  << "  delta=" << (rc.worst_case_risk - rv.worst_case_risk) << "\n";
+        std::cout << std::setw(20) << "mode" << std::setw(12) << "VaR"
+                  << std::setw(12) << "CVaR" << std::setw(12) << "delta" << "\n";
+        for (const auto& kv : rv.risk_per_mode) {
+            const double v = kv.second;
+            const double c = rc.risk_per_mode.at(kv.first);
+            std::cout << std::setw(20) << kv.first << std::setw(12) << v
+                      << std::setw(12) << c << std::setw(12) << (c - v) << "\n";
+        }
+        for (const auto& kv : rv.worst_case_weights)
+            std::cout << "QSTAR(VaR) " << kv.first << " " << kv.second
                       << " nominal " << nominal[kv.first] << "\n";
     }
 

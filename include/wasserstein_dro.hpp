@@ -58,6 +58,7 @@ struct DROConfig {
     bool use_calibrated_radius = false;  ///< Use confidence-calibrated simplex-concentration rho_n(beta)
     double confidence_beta = 0.05;   ///< Target miscoverage (1-beta coverage) for the calibrated radius
     double alpha_one_sided = 0.95;   ///< One-sided quantile level for directional risk (z_alpha)
+    bool use_cvar_risk = false;      ///< Directional risk coefficient: false = VaR quantile z_alpha (default), true = CVaR/expected-shortfall k_alpha
     double sigma_floor = 1e-6;       ///< Floor for directional sigma (numerical stability)
     DRORiskMode risk_mode = DRORiskMode::FULL;                ///< Risk computation mode
     DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;  ///< Ground cost type

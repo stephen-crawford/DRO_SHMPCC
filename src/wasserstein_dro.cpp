@@ -624,10 +624,15 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
 ) {
     std::map<std::string, double> risk;
 
-    // CVaR (coherent, tail-aware) directional-risk coefficient. Was the one-sided
-    // VaR quantile normal_quantile(alpha); swapped to the CVaR/expected-shortfall
-    // coefficient (see cvar_coefficient + CVAR_RISK_UPDATE.md).
-    const double z_alpha = cvar_coefficient(config_.alpha_one_sided);
+    // Directional-risk coefficient. Default is the one-sided VaR quantile z_alpha,
+    // which is what the CDC'26 results were produced with -- keep it the default so
+    // new runs stay comparable to the published numbers. Opt in to the coherent,
+    // tail-aware CVaR/expected-shortfall coefficient k_alpha = phi(z)/(1-alpha) via
+    // config_.use_cvar_risk (see cvar_coefficient + CVAR_RISK_UPDATE.md). At
+    // alpha=0.95 this is a 1.645 -> 2.063 margin inflation (1.25x).
+    const double z_alpha = config_.use_cvar_risk
+                               ? cvar_coefficient(config_.alpha_one_sided)
+                               : normal_quantile(config_.alpha_one_sided);
     const double sigma_floor = config_.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {
