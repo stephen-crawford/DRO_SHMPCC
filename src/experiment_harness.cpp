@@ -657,8 +657,8 @@ EnvironmentSetup create_environment(EnvironmentType env, std::mt19937& rng) {
     setup.goal = path.get_position_at(path.total_length());
 
     switch (env) {
-        case EnvironmentType::STRAIGHT: {
-            setup.name = "Straight";
+        case EnvironmentType::OVERTAKE_SLOW_LEAD: {
+            setup.name = "OvertakeSlowLead";
             setup.initial_obs = obstacle_on_s_curve(path, 0.35, rng);
             break;
         }

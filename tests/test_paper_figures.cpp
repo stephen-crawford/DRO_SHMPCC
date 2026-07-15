@@ -769,7 +769,7 @@ static void run_fig46_env_robustness() {
     auto t0 = std::chrono::steady_clock::now();
 
     const std::vector<EnvironmentType> ENVS = {
-        EnvironmentType::STRAIGHT,
+        EnvironmentType::OVERTAKE_SLOW_LEAD,
         EnvironmentType::NARROW_CORRIDOR,
         EnvironmentType::INTERSECTION,
         EnvironmentType::ONCOMING

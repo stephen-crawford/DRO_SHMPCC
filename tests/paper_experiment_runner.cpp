@@ -1024,7 +1024,7 @@ static void run_experiment_k() {
     int k_rollouts = 600;
 
     std::vector<EnvironmentType> envs = {
-        EnvironmentType::STRAIGHT, EnvironmentType::NARROW_CORRIDOR,
+        EnvironmentType::OVERTAKE_SLOW_LEAD, EnvironmentType::NARROW_CORRIDOR,
         EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
     };
     std::vector<PaperVariant> k_variants = {
@@ -1705,7 +1705,7 @@ static void run_experiment_p() {
         for (int r = 0; r < NUM_ROLLOUTS; ++r) {
             unsigned seed = 80000 + r;
             std::mt19937 env_rng(seed);
-            EnvironmentSetup env = create_environment(EnvironmentType::STRAIGHT, env_rng);
+            EnvironmentSetup env = create_environment(EnvironmentType::OVERTAKE_SLOW_LEAD, env_rng);
 
             auto res = run_single_rollout_env(
                 strat.variant, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
@@ -2269,7 +2269,7 @@ static void run_experiment_aa() {
     const double SWITCH_PROB = 0.2;
 
     std::vector<EnvironmentType> envs = {
-        EnvironmentType::STRAIGHT, EnvironmentType::NARROW_CORRIDOR,
+        EnvironmentType::OVERTAKE_SLOW_LEAD, EnvironmentType::NARROW_CORRIDOR,
         EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
     };
 
