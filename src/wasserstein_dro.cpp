@@ -16,14 +16,35 @@
 
 namespace {
 
-// One-sided normal quantile z_alpha for common alpha values.
+// General one-sided normal quantile z_alpha = Phi^{-1}(alpha), by bisection on the
+// erfc-based cdf. ~1e-15 after 200 halvings of [-10, 10].
+double normal_quantile_general(double alpha) {
+    const double a = std::clamp(alpha, 1e-12, 1.0 - 1e-12);
+    double lo = -10.0, hi = 10.0;
+    for (int i = 0; i < 200; ++i) {
+        const double m = 0.5 * (lo + hi);
+        if (0.5 * std::erfc(-m / std::sqrt(2.0)) < a) lo = m; else hi = m;
+    }
+    return 0.5 * (lo + hi);
+}
+
+// One-sided normal quantile z_alpha.
+//
+// The tabulated values are kept so the common levels stay bit-for-bit identical to
+// master/CDC'26 (bisection would differ in the last ulp and perturb every published
+// risk value). Anything else goes to the general solver.
+//
+// NOTE: this previously fell through to `return 1.959963984540054` -- the 0.975
+// quantile -- for ANY untabulated alpha. So alpha_one_sided = 0.98 silently got
+// 0.975's z, and cvar_coefficient() inherited the same silent substitution. That is
+// fixed here; it also unblocks the Bonferroni level alpha' = 1-(1-alpha)/(N_s*D),
+// which is never one of the tabulated values.
 double normal_quantile(double alpha) {
     if (std::abs(alpha - 0.90) < 1e-9)  return 1.2815515655446004;
     if (std::abs(alpha - 0.95) < 1e-9)  return 1.6448536269514722;
     if (std::abs(alpha - 0.975) < 1e-9) return 1.959963984540054;
     if (std::abs(alpha - 0.99) < 1e-9)  return 2.3263478740408408;
-    // Fallback: 0.975 quantile
-    return 1.959963984540054;
+    return normal_quantile_general(alpha);
 }
 
 // CVaR (expected-shortfall) coefficient k_alpha = phi(z_alpha) / (1 - alpha) for a
@@ -700,10 +721,24 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
                                          num_discs, vehicle_length);
     }
 
-    // SURROGATE_VAR (default, bit-for-bit master/CDC'26) and SURROGATE_CVAR.
+    // SURROGATE_VAR (default, bit-for-bit master/CDC'26), SURROGATE_CVAR, and
+    // SURROGATE_VAR_BONFERRONI.
+    //
+    // Bonferroni: inflate the per-step level to alpha' = 1 - (1-alpha)/(N_s*D) so
+    // the union over the N_s*D (step, disc) violation events is controlled at alpha.
+    // The number of union terms must match the loops below exactly -- k runs 1..N_s
+    // and d runs over the discs -- or the guarantee is void.
+    const bool bonferroni = (config_.risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
+    double alpha_eff = alpha;
+    if (bonferroni) {
+        const double n_events = std::max(1.0, static_cast<double>(horizon) *
+                                              static_cast<double>(std::max(1, num_discs)));
+        alpha_eff = 1.0 - (1.0 - alpha) / n_events;
+    }
+
     // z_alpha is only the VaR coefficient; the CVaR branch cannot be expressed as
     // a coefficient swap (see cvar_clamped_gaussian) and is handled at the use site.
-    const double z_alpha = normal_quantile(alpha);
+    const double z_alpha = normal_quantile(alpha_eff);
     const double sigma_floor = config_.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {

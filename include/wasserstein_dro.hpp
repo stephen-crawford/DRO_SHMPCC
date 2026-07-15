@@ -79,9 +79,38 @@ enum class DROGroundCostType {
 enum class DRORiskMeasure {
     SURROGATE_VAR,   ///< DEFAULT, bit-for-bit master/CDC'26: per-step linearised VaR, max over (k,d)
     SURROGATE_CVAR,  ///< per-step linearised CVaR, correct clamp order (closed form), max over (k,d)
+    SURROGATE_VAR_BONFERRONI,  ///< per-step linearised VaR at the union-bound-corrected level (see below)
     JOINT_VAR,       ///< joint-horizon VaR of Euclidean collision over the whole horizon (MC)
     JOINT_CVAR       ///< joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
 };
+
+/*
+ * SURROGATE_VAR_BONFERRONI -- the only CLOSED-FORM option that actually carries a
+ * joint-horizon guarantee.
+ *
+ * Plain SURROGATE_VAR has none. max_k VaR_a(V_k) is a max of per-step quantiles; the
+ * trajectory violates if ANY step does, so the tails union and the per-step level
+ * buys much less jointly (15 steps at 95% each can be ~46% jointly). It sits above
+ * the true joint VaR on the canonical scenario only because the linearisation slack
+ * happens to exceed the aggregation deficit -- an accident of that geometry, not a
+ * bound. Tighten the linearisation and the sign flips.
+ *
+ * Inflating the per-step level to alpha' = 1 - (1-alpha)/(N_s*D) repairs it in one
+ * line, with t := max_{k,d} VaR_{alpha'}(Vtil_{k,d}):
+ *
+ *   P[max_{k,d} V_{k,d} > t] <= sum_{k,d} P[V_{k,d} > t]     (union bound)
+ *                            <= sum_{k,d} P[Vtil_{k,d} > t]  (V <= Vtil, Cauchy-Schwarz)
+ *                            <= N_s*D*(1-alpha') = 1-alpha.
+ *
+ * So t upper-bounds the true joint-horizon VaR of EUCLIDEAN collision -- for free,
+ * no Monte Carlo, same cost as SURROGATE_VAR. This is the risk-allocation argument
+ * de Groot 2023 uses to bound joint collision probability, applied to the risk score
+ * rather than the constraint, which closes the per-step/joint mismatch between the
+ * two. Verified against 1M-rollout ground truth: dominates on every mode.
+ *
+ * Cost: conservatism. z: 1.645 -> 2.713 at N_s=15, D=1, alpha=0.95, and the level
+ * loosens linearly in N_s*D (D=4 discs -> z ~ 2.94).
+ */
 
 /**
  * @brief Configuration for DRO worst-case weight computation.
