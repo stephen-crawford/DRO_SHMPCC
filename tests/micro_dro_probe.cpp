@@ -29,6 +29,9 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <random>
+#include <vector>
+#include <algorithm>
 
 using namespace scenario_mpc;
 
@@ -59,41 +62,47 @@ int main() {
     std::cout << std::fixed << std::setprecision(6);
 
     // ---------------------------------------------------------------------
-    // Section 1 -- risk model: VaR (default) vs CVaR (config_.use_cvar_risk).
-    // Runs both coefficients on the identical scenario so the swap is directly
-    // visible. Expected (CVAR_RISK_BEHAVIOR.md, alpha=0.95, 1.25x inflation):
-    //   decelerating      VaR 0.7860 -> CVaR 0.8561
-    //   turn_left/right   VaR 0.6773 -> CVaR 0.7470
-    //   constant_velocity VaR 0.6757 -> CVaR 0.7457
-    //   lane_change_l/r   VaR 0.5351 -> CVaR 0.6052
+    // Section 1 -- the four risk measures on the identical scenario.
+    // SURROGATE_* : per-step linearised, max over (k,d)  [not a trajectory risk measure]
+    // JOINT_*     : true risk of the joint-horizon Euclidean violation  [MC]
+    // CVaR >= VaR within each family (always -- CVaR is a tail mean past the VaR).
+    // joint/surr < 1 here: the surrogate's linearisation conservatism outweighs its
+    // max-of-marginals optimism on this scenario, so it sits ~2-5% high. Not a
+    // theorem -- the two errors oppose and the winner is scenario-dependent.
     // ---------------------------------------------------------------------
-    std::cout << "=== SECTION 1: risk model (VaR default vs CVaR opt-in) ===\n";
+    std::cout << "=== SECTION 1: four risk measures ===\n";
     {
-        DROConfig var_cfg;                      // use_cvar_risk = false (default)
-        DROConfig cvar_cfg;  cvar_cfg.use_cvar_risk = true;
+        auto risk_of = [&](DRORiskMeasure m) {
+            DROConfig cfg; cfg.risk_measure = m;
+            WassersteinDRO d(cfg);
+            return d.compute_worst_case_weights(
+                nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
+        };
+        DROResult sv = risk_of(DRORiskMeasure::SURROGATE_VAR);
+        DROResult sc = risk_of(DRORiskMeasure::SURROGATE_CVAR);
+        DROResult jv = risk_of(DRORiskMeasure::JOINT_VAR);
+        DROResult jc = risk_of(DRORiskMeasure::JOINT_CVAR);
 
-        WassersteinDRO dro_var(var_cfg);
-        WassersteinDRO dro_cvar(cvar_cfg);
-
-        DROResult rv = dro_var.compute_worst_case_weights(
-            nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
-        DROResult rc = dro_cvar.compute_worst_case_weights(
-            nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
-
-        std::cout << "DEFAULT(VaR) worst_case_risk=" << rv.worst_case_risk
-                  << "  CVAR worst_case_risk=" << rc.worst_case_risk
-                  << "  delta=" << (rc.worst_case_risk - rv.worst_case_risk) << "\n";
-        std::cout << std::setw(20) << "mode" << std::setw(12) << "VaR"
-                  << std::setw(12) << "CVaR" << std::setw(12) << "delta" << "\n";
-        for (const auto& kv : rv.risk_per_mode) {
-            const double v = kv.second;
-            const double c = rc.risk_per_mode.at(kv.first);
-            std::cout << std::setw(20) << kv.first << std::setw(12) << v
-                      << std::setw(12) << c << std::setw(12) << (c - v) << "\n";
+        std::cout << std::setw(20) << "mode" << std::setw(12) << "surrVaR"
+                  << std::setw(12) << "surrCVaR" << std::setw(12) << "jointVaR"
+                  << std::setw(12) << "jointCVaR" << std::setw(12) << "joint/surr" << "\n";
+        for (const auto& kv : sv.risk_per_mode) {
+            const std::string& id = kv.first;
+            const double a = kv.second, b = sc.risk_per_mode.at(id);
+            const double c = jv.risk_per_mode.at(id), d = jc.risk_per_mode.at(id);
+            std::cout << std::setw(20) << id << std::setw(12) << a << std::setw(12) << b
+                      << std::setw(12) << c << std::setw(12) << d
+                      << std::setw(12) << (a > 1e-9 ? c / a : 0.0) << "\n";
         }
-        for (const auto& kv : rv.worst_case_weights)
-            std::cout << "QSTAR(VaR) " << kv.first << " " << kv.second
-                      << " nominal " << nominal[kv.first] << "\n";
+        std::cout << "WORST surrVaR=" << sv.worst_case_risk
+                  << " surrCVaR=" << sc.worst_case_risk
+                  << " jointVaR=" << jv.worst_case_risk
+                  << " jointCVaR=" << jc.worst_case_risk << "\n";
+        std::cout << "QSTAR argmax: surrVaR=";
+        for (const auto& kv : sv.worst_case_weights) if (kv.second > 0.5) std::cout << kv.first;
+        std::cout << "  jointVaR=";
+        for (const auto& kv : jv.worst_case_weights) if (kv.second > 0.5) std::cout << kv.first;
+        std::cout << "\n";
     }
 
     // ---------------------------------------------------------------------
@@ -142,6 +151,92 @@ int main() {
     // DETERMINISTIC (bang-bang) plan achieves this (keep-all=0, move-all
     // costs 1 > rho). Confirms solve_primal_ot is the general OT solver.
     // ---------------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // Section 2b -- GUARANTEE VALIDATION (the point of JOINT_*).
+    //
+    // The estimator is only worth having if the number it returns is the thing it
+    // claims to be. Take the reported r[m], then draw a FRESH, INDEPENDENT set of
+    // rollouts (different seed, 10x the samples) and check on that held-out set:
+    //   VaR  guarantee: P( V_joint <= r[m] ) ~= alpha        (coverage)
+    //   CVaR guarantee: E[ V_joint | V_joint >= VaR ] ~= r[m] (tail mean)
+    // Held-out is essential -- checking on the same samples the quantile was fit to
+    // is circular and would pass even if the estimator were wrong.
+    // ---------------------------------------------------------------------
+    std::cout << "\n=== SECTION 2b: joint-horizon guarantee validation (held-out) ===\n";
+    {
+        const double alpha = 0.95;
+        const double R = 0.5 + 0.35 + 0.2;   // ego_r + obs_r + margin
+        const int H = 15;
+
+        DROConfig jv_cfg; jv_cfg.risk_measure = DRORiskMeasure::JOINT_VAR;
+        DROConfig jc_cfg; jc_cfg.risk_measure = DRORiskMeasure::JOINT_CVAR;
+        WassersteinDRO d_jv(jv_cfg), d_jc(jc_cfg);
+        // compute_risk_vector is private; read r[m] off the public result instead.
+        // (ego_r=0.5, obs_r=0.35, margin=0.2 => the same R used below.)
+        auto rv = d_jv.compute_worst_case_weights(
+            nominal, obs, mode_models, ego_ref, H, 0.5, 0.35, 0.2).risk_per_mode;
+        auto rc = d_jc.compute_worst_case_weights(
+            nominal, obs, mode_models, ego_ref, H, 0.5, 0.35, 0.2).risk_per_mode;
+
+        std::cout << std::setw(20) << "mode" << std::setw(11) << "VaR_hat"
+                  << std::setw(11) << "coverage" << std::setw(9) << "target"
+                  << std::setw(11) << "CVaR_hat" << std::setw(11) << "tailmean"
+                  << std::setw(8) << "ok" << "\n";
+
+        for (const auto& mode_id : mode_ids) {
+            const ModeModel& mode = mode_models.at(mode_id);
+            const int n_noise = static_cast<int>(mode.G.cols());
+            const int M = 200000;
+
+            // FRESH stream: different seed from config.joint_risk_seed.
+            std::mt19937_64 rng(0xDEADBEEF12345ULL);
+            std::normal_distribution<double> gauss(0.0, 1.0);
+            std::vector<double> V; V.reserve(M);
+
+            for (int s = 0; s < M; ++s) {
+                Eigen::Vector4d x = obs.to_array();
+                double worst = 0.0;
+                for (int k = 1; k <= H; ++k) {
+                    Eigen::VectorXd w(n_noise);
+                    for (int i = 0; i < n_noise; ++i) w(i) = gauss(rng);
+                    x = mode.A * x + mode.b + mode.G * w;
+                    const EgoState& e = (k < (int)ego_ref.size()) ? ego_ref[k] : ego_ref.back();
+                    worst = std::max(worst, R - (x.head<2>() - e.position()).norm());
+                }
+                V.push_back(std::max(worst, 0.0));
+            }
+
+            const double var_hat = rv.at(mode_id);
+            const double cvar_hat = rc.at(mode_id);
+
+            // Coverage: fraction of held-out rollouts at or below the reported VaR.
+            size_t below = 0;
+            for (double x : V) if (x <= var_hat + 1e-12) ++below;
+            const double coverage = double(below) / double(M);
+
+            // Held-out tail mean above the held-out VaR (Rockafellar-Uryasev).
+            std::vector<double> Vs = V;
+            size_t idx = (size_t)std::clamp(alpha * M, 0.0, double(M - 1));
+            std::nth_element(Vs.begin(), Vs.begin() + idx, Vs.end());
+            const double q = Vs[idx];
+            double excess = 0.0;
+            for (double x : V) excess += std::max(x - q, 0.0);
+            const double tail_mean = q + (excess / M) / (1.0 - alpha);
+
+            const bool cov_ok = std::abs(coverage - alpha) < 0.01;
+            const bool cvar_ok = (cvar_hat > 1e-9)
+                                     ? std::abs(cvar_hat - tail_mean) / std::max(tail_mean, 1e-9) < 0.05
+                                     : tail_mean < 1e-6;
+            std::cout << std::setw(20) << mode_id
+                      << std::setw(11) << var_hat
+                      << std::setw(11) << coverage
+                      << std::setw(9) << alpha
+                      << std::setw(11) << cvar_hat
+                      << std::setw(11) << tail_mean
+                      << std::setw(8) << ((cov_ok && cvar_ok) ? "PASS" : "FAIL") << "\n";
+        }
+    }
+
     std::cout << "\n=== SECTION 3: crafted fractional-split check ===\n";
     {
         std::vector<std::string> ids = {"A", "B"};

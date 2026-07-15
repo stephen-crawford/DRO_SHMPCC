@@ -46,6 +46,44 @@ enum class DROGroundCostType {
 };
 
 /**
+ * @brief Which risk functional the per-mode risk score r[m] reports.
+ *
+ * The SURROGATE_* family is the CDC'26 formulation: the violation is LINEARISED
+ * (projected on the ego->obstacle mean direction, which by Cauchy-Schwarz upper
+ * -bounds the true Euclidean violation, hence "conservative"), evaluated per
+ * (step, disc), and aggregated with a max. That max is NOT a risk measure of the
+ * trajectory: max_k VaR(V_k) <= VaR(max_k V_k). It is a per-step score under a
+ * planner that enforces a JOINT bound -- the two disagree about what "risk" means.
+ *
+ * Two errors run in OPPOSITE directions and partially cancel:
+ *   - linearisation makes the surrogate too LARGE (Vtil >= V pointwise),
+ *   - max-of-marginals makes it too SMALL (max_k VaR <= VaR of max_k).
+ * Which wins is scenario-dependent. For iid steps the aggregation gap is big
+ * (~1.9x at 15 steps), but a real rollout is strongly correlated through A, so the
+ * effective number of independent steps is far below N_s and the gap collapses.
+ * Measured on the canonical 6-mode scenario, linearisation dominates and the
+ * surrogate sits ~2-5% ABOVE the true joint VaR -- i.e. conservative, the safe
+ * direction. Do not assume that sign holds elsewhere; it is not a theorem.
+ *
+ * The JOINT_* family fixes both: it is the true risk measure of the joint-horizon
+ * EUCLIDEAN collision violation
+ *
+ *     V := max_{k=1..N_s} max_d [ R - ||x_k - c_{d,k}|| ]_+ ,
+ *
+ * with x_k sampled from the mode's own linear-Gaussian rollout
+ * x_{k+1} = A x_k + b + G w_k, so the temporal correlation induced by A is
+ * carried exactly. No linearisation, no per-step decoupling. There is no closed
+ * form (the distance is non-Gaussian and the steps are dependent), so it is
+ * estimated by Monte Carlo with common random numbers across modes.
+ */
+enum class DRORiskMeasure {
+    SURROGATE_VAR,   ///< DEFAULT, bit-for-bit master/CDC'26: per-step linearised VaR, max over (k,d)
+    SURROGATE_CVAR,  ///< per-step linearised CVaR, correct clamp order (closed form), max over (k,d)
+    JOINT_VAR,       ///< joint-horizon VaR of Euclidean collision over the whole horizon (MC)
+    JOINT_CVAR       ///< joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
+};
+
+/**
  * @brief Configuration for DRO worst-case weight computation.
  */
 struct DROConfig {
@@ -57,8 +95,19 @@ struct DROConfig {
     double entropy_gamma = 0.5;      ///< Scaling for entropy term
     bool use_calibrated_radius = false;  ///< Use confidence-calibrated simplex-concentration rho_n(beta)
     double confidence_beta = 0.05;   ///< Target miscoverage (1-beta coverage) for the calibrated radius
-    double alpha_one_sided = 0.95;   ///< One-sided quantile level for directional risk (z_alpha)
-    bool use_cvar_risk = false;      ///< Directional risk coefficient: false = VaR quantile z_alpha (default), true = CVaR/expected-shortfall k_alpha
+    double alpha_one_sided = 0.95;   ///< Risk level alpha (VaR/CVaR tail level, and z_alpha for the surrogate)
+    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports (see DRORiskMeasure)
+    /// Monte Carlo sample count for JOINT_VAR / JOINT_CVAR.
+    /// Measured on the canonical 6-mode scenario (error vs 2M-sample ground truth,
+    /// and cost of one compute_risk_vector call over 6 modes x 15 steps):
+    ///     500 -> err 0.029, 1.7 ms  |  2000 -> err 0.021, 6.8 ms
+    ///    8000 -> err 0.008,  28 ms  | 32000 -> err 0.002, 111 ms
+    /// 8000 is the default: it is the smallest count whose VaR coverage lands inside
+    /// +/-0.5% of alpha. NOTE the cost -- at 28 ms this is ~19x the paper's quoted
+    /// <1.5 ms/step budget, so JOINT_* is an OFFLINE analysis / calibration tool,
+    /// not the online loop. SURROGATE_VAR remains the default risk_measure.
+    int joint_risk_samples = 8000;
+    uint64_t joint_risk_seed = 0x5150C0FFEEULL;  ///< Fixed RNG seed: deterministic across calls, common random numbers across modes
     double sigma_floor = 1e-6;       ///< Floor for directional sigma (numerical stability)
     DRORiskMode risk_mode = DRORiskMode::FULL;                ///< Risk computation mode
     DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;  ///< Ground cost type
@@ -316,6 +365,29 @@ private:
      * Uses k=1..safe_horizon. Uses worst disc position when num_discs > 1.
      */
     std::map<std::string, double> compute_risk_vector(
+        const ObstacleState& obs_state,
+        const std::map<std::string, ModeModel>& mode_models,
+        const std::vector<std::string>& mode_ids,
+        const std::vector<EgoState>& ego_ref_traj,
+        int horizon,
+        double safety_threshold,
+        int num_discs = 1,
+        double vehicle_length = 4.0
+    );
+
+    /**
+     * @brief Joint-horizon risk of the Euclidean collision violation (Monte Carlo).
+     *
+     * Estimates, per mode m,
+     *     VaR_alpha(V_m)   or   CVaR_alpha(V_m),
+     *     V_m := max_{k=1..N_s} max_d [ R - ||x_k - c_{d,k}|| ]_+
+     * with x_k drawn from the mode's rollout x_{k+1} = A x_k + b + G w_k, so the
+     * temporal correlation is exact and the distance is true Euclidean.
+     *
+     * Used when config.risk_measure is JOINT_VAR or JOINT_CVAR. Deterministic:
+     * reseeded per mode from config.joint_risk_seed (common random numbers).
+     */
+    std::map<std::string, double> compute_risk_vector_joint(
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<std::string>& mode_ids,

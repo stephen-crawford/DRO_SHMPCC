@@ -11,6 +11,8 @@
 #include <numeric>
 #include <limits>
 #include <cstdlib>
+#include <random>
+#include <vector>
 
 namespace {
 
@@ -35,6 +37,68 @@ double cvar_coefficient(double alpha) {
     const double two_pi = 6.283185307179586;
     const double phi = std::exp(-0.5 * z * z) / std::sqrt(two_pi);
     return phi / (1.0 - alpha);
+}
+
+// Standard normal pdf / cdf (cdf via erfc, no lookup table).
+double normal_pdf(double t) {
+    const double two_pi = 6.283185307179586;
+    return std::exp(-0.5 * t * t) / std::sqrt(two_pi);
+}
+double normal_cdf(double t) {
+    return 0.5 * std::erfc(-t / std::sqrt(2.0));
+}
+
+// CVaR_alpha of the CLAMPED Gaussian violation [V]_+ , V ~ N(mu, sigma^2).
+//
+// The naive form [CVaR_alpha(V)]_+ is WRONG: CVaR is a tail MEAN, not a quantile,
+// so it does not commute with the clamp. Jensen gives [E[.]]_+ <= E[[.]_+], so the
+// naive form UNDERSTATES, and does so exactly in the rare-but-dangerous regime --
+// a mode that is safe at level alpha but has a real collision tail gets reported as
+// risk 0 and receives zero WDRO mass. (VaR is a quantile and DOES commute, which is
+// why the SURROGATE_VAR path can clamp last and still be exact.)
+//
+// Correct value, using CVaR_a(Z) = (1/(1-a)) * int_a^1 VaR_u(Z) du and
+// VaR_u([V]_+) = [VaR_u(V)]_+ :
+//   if VaR_alpha(V) = mu + z_a*sigma >= 0 : the clamp never binds in the tail, so
+//       CVaR_alpha([V]_+) = CVaR_alpha(V) = mu + k_a*sigma
+//   else, with t = -mu/sigma :
+//       CVaR_alpha([V]_+) = ( sigma*phi(t) - (-mu)*(1 - Phi(t)) ) / (1 - alpha)
+// The two branches agree at mu = -z_a*sigma (both give (k_a - z_a)*sigma), so the
+// function is continuous. Verified against 20M-sample Monte Carlo to 4 decimals.
+double cvar_clamped_gaussian(double mu, double sigma, double alpha) {
+    if (sigma <= 0.0) return std::max(mu, 0.0);
+    const double z = normal_quantile(alpha);
+    if (mu + z * sigma >= 0.0) {
+        return mu + cvar_coefficient(alpha) * sigma;
+    }
+    const double t = -mu / sigma;
+    const double val = (sigma * normal_pdf(t) - (-mu) * (1.0 - normal_cdf(t))) / (1.0 - alpha);
+    return std::max(val, 0.0);
+}
+
+// Empirical VaR_alpha: the alpha-quantile. `v` is modified (partially sorted).
+double empirical_var(std::vector<double>& v, double alpha) {
+    if (v.empty()) return 0.0;
+    const size_t idx = static_cast<size_t>(
+        std::clamp(alpha * static_cast<double>(v.size()), 0.0,
+                   static_cast<double>(v.size() - 1)));
+    std::nth_element(v.begin(), v.begin() + idx, v.end());
+    return v[idx];
+}
+
+// Empirical CVaR_alpha via Rockafellar-Uryasev:
+//     CVaR_a(Z) = q + E[(Z - q)^+] / (1 - a),   q = VaR_a(Z).
+// This is correct even when the distribution has an ATOM at q -- which is exactly
+// the case here, since [.]_+ piles mass at 0 and the alpha-quantile often lands on
+// it. The naive "mean of samples >= q" estimator silently returns E[Z] in that
+// case (every sample satisfies Z >= 0) and is badly wrong.
+double empirical_cvar(std::vector<double>& v, double alpha) {
+    if (v.empty()) return 0.0;
+    const double q = empirical_var(v, alpha);
+    double excess = 0.0;
+    for (double x : v) excess += std::max(x - q, 0.0);
+    excess /= static_cast<double>(v.size());
+    return q + excess / (1.0 - alpha);
 }
 
 // Safe unit vector: returns (1,0) if input is near-zero.
@@ -624,15 +688,22 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
 ) {
     std::map<std::string, double> risk;
 
-    // Directional-risk coefficient. Default is the one-sided VaR quantile z_alpha,
-    // which is what the CDC'26 results were produced with -- keep it the default so
-    // new runs stay comparable to the published numbers. Opt in to the coherent,
-    // tail-aware CVaR/expected-shortfall coefficient k_alpha = phi(z)/(1-alpha) via
-    // config_.use_cvar_risk (see cvar_coefficient + CVAR_RISK_UPDATE.md). At
-    // alpha=0.95 this is a 1.645 -> 2.063 margin inflation (1.25x).
-    const double z_alpha = config_.use_cvar_risk
-                               ? cvar_coefficient(config_.alpha_one_sided)
-                               : normal_quantile(config_.alpha_one_sided);
+    const double alpha = config_.alpha_one_sided;
+
+    // JOINT_VAR / JOINT_CVAR: true risk measure of the joint-horizon Euclidean
+    // violation. Dispatch out to the Monte Carlo estimator; the surrogate path
+    // below is not used at all.
+    if (config_.risk_measure == DRORiskMeasure::JOINT_VAR ||
+        config_.risk_measure == DRORiskMeasure::JOINT_CVAR) {
+        return compute_risk_vector_joint(obs_state, mode_models, mode_ids,
+                                         ego_ref_traj, horizon, safety_radius,
+                                         num_discs, vehicle_length);
+    }
+
+    // SURROGATE_VAR (default, bit-for-bit master/CDC'26) and SURROGATE_CVAR.
+    // z_alpha is only the VaR coefficient; the CVaR branch cannot be expressed as
+    // a coefficient swap (see cvar_clamped_gaussian) and is handled at the use site.
+    const double z_alpha = normal_quantile(alpha);
     const double sigma_floor = config_.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {
@@ -691,9 +762,17 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
                 }
                 // NO_COV and DISTANCE_ONLY: sigma_dir stays 0
 
-                // One-sided quantile safety margin: R + z_alpha * sigma_dir
-                const double r_kd = std::max(0.0,
-                    (safety_radius + z_alpha * sigma_dir) - dist);
+                // Linearised violation Vtil ~ N(mu_V, sigma_dir^2), mu_V = R - dist.
+                const double mu_V = safety_radius - dist;
+
+                double r_kd;
+                if (config_.risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
+                    // Correct clamp order: CVaR_a([Vtil]_+), NOT [CVaR_a(Vtil)]_+.
+                    r_kd = cvar_clamped_gaussian(mu_V, sigma_dir, alpha);
+                } else {
+                    // VaR is a quantile and commutes with [.]_+, so clamping last is exact.
+                    r_kd = std::max(0.0, mu_V + z_alpha * sigma_dir);
+                }
 
                 step_risk = std::max(step_risk, r_kd);
             }
@@ -702,6 +781,86 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
         }
 
         risk[mode_id] = max_risk;
+    }
+
+    return risk;
+}
+
+std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
+    const ObstacleState& obs_state,
+    const std::map<std::string, ModeModel>& mode_models,
+    const std::vector<std::string>& mode_ids,
+    const std::vector<EgoState>& ego_ref_traj,
+    int horizon,
+    double safety_radius,
+    int num_discs,
+    double vehicle_length
+) {
+    std::map<std::string, double> risk;
+
+    const double alpha = config_.alpha_one_sided;
+    const int n_samples = std::max(1, config_.joint_risk_samples);
+    const bool want_cvar = (config_.risk_measure == DRORiskMeasure::JOINT_CVAR);
+
+    // Precompute ego disc centres per step once -- they are deterministic (the ego
+    // reference), so they are shared across modes and samples.
+    std::vector<std::vector<Eigen::Vector2d>> disc_centres(horizon + 1);
+    for (int k = 1; k <= horizon; ++k) {
+        const EgoState& ego_state = (k < static_cast<int>(ego_ref_traj.size()))
+                                        ? ego_ref_traj[k]
+                                        : ego_ref_traj.back();
+        disc_centres[k] = (num_discs > 1)
+                              ? compute_ego_disc_positions(ego_state, num_discs, vehicle_length)
+                              : std::vector<Eigen::Vector2d>{ ego_state.position() };
+    }
+
+    const Eigen::Vector4d x0 = obs_state.to_array();
+
+    for (const auto& mode_id : mode_ids) {
+        auto it = mode_models.find(mode_id);
+        if (it == mode_models.end()) {
+            risk[mode_id] = 0.0;
+            continue;
+        }
+        const ModeModel& mode = it->second;
+        const int n_noise = static_cast<int>(mode.G.cols());
+
+        // Common random numbers: reseed per mode from the SAME fixed seed, so every
+        // mode sees an identical noise stream. This makes r[m] deterministic across
+        // calls (no jitter in the reweighting) and removes MC noise from BETWEEN-mode
+        // comparisons, which is all the W1 LP actually consumes.
+        std::mt19937_64 rng(config_.joint_risk_seed);
+        std::normal_distribution<double> gauss(0.0, 1.0);
+
+        std::vector<double> samples;
+        samples.reserve(n_samples);
+
+        for (int s = 0; s < n_samples; ++s) {
+            // Roll out the mode's own dynamics: x_{k+1} = A x_k + b + G w_k.
+            // Sampling the ROLLOUT (rather than each step's marginal independently)
+            // is what makes this JOINT: the correlation A induces across steps is
+            // carried exactly, which is precisely what max_k VaR(V_k) throws away.
+            Eigen::Vector4d x = x0;
+            double worst = 0.0;
+
+            for (int k = 1; k <= horizon; ++k) {
+                Eigen::VectorXd w(n_noise);
+                for (int i = 0; i < n_noise; ++i) w(i) = gauss(rng);
+                x = mode.A * x + mode.b + mode.G * w;
+
+                const Eigen::Vector2d p = x.head<2>();
+                for (const auto& c_d : disc_centres[k]) {
+                    // TRUE Euclidean violation -- no projection onto the mean
+                    // direction, no Gaussian surrogate for the distance.
+                    const double viol = safety_radius - (p - c_d).norm();
+                    worst = std::max(worst, viol);
+                }
+            }
+            samples.push_back(std::max(worst, 0.0));  // [.]_+ per sample
+        }
+
+        risk[mode_id] = want_cvar ? empirical_cvar(samples, alpha)
+                                  : empirical_var(samples, alpha);
     }
 
     return risk;
