@@ -313,6 +313,12 @@ struct ExperimentConfig {
     double confidence_beta = 0.05;
     /// Entropic allocator (the pivot's core claim): guarantees min_m q_m > 0 so
     /// the sampling certificate L <= 1/q_min is finite. Off by default.
+    /// Road-boundary (contouring) constraints. THE EGO WAS NEVER CONSTRAINED TO THE
+    /// ROAD in any experiment run before 2026-07-16 (this defaulted false and nothing
+    /// set it). Reviewer 2 comment 3 asked exactly this. On => every collision number
+    /// changes meaning, so re-run everything after enabling.
+    bool enable_contouring_constraints = false;
+    double road_width = 7.0;   ///< Symmetric road width [m] about the reference path
     bool use_entropic_allocator = false;
     double entropic_tau = 0.05;
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;

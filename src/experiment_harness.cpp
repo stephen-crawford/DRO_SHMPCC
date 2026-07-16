@@ -63,7 +63,8 @@ void CSVWriter::write_header() {
          << "total_progress,control_effort,constraint_active_count,"
          << "missed_mode_steps,total_steps,"
          << "avg_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,"
-         << "total_dro_injected,avg_safe_horizon,clearance_5pct\n";
+         << "total_dro_injected,avg_safe_horizon,clearance_5pct,"
+         << "mean_contouring_err,mean_velocity_err,mean_lag_err\n";
 }
 
 void CSVWriter::write_record(const RolloutRecord& rec) {
@@ -79,7 +80,9 @@ void CSVWriter::write_record(const RolloutRecord& rec) {
          << std::setprecision(4) << rec.avg_solve_ms << "," << rec.p50_solve_ms << ","
          << rec.p95_solve_ms << "," << rec.max_solve_ms << ","
          << rec.total_dro_injected << ","
-         << std::setprecision(4) << rec.avg_safe_horizon << "," << rec.clearance_5pct << "\n";
+         << std::setprecision(4) << rec.avg_safe_horizon << "," << rec.clearance_5pct << ","
+         << rec.mean_contouring_error() << "," << rec.mean_velocity_error() << ","
+         << (rec.metric_steps > 0 ? std::sqrt(rec.sum_lag_sq / rec.metric_steps) : 0.0) << "\n";
 }
 
 void CSVWriter::flush() {
@@ -315,6 +318,8 @@ RolloutRecord run_experiment_rollout(
     mpc_cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
     mpc_cfg.forced_safe_horizon = config.forced_safe_horizon;
     mpc_cfg.weight_type = config.weight_type;
+    mpc_cfg.enable_contouring_constraints = config.enable_contouring_constraints;
+    mpc_cfg.road_width = config.road_width;
     mpc_cfg.use_markov_mode_sampling = config.use_markov_mode_sampling;
     mpc_cfg.mode_belief = config.mode_belief;
     mpc_cfg.enable_dro = config.enable_dro;
