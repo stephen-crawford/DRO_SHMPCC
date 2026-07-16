@@ -415,6 +415,12 @@ struct RolloutRecord {
     int constraint_active_count = 0;
     int missed_mode_steps = 0;
     int total_mode_checks = 0;
+    // JOINT missed-mode: a step is missed if NO single scenario has ALL obstacles'
+    // true modes simultaneously. Tests whether COVERAGE of the joint mode config
+    // (size M^V) is the collision mechanism at high V, vs the marginal per-obstacle
+    // metric above. One check per step (not per obstacle).
+    int joint_missed_mode_steps = 0;
+    int joint_mode_checks = 0;
     int total_steps = 0;
 
     // Rare mode tracking

@@ -133,3 +133,36 @@ crossover experiment and remains to be run on the corrected config.
 The OFFSET SWEEP (2026-07-16) remains the single cleanest result and the empirical
 paper's headline. Geometry and count are supporting/directional and need
 confound-controlled redesigns before they can be figures.
+
+---
+
+## [2026-07-16] DECIDING MEASUREMENT: coverage is NOT the mechanism, at ANY V
+
+Does joint-mode coverage predict collision at high V? (The one fact that would let a
+coverage/sample-complexity theory framing explain the RIGHT mechanism.) Base planner,
+S-curve, road ON, N=300/arm. Split rollouts into collided vs safe; compare
+joint-missed-mode rate (NO scenario covers all obstacles' true modes at once).
+
+| V | collided | safe | joint-miss (collided) | joint-miss (safe) | gap |
+|---|---|---|---|---|---|
+| 3 | 231 | 69 | 0.7248 | 0.7615 | **−0.037** |
+| 4 | 253 | 47 | 0.8891 | 0.9187 | **−0.030** |
+
+**Verdict: coverage does NOT predict collision.** The gap is NEGATIVE at both V —
+collided rollouts have slightly *lower* joint-miss than safe ones. No positive
+correlation. (Marginal per-obstacle missed-mode is 0.0000 throughout because
+ensure_mode_coverage is hardcoded on — uninformative.)
+
+**Two things are simultaneously true and that is the whole point:**
+1. The joint mode config is genuinely rarely covered — joint-miss 72% at V=3, 89% at
+   V=4 (S=40 vs M^V=125, 625). The "fixed budget cannot cover M^V" observation is REAL.
+2. It is CAUSALLY INERT. The planner does not collide because it missed the exact joint
+   mode; it collides from dense multi-agent geometry. Coverage and collision are
+   uncorrelated (slightly anti-correlated).
+
+**Consequence for a theory framing**: the coverage/sample-complexity-of-joint-modes
+crossover is DEAD. Refuted at V=1 (missed 0.0000 / coll 0.71) and now at V=3,4
+(joint-miss uncorrelated with collision). WDRO's benefit is NOT coverage; it is
+risk-aware allocation (earlier evasion) — which is risk-averse MPC (Sopasakis, Singh),
+already pre-empted. No novel sample-complexity theorem survives this. The M^V-vs-S
+result stays an EMPIRICAL scaling observation, not a theorem.

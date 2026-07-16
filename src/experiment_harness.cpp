@@ -516,6 +516,27 @@ RolloutRecord run_experiment_rollout(
         // Constraint active count
         constraint_active_total += static_cast<int>(mpc_result.active_scenarios.size());
 
+        // JOINT missed-mode: is there ONE scenario covering every obstacle's true
+        // mode at once? (marginal per-obstacle coverage below is a weaker condition).
+        {
+            bool joint_found = false;
+            for (const auto& sc : controller.scenarios()) {
+                bool all_match = true;
+                for (int oi = 0; oi < n_obs; ++oi) {
+                    bool this_match = false;
+                    for (const auto& [oid, traj] : sc.trajectories) {
+                        if (oid == oi && traj.mode_id == obs_sims[oi].current_mode) {
+                            this_match = true; break;
+                        }
+                    }
+                    if (!this_match) { all_match = false; break; }
+                }
+                if (all_match) { joint_found = true; break; }
+            }
+            if (!joint_found) rec.joint_missed_mode_steps++;
+            rec.joint_mode_checks++;
+        }
+
         // Missed mode tracking per obstacle
         for (int oi = 0; oi < n_obs; ++oi) {
             bool mode_found = false;
