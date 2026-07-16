@@ -24,6 +24,7 @@
 #include <string>
 #include <optional>
 #include <random>
+#include <limits>
 
 namespace scenario_mpc {
 
@@ -103,6 +104,34 @@ struct DROResult {
     std::vector<std::vector<double>> transport_cost_matrix;  ///< D[i][j]
     double implied_transport_cost = 0.0;               ///< Transport cost of induced plan
     bool recovery_feasible = false;                    ///< Whether induced plan respects rho
+
+    // --- Certificate diagnostics (paper Sec. IV-E) ---------------------------
+    // Assumption 1 of Theorem 1 requires the SAMPLING distribution to have full
+    // support, q_m > 0 for all m. Without these fields the assumption is not
+    // measurable from a run, and a theorem whose hypothesis cannot be checked is
+    // not a defensible claim. They exist so the certificate can be AUDITED, not
+    // asserted.
+    //
+    // Corollary 1: Q* maximises a LINEAR functional over a convex ambiguity set,
+    // so a maximiser sits at an extreme point and is generically bang-bang. Then
+    // qstar_support_floor == 0, Assumption 1 FAILS, the likelihood ratio
+    // L = max_m p*_m/q_m is infinite, and Theorem 1 is VACUOUS -- there is no
+    // finite closed-loop violation bound. This is not hypothetical: on the
+    // canonical six-mode scenario the recovered Q* is exactly (0,1,0,0,0,0).
+    double qstar_support_floor = 0.0;   ///< min_m Q*[m]. 0 => Assumption 1 FAILS (bang-bang).
+    int qstar_support_size = 0;         ///< #{m : Q*[m] > 0}. < M => Assumption 1 FAILS.
+    bool satisfies_full_support = false;///< qstar_support_floor > 0, i.e. Assumption 1 holds.
+
+    /// Certified bound on the likelihood ratio L = max_m p*_m / Q*[m] of Lemma 1,
+    /// using only p*_m <= 1: L <= 1 / min_m Q*[m]. Returns +inf when the support
+    /// floor is zero, which is the correct and honest answer -- Theorem 1 gives
+    /// V_{p*} <= L * eps_S, so L = inf means no bound at all.
+    double likelihood_ratio_bound() const {
+        if (!(qstar_support_floor > 0.0)) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return 1.0 / qstar_support_floor;
+    }
 };
 
 /**
@@ -122,7 +151,9 @@ public:
      * @param nominal_weights  P_hat: nominal mode weights {mode_id -> w_m}
      * @param obs_state        Current obstacle state
      * @param mode_models      Available mode dynamics models
-     * @param ego_ref_traj     Ego reference trajectory (for risk computation)
+     * @param ego_linearization_traj Fixed numerical ego trajectory used to
+     *        evaluate mode risks. This trajectory is not an MPC decision
+     *        variable and is held fixed while computing the WDRO distribution.
      * @param horizon          Prediction horizon
      * @param ego_r            Ego collision radius
      * @param obs_r            Obstacle collision radius
@@ -133,7 +164,7 @@ public:
         const std::map<std::string, double>& nominal_weights,
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
-        const std::vector<EgoState>& ego_ref_traj,
+        const std::vector<EgoState>& ego_linearization_traj,
         int horizon,
         double ego_r,
         double obs_r,
@@ -318,7 +349,7 @@ private:
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<std::string>& mode_ids,
-        const std::vector<EgoState>& ego_ref_traj,
+        const std::vector<EgoState>& ego_linearization_traj,
         int horizon,
         double safety_threshold,
         int num_discs = 1,
@@ -341,7 +372,7 @@ private:
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<std::string>& mode_ids,
-        const std::vector<EgoState>& ego_ref_traj,
+        const std::vector<EgoState>& ego_linearization_traj,
         int horizon,
         double safety_threshold,
         int num_discs = 1,

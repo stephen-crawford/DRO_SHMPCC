@@ -12,6 +12,7 @@
 #include <limits>
 #include <cstdlib>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -140,7 +141,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     const std::map<std::string, double>& nominal_weights,
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
-    const std::vector<EgoState>& ego_ref_traj,
+    const std::vector<EgoState>& ego_linearization_traj,
     int horizon,
     double ego_r,
     double obs_r,
@@ -149,6 +150,13 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     int num_discs,
     double vehicle_length
 ) {
+    if (ego_linearization_traj.empty()) {
+        throw std::invalid_argument(
+            "compute_worst_case_weights requires a nonempty "
+            "ego linearization trajectory."
+        );
+    }
+
     DROResult result;
 
     // Collect mode IDs in consistent order
@@ -181,7 +189,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     double safety_threshold = ego_r + obs_r + margin;
     int effective_risk_horizon = (risk_horizon > 0) ? risk_horizon : horizon;
     result.risk_per_mode = compute_risk_vector(
-        obs_state, mode_models, mode_ids, ego_ref_traj,
+        obs_state, mode_models, mode_ids, ego_linearization_traj,
         effective_risk_horizon, safety_threshold, num_discs, vehicle_length
     );
 
@@ -225,6 +233,25 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     result.worst_case_weights = std::move(recovery.q_star);
     result.implied_transport_cost = recovery.implied_transport_cost;
     result.recovery_feasible = recovery.feasible;
+
+    // Certificate diagnostics (paper Sec. IV-E, Assumption 1 / Corollary 1).
+    // Theorem 1 requires full support of the SAMPLING distribution; record whether
+    // it actually holds so the certificate can be audited rather than assumed.
+    // A bang-bang Q* -- the generic maximiser of a linear functional over a convex
+    // set -- has support floor 0, which makes L infinite and Theorem 1 vacuous.
+    if (!result.worst_case_weights.empty()) {
+        double floor_val = std::numeric_limits<double>::infinity();
+        int support = 0;
+        for (const auto& [_, w] : result.worst_case_weights) {
+            floor_val = std::min(floor_val, w);
+            if (w > 0.0) ++support;
+        }
+        result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
+        result.qstar_support_size = support;
+        result.satisfies_full_support =
+            (support == static_cast<int>(result.worst_case_weights.size()))
+            && (result.qstar_support_floor > 0.0);
+    }
 
     return result;
 }
@@ -701,7 +728,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
-    const std::vector<EgoState>& ego_ref_traj,
+    const std::vector<EgoState>& ego_linearization_traj,
     int horizon,
     double safety_radius,
     int num_discs,
@@ -717,7 +744,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     if (config_.risk_measure == DRORiskMeasure::JOINT_VAR ||
         config_.risk_measure == DRORiskMeasure::JOINT_CVAR) {
         return compute_risk_vector_joint(obs_state, mode_models, mode_ids,
-                                         ego_ref_traj, horizon, safety_radius,
+                                         ego_linearization_traj, horizon, safety_radius,
                                          num_discs, vehicle_length);
     }
 
@@ -760,9 +787,9 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
         for (int k = 1; k < n_steps; ++k) {
             // Ego reference at step k (clamp if ref traj shorter)
             const EgoState& ego_state =
-                (k < static_cast<int>(ego_ref_traj.size()))
-                    ? ego_ref_traj[k]
-                    : ego_ref_traj.back();
+                (k < static_cast<int>(ego_linearization_traj.size()))
+                    ? ego_linearization_traj[k]
+                    : ego_linearization_traj.back();
 
             // Disc centers at this step
             std::vector<Eigen::Vector2d> disc_positions;
@@ -825,7 +852,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
-    const std::vector<EgoState>& ego_ref_traj,
+    const std::vector<EgoState>& ego_linearization_traj,
     int horizon,
     double safety_radius,
     int num_discs,
@@ -838,12 +865,13 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
     const bool want_cvar = (config_.risk_measure == DRORiskMeasure::JOINT_CVAR);
 
     // Precompute ego disc centres per step once -- they are deterministic (the ego
-    // reference), so they are shared across modes and samples.
+    // linearization trajectory), so they are shared across modes and samples.
     std::vector<std::vector<Eigen::Vector2d>> disc_centres(horizon + 1);
     for (int k = 1; k <= horizon; ++k) {
-        const EgoState& ego_state = (k < static_cast<int>(ego_ref_traj.size()))
-                                        ? ego_ref_traj[k]
-                                        : ego_ref_traj.back();
+        const EgoState& ego_state =
+            (k < static_cast<int>(ego_linearization_traj.size()))
+                ? ego_linearization_traj[k]
+                : ego_linearization_traj.back();
         disc_centres[k] = (num_discs > 1)
                               ? compute_ego_disc_positions(ego_state, num_discs, vehicle_length)
                               : std::vector<Eigen::Vector2d>{ ego_state.position() };
