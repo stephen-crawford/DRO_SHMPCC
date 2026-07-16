@@ -134,6 +134,104 @@ Eigen::Vector2d safe_unit(const Eigen::Vector2d& v, double eps = 1e-12) {
 
 namespace scenario_mpc {
 
+namespace {
+
+// One row of the entropic plan: Pi_i: = p_i * softmax_j((r_j - lambda D_ij)/tau).
+// Computed in log-space (subtract the row max) so large (r - lambda D)/tau does not
+// overflow -- at small tau the exponent is O(1/tau) and naive exp() overflows fast.
+void entropic_row(
+    double p_i, const std::vector<double>& r,
+    const std::vector<double>& D_i, double lambda, double tau,
+    std::vector<double>& row_out
+) {
+    const size_t M = r.size();
+    row_out.assign(M, 0.0);
+    double best = -std::numeric_limits<double>::infinity();
+    for (size_t j = 0; j < M; ++j) {
+        best = std::max(best, (r[j] - lambda * D_i[j]) / tau);
+    }
+    double Z = 0.0;
+    for (size_t j = 0; j < M; ++j) {
+        row_out[j] = std::exp((r[j] - lambda * D_i[j]) / tau - best);
+        Z += row_out[j];
+    }
+    if (!(Z > 0.0) || !std::isfinite(Z)) {          // degenerate: fall back to uniform
+        for (size_t j = 0; j < M; ++j) row_out[j] = p_i / static_cast<double>(M);
+        return;
+    }
+    for (size_t j = 0; j < M; ++j) row_out[j] *= p_i / Z;
+}
+
+}  // anonymous namespace
+
+EntropicOTResult solve_entropic_ot(
+    const std::map<std::string, double>& nominal_weights,
+    const std::map<std::string, double>& risk_per_mode,
+    const std::vector<std::vector<double>>& transport_cost_matrix,
+    const std::vector<std::string>& mode_ids,
+    double rho,
+    double tau
+) {
+    EntropicOTResult out;
+    const size_t M = mode_ids.size();
+    if (M == 0 || transport_cost_matrix.size() != M || !(tau > 0.0)) return out;
+
+    std::vector<double> p(M), r(M);
+    for (size_t i = 0; i < M; ++i) {
+        auto pit = nominal_weights.find(mode_ids[i]);
+        auto rit = risk_per_mode.find(mode_ids[i]);
+        p[i] = (pit != nominal_weights.end()) ? pit->second : 0.0;
+        r[i] = (rit != risk_per_mode.end()) ? rit->second : 0.0;
+    }
+
+    // Transport cost and target marginal at a given lambda.
+    std::vector<double> row(M);
+    auto evaluate = [&](double lambda, std::vector<double>& q_out) {
+        q_out.assign(M, 0.0);
+        double cost = 0.0;
+        for (size_t i = 0; i < M; ++i) {
+            entropic_row(p[i], r, transport_cost_matrix[i], lambda, tau, row);
+            for (size_t j = 0; j < M; ++j) {
+                q_out[j] += row[j];
+                cost += row[j] * transport_cost_matrix[i][j];
+            }
+        }
+        return cost;
+    };
+
+    // The transport cost is non-increasing in lambda (raising the price of movement
+    // shifts each softmax back toward its own source). Bisect for the smallest
+    // lambda >= 0 meeting the budget; lambda = 0 if the budget is already slack.
+    std::vector<double> q(M);
+    double cost0 = evaluate(0.0, q);
+    double lambda = 0.0;
+    if (cost0 > rho) {
+        double lo = 0.0, hi = 1.0;
+        for (int k = 0; k < 60 && evaluate(hi, q) > rho; ++k) hi *= 2.0;  // bracket
+        for (int k = 0; k < 200; ++k) {                                   // bisect
+            const double mid = 0.5 * (lo + hi);
+            (evaluate(mid, q) > rho) ? lo = mid : hi = mid;
+        }
+        lambda = hi;
+    }
+    out.transport_cost = evaluate(lambda, q);
+    out.lambda = lambda;
+
+    double q_min = std::numeric_limits<double>::infinity(), risk = 0.0, total = 0.0;
+    for (size_t j = 0; j < M; ++j) total += q[j];
+    if (!(total > 0.0)) return out;
+    for (size_t j = 0; j < M; ++j) {
+        q[j] /= total;                       // guard against drift
+        out.q[mode_ids[j]] = q[j];
+        q_min = std::min(q_min, q[j]);
+        risk += q[j] * r[j];
+    }
+    out.q_min = q_min;
+    out.expected_risk = risk;
+    out.solved = (out.transport_cost <= rho + 1e-6) && (q_min > 0.0);
+    return out;
+}
+
 WassersteinDRO::WassersteinDRO(const DROConfig& config)
     : config_(config) {}
 

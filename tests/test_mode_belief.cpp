@@ -6,6 +6,7 @@
 // EPSILON_GREEDY / TEMPERATURE all silently identical to FREQUENCY).
 
 #include "mode_weights.hpp"
+#include "wasserstein_dro.hpp"
 #include "scenario_sampler.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
@@ -361,7 +362,85 @@ static void test_theta_roundtrip_through_estimator() {
     check(close_to(T.row(1).sum(), 1.0, 1e-12), "prior row still stochastic");
 }
 
+
+// ---------------------------------------------------------------------------
+// 12. Entropic allocator: FULL SUPPORT UNCONDITIONALLY (the pivot's core claim).
+//     The raw W1-LP gives min_m q_m = 0 whenever the budget is slack (then
+//     q* = e_argmax exactly), and usually when it binds. The entropic row softmax
+//     is strictly positive, so q_min > 0 for EVERY tau > 0 => L <= 1/q_min < inf.
+// ---------------------------------------------------------------------------
+static void test_entropic_full_support() {
+    std::vector<std::string> ids = {"a", "b", "c", "d"};
+    std::map<std::string, double> nom, risk;
+    for (size_t i = 0; i < ids.size(); ++i) { nom[ids[i]] = 0.25; }
+    risk["a"] = 0.1; risk["b"] = 0.9; risk["c"] = 0.3; risk["d"] = 0.2;
+    std::vector<std::vector<double>> D = {{0,1,2,3},{1,0,1,2},{2,1,0,1},{3,2,1,0}};
+
+    for (double tau : {0.01, 0.05, 0.2, 1.0, 5.0}) {
+        for (double rho : {0.05, 0.3, 10.0}) {   // 10.0 => budget deliberately slack
+            auto e = solve_entropic_ot(nom, risk, D, ids, rho, tau);
+            check(e.q_min > 0.0,
+                  "entropic q_min > 0 (tau=" + std::to_string(tau) +
+                  ", rho=" + std::to_string(rho) + ")");
+            check(std::isfinite(e.likelihood_ratio_bound()),
+                  "entropic L is FINITE -- certificate exists");
+            double s = 0.0; for (const auto& kv : e.q) s += kv.second;
+            check(close_to(s, 1.0, 1e-9), "entropic q normalized");
+            check(e.transport_cost <= rho + 1e-6, "entropic respects the transport budget");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 13. The tau frontier is monotone in the direction the theory requires:
+//     protection <q_tau,r> NON-INCREASING in tau, certificate 1/q_min TIGHTENING.
+// ---------------------------------------------------------------------------
+static void test_entropic_frontier_monotone() {
+    std::vector<std::string> ids = {"a", "b", "c", "d"};
+    std::map<std::string, double> nom, risk;
+    for (const auto& id : ids) nom[id] = 0.25;
+    risk["a"] = 0.1; risk["b"] = 0.9; risk["c"] = 0.3; risk["d"] = 0.2;
+    std::vector<std::vector<double>> D = {{0,1,2,3},{1,0,1,2},{2,1,0,1},{3,2,1,0}};
+    const double rho = 0.3;
+
+    double prev_prot = 1e300, prev_L = 1e300;
+    for (double tau : {0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0}) {
+        auto e = solve_entropic_ot(nom, risk, D, ids, rho, tau);
+        check(e.expected_risk <= prev_prot + 1e-6,
+              "protection non-increasing in tau (tau=" + std::to_string(tau) + ")");
+        check(e.likelihood_ratio_bound() <= prev_L + 1e-6,
+              "certificate 1/q_min tightens with tau (tau=" + std::to_string(tau) + ")");
+        prev_prot = e.expected_risk; prev_L = e.likelihood_ratio_bound();
+    }
+    // tau -> large: rows tend to uniform, so q -> uniform and L -> M (tightest).
+    auto e_big = solve_entropic_ot(nom, risk, D, ids, rho, 500.0);
+    check(std::abs(e_big.likelihood_ratio_bound() - 4.0) < 0.2,
+          "L -> M = 4 as tau -> inf (uniform limit, tightest possible bound)");
+}
+
+// ---------------------------------------------------------------------------
+// 14. Slack budget: the RAW LP collapses to e_argmax (support 1, L = inf), while
+//     the entropic allocator keeps full support. This is Theorem 2(i) vs Theorem 3.
+// ---------------------------------------------------------------------------
+static void test_slack_budget_collapse() {
+    std::vector<std::string> ids = {"a", "b", "c", "d"};
+    std::map<std::string, double> nom, risk;
+    for (const auto& id : ids) nom[id] = 0.25;
+    risk["a"] = 0.1; risk["b"] = 0.9; risk["c"] = 0.3; risk["d"] = 0.2;
+    std::vector<std::vector<double>> D = {{0,1,2,3},{1,0,1,2},{2,1,0,1},{3,2,1,0}};
+
+    // Slack budget, small tau: the entropic plan must approach e_argmax (= "b")
+    // in protection while STILL retaining strictly positive mass everywhere.
+    auto e = solve_entropic_ot(nom, risk, D, ids, /*rho=*/100.0, /*tau=*/0.01);
+    check(e.q["b"] > 0.99, "slack budget + small tau concentrates on argmax r");
+    check(e.q_min > 0.0, "...but q_min is STILL > 0 (certificate survives)");
+    check(std::isfinite(e.likelihood_ratio_bound()), "...so L stays finite");
+}
+
 int main() {
+    test_entropic_full_support();
+    test_entropic_frontier_monotone();
+    test_slack_budget_collapse();
     test_dirichlet_prior_selector();
     test_sticky_kappa_derivation();
     test_theta_roundtrip_through_estimator();
