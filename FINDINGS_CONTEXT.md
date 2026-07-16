@@ -85,3 +85,51 @@ ego confined to ±2.0m). N=250/arm, identical seeds. Combined ego+obstacle radiu
 ### Standing residual (honest)
 This is single-obstacle. The V>1 multi-obstacle joint-mode-space argument (M^V) is
 untouched by this sweep and remains the scaling story for a theory framing.
+
+---
+
+## [2026-07-16] Road-geometry + obstacle-count experiments (corrected config)
+
+Road ON (4.0m), obstacle(s) oncoming at offset 1.0m, S=40, N=200/arm, identical seeds.
+**Directional, NOT publication-clean — both variables are confounded (see below).**
+
+### (A) Road geometry (obstacle at arc 0.55, offset 1.0m)
+| geometry | base coll | WDRO coll | benefit | base clr | WDRO clr |
+|---|---|---|---|---|---|
+| Straight | 0.130 | 0.085 | 4.5 pp | 1.189 | 1.157 |
+| Gentle-S (A=1.5) | 0.250 | 0.025 | 22.5 pp | 1.211 | 1.125 |
+| S-curve (A=3.0) | 0.465 | 0.160 | 30.5 pp | 0.932 | 1.016 |
+| Tight-S (A=5.0) | 0.000 | 0.000 | 0.0 pp | 1.796 | 1.810 |
+
+**CONFOUND**: a fixed 1.0m normal-offset is NOT a fixed conflict level across
+curvatures. On Tight-S (A=5.0, path swings ±5m) the offset places the obstacle away
+from the ego's actual swept path → 0 collisions for both (artifact, not "tight-S is
+safe"). Clean signal: WDRO helps on the moderate-curvature road shapes (Gentle-S,
+S-curve: 22–30 pp) where the road constraint limits evasion. Straight = mild conflict
+at this offset. A clean version must calibrate offset per-curvature or fix the
+obstacle at a world position and vary only the path.
+
+### (B) Obstacle count — clean placement rule (V obstacles even over arc [0.40,0.80], all offset +1.0m)
+| V | M^V | base coll | WDRO coll | benefit |
+|---|---|---|---|---|
+| 1 | 5 | 0.410 | 0.230 | 18.0 pp |
+| 2 | 25 | 0.300 | 0.250 | 5.0 pp |
+| 3 | 125 | 0.760 | 0.400 | 36.0 pp |
+| 4 | 625 | 0.885 | 0.565 | 32.0 pp |
+
+**CONFOUND**: obstacle COUNT is inseparable from DENSITY and raw conflict exposure —
+adding obstacles adds joint-mode-space M^V *and* more chances to hit something. V=2
+(0.300 base) is a sparse-spacing easy case; the trend is not monotone. What IS clean
+and interesting: **WDRO's OWN collision rises 0.23 → 0.57 as V:1→4**, i.e. even the
+reweighted planner degrades as M^V (5→625) outruns the fixed budget S=40 — the
+concrete "fixed budget cannot cover the joint mode space" story. WDRO's benefit is
+largest in the dense regime (V=3,4: 32–36 pp).
+
+**The clean isolation of the M^V effect is an S-SWEEP AT FIXED V** (vary the budget,
+show base needs S ≳ M^V while WDRO does not), NOT a count sweep. That is the real
+crossover experiment and remains to be run on the corrected config.
+
+### Bottom line
+The OFFSET SWEEP (2026-07-16) remains the single cleanest result and the empirical
+paper's headline. Geometry and count are supporting/directional and need
+confound-controlled redesigns before they can be figures.
