@@ -48,3 +48,40 @@ The obstacle is ONCOMING ON THE REFERENCE CENTRELINE. Even with road constraints
 that is a near-degenerate head-on setup, which is why residual collision stays ~14%.
 A defensible paper needs the obstacle OFFSET to an adjacent lane — a scenario-design
 change, not a config fix. Flagged for the empirical re-submission.
+
+---
+
+## [2026-07-16] OBSTACLE-OFFSET SWEEP — the scenario fix that answers Reviewers 2 & 8
+
+The oncoming obstacle was on the ego's reference centreline (degenerate head-on).
+Offsetting it laterally to an adjacent lane and sweeping the offset. Road ON (4.0m,
+ego confined to ±2.0m). N=250/arm, identical seeds. Combined ego+obstacle radius ~0.85m.
+
+| lateral offset | base coll | WDRO coll | benefit | base clr | WDRO clr |
+|---|---|---|---|---|---|
+| 0.0 (centreline) | 0.640 | 0.164 | 47.6 pp | 0.778 | 1.115 |
+| 0.5 | 0.572 | 0.236 | 33.6 pp | 0.886 | 1.023 |
+| 1.0 | 0.536 | 0.152 | 38.4 pp | 0.876 | 1.030 |
+| 1.5 | 0.236 | 0.072 | 16.4 pp | 1.221 | 1.072 |
+| 2.0 (road edge) | 0.076 | 0.032 | 4.4 pp | 1.419 | 1.383 |
+| 3.0 (own lane) | 0.012 | 0.000 | 1.2 pp | 2.031 | 2.101 |
+
+### This is the empirical paper's headline, and it answers the reviewers
+1. **Reviewer 2 ("unreasonable scenario / 20% still substantial") — RESOLVED.** The
+   64% base collision was the centreline artifact. Pull the obstacle to a real
+   adjacent lane and the baseline becomes sane: 7.6% at offset 2.0m, 1.2% at 3.0m.
+   The high collision rates were a degenerate placement, now characterised, not hidden.
+2. **Reviewer 8 ("significant advantage over existing methods?") — ANSWERED as a
+   BOUNDARY.** WDRO's benefit is large precisely where the obstacle can intrude into
+   the ego's lane (offset ≤ ~1.5m: 16–48 pp) and vanishes once it cannot (offset ≥
+   2.0m: ≤ 4.4 pp). That is the parameter-selection guidance R8 asked for: *use WDRO
+   when obstacles may enter your lane; it is redundant otherwise.*
+3. **Residual collision is now defensible.** At offset 1.0m (obstacle genuinely in the
+   ego's lane, mode-switching) WDRO is 15.2% — a hard, legitimate conflict, not a
+   rigged head-on.
+4. Minor non-monotonicity at offset 0.5 (WDRO 0.236 vs 0.164/0.152 at 0.0/1.0) — a
+   geometry effect at that specific overlap; CIs nearly touch. Note but not load-bearing.
+
+### Standing residual (honest)
+This is single-obstacle. The V>1 multi-obstacle joint-mode-space argument (M^V) is
+untouched by this sweep and remains the scaling story for a theory framing.
