@@ -110,6 +110,12 @@ struct ScenarioMPCConfig {
     /// theory chain -- it MUST be reachable from an experiment.
     bool dro_use_calibrated_radius = false;
     double dro_confidence_beta = 0.05;  ///< Target miscoverage beta for the calibrated radius
+    /// Entropic allocator: makes min_m q_m > 0, hence the sampling certificate
+    /// L <= 1/q_min FINITE. The raw W1-LP gives L = inf whenever the transport
+    /// budget is slack (Theorem 2(i)), and ~86% of the time when it binds.
+    /// Off by default (CDC'26 used the raw LP).
+    bool dro_use_entropic_allocator = false;
+    double dro_entropic_tau = 0.05;   ///< Temperature; tau -> 0 recovers the raw LP
     DROGroundCostType dro_ground_cost = DROGroundCostType::W2_BURES;  ///< Ground cost for the transport matrix D
     DRORiskMode dro_risk_mode = DRORiskMode::FULL;                    ///< Covariance handling in the risk score
     DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports

@@ -305,6 +305,38 @@ DROResult WassersteinDRO::compute_worst_case_weights(
 
     // Step 5: Recover Q*.
     //
+    // ENTROPIC path (config_.use_entropic_allocator): the row softmax is strictly
+    // positive, so min_m q_m > 0 and the sampling certificate L <= 1/q_min is
+    // FINITE for every tau > 0. Both LP paths below lack that guarantee -- by
+    // Theorem 2(i) the LP optimum is exactly e_{argmax r} whenever the transport
+    // budget is slack (support 1, L = inf), and its support is deficient ~86% of
+    // the time when the budget binds. Checked first because it supersedes both.
+    if (config_.use_entropic_allocator) {
+        EntropicOTResult ent = solve_entropic_ot(
+            nominal_weights, result.risk_per_mode,
+            result.transport_cost_matrix, mode_ids, rho, config_.entropic_tau
+        );
+        if (ent.solved) {
+            result.worst_case_weights = ent.q;
+            result.implied_transport_cost = ent.transport_cost;
+            result.recovery_feasible = true;
+            result.optimal_lambda = ent.lambda;
+            double floor_val = std::numeric_limits<double>::infinity();
+            int support = 0;
+            for (const auto& [_, w] : result.worst_case_weights) {
+                floor_val = std::min(floor_val, w);
+                if (w > 0.0) ++support;
+            }
+            result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
+            result.qstar_support_size = support;
+            result.satisfies_full_support =
+                (support == static_cast<int>(result.worst_case_weights.size()))
+                && (result.qstar_support_floor > 0.0);
+            return result;
+        }
+        // Fall through to the LP recovery if the entropic solve failed.
+    }
+    //
     // Default path: dual-guided bracketing + plan mixing (a heuristic primal
     // recovery restricted to convex mixtures of two deterministic transport
     // plans). Opt-in path (env USE_PRIMAL_OT=1): the TRUE Wasserstein-metric

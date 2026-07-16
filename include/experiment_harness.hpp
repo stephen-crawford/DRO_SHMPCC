@@ -311,6 +311,10 @@ struct ExperimentConfig {
     /// belief-coverage guarantee.
     bool use_calibrated_radius = false;
     double confidence_beta = 0.05;
+    /// Entropic allocator (the pivot's core claim): guarantees min_m q_m > 0 so
+    /// the sampling certificate L <= 1/q_min is finite. Off by default.
+    bool use_entropic_allocator = false;
+    double entropic_tau = 0.05;
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
     /// Sample mode SEQUENCES from the estimated Markov transition matrix

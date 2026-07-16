@@ -60,6 +60,23 @@ struct DROConfig {
     int joint_risk_samples = 8000;
     uint64_t joint_risk_seed = 0x5150C0FFEEULL;  ///< Fixed RNG seed: deterministic across calls, common random numbers across modes
     double sigma_floor = 1e-6;       ///< Floor for directional sigma (numerical stability)
+    /// Use the entropic (softmax) allocator instead of the raw W1-LP recovery.
+    ///
+    /// Theorem 2(i): when the transport budget is SLACK the LP optimum is exactly
+    /// q* = e_{argmax r}, so min_m q*_m = 0 and the likelihood ratio L = inf --
+    /// there is NO finite closed-loop certificate. When the budget binds, the LP
+    /// support is bounded by #{distinct destinations}+1 and is deficient ~86% of
+    /// the time (measured over 3000 random instances; 14.1% retain full support).
+    ///
+    /// The entropic row softmax is STRICTLY positive, so q_min > 0 and
+    /// L <= 1/q_min < inf UNCONDITIONALLY. entropic_tau trades protection
+    /// (<q_tau,r>, non-increasing in tau) against certificate tightness
+    /// (1/q_min, decreasing in tau). Off by default: CDC'26 used the raw LP.
+    bool use_entropic_allocator = false;
+    /// Temperature tau > 0. tau -> 0 recovers the raw LP (and its infinite L).
+    /// Measured on the canonical 6-mode scenario at rho=0.15: tau=0.05 costs 2.5%
+    /// protection (0.7517 -> 0.7326) and takes L from inf to 166.8.
+    double entropic_tau = 0.05;
     DRORiskMode risk_mode = DRORiskMode::FULL;                ///< Risk computation mode
     DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;  ///< Ground cost type
 };
@@ -112,12 +129,19 @@ struct DROResult {
     // not a defensible claim. They exist so the certificate can be AUDITED, not
     // asserted.
     //
-    // Corollary 1: Q* maximises a LINEAR functional over a convex ambiguity set,
-    // so a maximiser sits at an extreme point and is generically bang-bang. Then
-    // qstar_support_floor == 0, Assumption 1 FAILS, the likelihood ratio
-    // L = max_m p*_m/q_m is infinite, and Theorem 1 is VACUOUS -- there is no
-    // finite closed-loop violation bound. This is not hypothetical: on the
-    // canonical six-mode scenario the recovered Q* is exactly (0,1,0,0,0,0).
+    // Theorem 2 (CORRECTED 2026-07-15 -- the earlier "extreme point => generically
+    // bang-bang" argument was WRONG: a small-rho ball can lie strictly inside the
+    // simplex with full-support vertices). The correct statement runs through the
+    // LP's TRANSPORT structure:
+    //   (i)  SLACK budget => q* = e_{argmax r} EXACTLY (verified 3000/3000), so
+    //        qstar_support_floor == 0 and L = inf: Theorem 1 is VACUOUS.
+    //   (ii) A basic optimal Pi has <= M+1 nonzeros; each row needs >= 1, so at
+    //        most ONE row splits and supp(q*) <= #{distinct destinations}+1.
+    // The deficiency is therefore CONDITIONAL, not universal: over 3000 random
+    // BINDING-budget instances supp(q*) == M in 14.1% of cases. On the canonical
+    // six-mode scenario it fails 9/9, and at rho=0.30 (slack) q* = (0,1,0,0,0,0).
+    // Use the entropic allocator (DROConfig::use_entropic_allocator) to make
+    // qstar_support_floor > 0 unconditionally.
     double qstar_support_floor = 0.0;   ///< min_m Q*[m]. 0 => Assumption 1 FAILS (bang-bang).
     int qstar_support_size = 0;         ///< #{m : Q*[m] > 0}. < M => Assumption 1 FAILS.
     bool satisfies_full_support = false;///< qstar_support_floor > 0, i.e. Assumption 1 holds.
