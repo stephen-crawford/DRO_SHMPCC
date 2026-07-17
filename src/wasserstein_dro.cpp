@@ -303,6 +303,23 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     result.optimal_lambda = opt_lambda;
     result.worst_case_risk = dual_val;
 
+    // Support-aware floor (mixture form): q <- alpha*p_hat + (1-alpha)*q*.
+    // Guarantees q_i >= alpha*p_hat_i, so the raw-LP bang-bang collapse q* = e_{argmax r}
+    // cannot occur (support-aware Wasserstein construction, paper_support_aware_wasserstein).
+    // Applied to the recovered q* on EVERY path below, BEFORE the certificate diagnostics,
+    // so satisfies_full_support/qstar_support_floor reflect the floored weights. No-op when
+    // support_aware_alpha = 0 (the previous raw-LP behavior).
+    auto apply_support_floor = [&](std::map<std::string, double>& q) {
+        if (config_.support_aware_alpha <= 0.0) return;
+        const double a = std::min(1.0, config_.support_aware_alpha);
+        for (auto& [id, w] : q) {
+            double ph = 0.0;
+            auto it = nominal_weights.find(id);
+            if (it != nominal_weights.end()) ph = it->second;
+            w = a * ph + (1.0 - a) * w;
+        }
+    };
+
     // Step 5: Recover Q*.
     //
     // ENTROPIC path (config_.use_entropic_allocator): the row softmax is strictly
@@ -321,6 +338,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
             result.implied_transport_cost = ent.transport_cost;
             result.recovery_feasible = true;
             result.optimal_lambda = ent.lambda;
+            apply_support_floor(result.worst_case_weights);
             double floor_val = std::numeric_limits<double>::infinity();
             int support = 0;
             for (const auto& [_, w] : result.worst_case_weights) {
@@ -354,7 +372,8 @@ DROResult WassersteinDRO::compute_worst_case_weights(
             result.worst_case_weights = std::move(ot.q);
             result.implied_transport_cost = ot.transport_cost;
             result.recovery_feasible = (ot.transport_cost <= rho + 1e-6);
-            // Certificate diagnostics on the primal-OT q*.
+            apply_support_floor(result.worst_case_weights);
+            // Certificate diagnostics on the (floored) primal-OT q*.
             double floor_val = std::numeric_limits<double>::infinity();
             int support = 0;
             for (const auto& [_, w] : result.worst_case_weights) {
@@ -378,6 +397,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     result.worst_case_weights = std::move(recovery.q_star);
     result.implied_transport_cost = recovery.implied_transport_cost;
     result.recovery_feasible = recovery.feasible;
+    apply_support_floor(result.worst_case_weights);
 
     // Certificate diagnostics (paper Sec. IV-E, Assumption 1 / Corollary 1).
     // Theorem 1 requires full support of the SAMPLING distribution; record whether

@@ -322,6 +322,7 @@ struct ExperimentConfig {
     double road_width = 7.0;   ///< Symmetric road width [m] about the reference path
     bool use_entropic_allocator = false;
     double entropic_tau = 0.05;
+    double support_aware_alpha = 0.0;   ///< Support-aware Wasserstein floor (0 = base raw-LP)
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
     /// Sample mode SEQUENCES from the estimated Markov transition matrix

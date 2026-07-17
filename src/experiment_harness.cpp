@@ -350,6 +350,7 @@ RolloutRecord run_experiment_rollout(
         mpc_cfg.dro_confidence_beta = config.confidence_beta;
         mpc_cfg.dro_use_entropic_allocator = config.use_entropic_allocator;
         mpc_cfg.dro_entropic_tau = config.entropic_tau;
+        mpc_cfg.dro_support_aware_alpha = config.support_aware_alpha;
         mpc_cfg.dro_risk_measure = config.risk_measure;
         mpc_cfg.dro_joint_risk_samples = config.joint_risk_samples;
     }

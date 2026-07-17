@@ -122,6 +122,9 @@ struct ScenarioMPCConfig {
     /// Off by default (CDC'26 used the raw LP).
     bool dro_use_entropic_allocator = false;
     double dro_entropic_tau = 0.05;   ///< Temperature; tau -> 0 recovers the raw LP
+    /// Support-aware Wasserstein floor:  q <- alpha*p_hat + (1-alpha)*q*. alpha > 0 forbids
+    /// the raw-LP bang-bang collapse and guarantees finite-M mode coverage. Off (0) == base.
+    double dro_support_aware_alpha = 0.0;
     DROGroundCostType dro_ground_cost = DROGroundCostType::W2_BURES;  ///< Ground cost for the transport matrix D
     DRORiskMode dro_risk_mode = DRORiskMode::FULL;                    ///< Covariance handling in the risk score
     DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;  ///< DEFAULT: Bonferroni joint-horizon VaR bound (r[m])

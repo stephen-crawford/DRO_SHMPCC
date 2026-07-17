@@ -36,6 +36,7 @@ AdaptiveScenarioMPC::AdaptiveScenarioMPC(const ScenarioMPCConfig& config)
         dro_cfg.confidence_beta = config_.dro_confidence_beta;
         dro_cfg.use_entropic_allocator = config_.dro_use_entropic_allocator;
         dro_cfg.entropic_tau = config_.dro_entropic_tau;
+        dro_cfg.support_aware_alpha = config_.dro_support_aware_alpha;
         dro_cfg.ground_cost_type = config_.dro_ground_cost;
         dro_cfg.risk_mode = config_.dro_risk_mode;
         dro_cfg.risk_measure = config_.dro_risk_measure;

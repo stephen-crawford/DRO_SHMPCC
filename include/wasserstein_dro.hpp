@@ -80,6 +80,17 @@ struct DROConfig {
     /// Measured on the canonical 6-mode scenario at rho=0.15: tau=0.05 costs 2.5%
     /// protection (0.7517 -> 0.7326) and takes L from inf to 166.8.
     double entropic_tau = 0.05;
+    /// Support-aware Wasserstein floor (mixture form). When alpha > 0, the recovered
+    /// worst-case q* is post-mixed as  q <- alpha*p_hat + (1-alpha)*q*,  which
+    /// guarantees q_i >= alpha*p_hat_i for every mode and therefore forbids the
+    /// bang-bang collapse q* = e_{argmax r} that Theorem 2(i) predicts for the raw
+    /// W1-LP. This is the LP-preserving "probability floor" of the support-aware
+    /// Wasserstein construction (paper_support_aware_wasserstein):
+    ///   - q cannot collapse: q_j <= 1 - alpha*(1 - p_hat_j);
+    ///   - finite-M coverage: Pr[mode i unsampled after M] <= e^{-M alpha p_hat_i}.
+    /// Applied on EVERY recovery path (entropic / primal-OT / heuristic) before the
+    /// certificate diagnostics. Off by default (alpha = 0) => previous behavior.
+    double support_aware_alpha = 0.0;
     DRORiskMode risk_mode = DRORiskMode::FULL;                ///< Risk computation mode
     DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;  ///< Ground cost type
 };
