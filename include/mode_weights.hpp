@@ -18,20 +18,34 @@
 
 namespace scenario_mpc {
 
+/// Belief over discrete modes: mode_id -> probability. Canonical type shared by the
+/// Bayesian mode-belief estimator, the Markov transition/prediction functions, and the
+/// scenario sampler.
+using ModeDistribution = std::map<std::string, double>;
+
 /**
- * @brief Compute mode weights based on observation history.
+ * @brief Compute the mode belief from observation history (Dirichlet posterior-predictive).
  *
- * @param mode_history Observed mode history for an obstacle
- * @param weight_type Weight computation strategy
- * @param recency_decay Decay factor lambda for recency weighting
- * @param current_timestep Current timestep for recency computation
- * @return Dictionary mapping mode_id to weight (normalized to sum to 1)
+ * FREQUENCY returns the Dirichlet posterior-predictive mean
+ *   p_m = (n_m + a) / (N + M a),
+ * with symmetric pseudocount `a = dirichlet_alpha`, so EVERY mode in the library keeps
+ * strictly positive mass (no zero-mask on unobserved modes). UNIFORM is 1/M;
+ * EPSILON_GREEDY and TEMPERATURE reshape the Dirichlet-smoothed frequencies.
+ *
+ * @param mode_history Observed mode history for an obstacle (available_modes = full library).
+ * @param weight_type Weight computation strategy.
+ * @param recency_decay Decay factor lambda for recency weighting.
+ * @param current_timestep Current timestep for recency computation.
+ * @param dirichlet_alpha Symmetric Dirichlet pseudocount a (Laplace a=1 by default; use
+ *        ModeBeliefConfig::alpha(M) for KT/Perks).
+ * @return Dictionary mapping mode_id to weight (normalized to sum to 1).
  */
 std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
     WeightType weight_type = WeightType::FREQUENCY,
     double recency_decay = 0.9,
-    int current_timestep = 0
+    int current_timestep = 0,
+    double dirichlet_alpha = 1.0
 );
 
 /**
@@ -51,6 +65,28 @@ std::vector<std::string> sample_mode_sequence(
 );
 
 /**
+ * @brief Sample a MARKOVIAN mode sequence over the horizon.
+ *
+ * mode_0 is drawn from `initial_belief`; each subsequent mode_k is drawn from the
+ * transition row of the previous mode, T[mode_{k-1}, :]. Because the transition matrix
+ * is strictly positive (Dirichlet prior), the chain can reach never-observed modes.
+ *
+ * @param initial_belief Belief used to seed mode_0 (e.g. the Q* override or the estimator).
+ * @param transition M x M row-stochastic transition matrix indexed by `modes`.
+ * @param modes Mode ordering matching `transition`.
+ * @param horizon Sequence length.
+ * @param rng Random number generator.
+ * @return Sequence of mode_ids of length `horizon`.
+ */
+std::vector<std::string> sample_mode_sequence(
+    const ModeDistribution& initial_belief,
+    const Eigen::MatrixXd& transition,
+    const std::vector<std::string>& modes,
+    int horizon,
+    std::mt19937& rng
+);
+
+/**
  * @brief Sample a single mode from the weight distribution.
  *
  * @param mode_weights Weights for each mode
@@ -63,17 +99,56 @@ std::string sample_mode_from_weights(
 );
 
 /**
- * @brief Estimate mode transition probabilities from history.
+ * @brief Estimate the mode transition matrix (Dirichlet + sticky self-persistence prior).
  *
- * P[i,j] = P(mode_j | mode_i) estimated from observations.
+ *   T(i,j) = (N[i][j] + a + kappa*[i==j]) / (rowsum_i + M a + kappa),
  *
- * @param mode_history Observation history
- * @param modes List of mode_ids
- * @return Transition matrix (num_modes x num_modes)
+ * where N[i][j] counts observed i->j transitions, `a = dirichlet_alpha` is the symmetric
+ * per-row Dirichlet pseudocount, and `kappa = sticky_kappa` adds a self-transition bias so
+ * that the prior diagonal E[T_ii] = (a+kappa)/(M a + kappa). With a>0 every entry is strictly
+ * positive (no unreachable mode); a never-observed source row is the pure prior. Use
+ * ModeBeliefConfig::alpha(M)/kappa(M) to derive (a, kappa) from a self-persistence prior theta.
+ *
+ * @param mode_history Observation history.
+ * @param modes Mode ordering (defines the row/col indexing of T).
+ * @param dirichlet_alpha Symmetric Dirichlet pseudocount a.
+ * @param sticky_kappa Self-transition pseudocount kappa.
+ * @return Row-stochastic transition matrix (M x M).
  */
 Eigen::MatrixXd compute_mode_transition_matrix(
     const ModeHistory& mode_history,
+    const std::vector<std::string>& modes,
+    double dirichlet_alpha = 1.0,
+    double sticky_kappa = 0.0
+);
+
+/**
+ * @brief One-step HMM belief prediction:  p_{t+1}(j) = sum_i T(i,j) p_t(i)  ( = T^T p_t ).
+ *
+ * @param belief Current mode belief (mode_id -> prob).
+ * @param transition M x M row-stochastic transition matrix (rows/cols indexed by `modes`).
+ * @param modes Mode ordering matching `transition`.
+ * @return Predicted belief over the same modes (normalized).
+ */
+ModeDistribution predict_mode_belief(
+    const ModeDistribution& belief,
+    const Eigen::MatrixXd& transition,
     const std::vector<std::string>& modes
+);
+
+/**
+ * @brief Bayesian mode-belief update:  posterior_j proportional to (T^T prior)_j * likelihood_j.
+ *
+ * Propagates `prior` one step through `transition` (the predictive), multiplies by the per-mode
+ * `likelihood`, and normalizes. If the normalizer is <= `floor` (degenerate / all-zero
+ * likelihood), returns the predictive belief instead of dividing by zero.
+ */
+ModeDistribution update_mode_belief(
+    const ModeDistribution& prior,
+    const Eigen::MatrixXd& transition,
+    const std::vector<std::string>& modes,
+    const ModeDistribution& likelihood,
+    double floor = 1e-12
 );
 
 }  // namespace scenario_mpc

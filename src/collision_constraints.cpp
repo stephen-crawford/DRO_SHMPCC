@@ -3,6 +3,7 @@
  * @brief Implementation of linearized collision constraints.
  */
 
+#include <algorithm>
 #include "collision_constraints.hpp"
 #include <cmath>
 
@@ -364,6 +365,117 @@ int project_warmstart_to_safety(
     }
 
     return projections;
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-normal collision half-space API (normals computed from a numerical
+// reference trajectory BEFORE the solve; held constant so the QP rows stay affine).
+// ---------------------------------------------------------------------------
+
+LinearizedCollisionHalfspace make_collision_halfspace(
+    const Eigen::Vector2d& obstacle_position,
+    const Eigen::Vector2d& reference_disc_center,
+    double safety_radius,
+    const std::optional<Eigen::Vector2d>& fallback_normal,
+    double direction_epsilon
+) {
+    LinearizedCollisionHalfspace hs;
+    hs.obstacle_position = obstacle_position;
+    hs.reference_disc_center = reference_disc_center;
+    hs.safety_radius = safety_radius;
+
+    const Eigen::Vector2d delta = obstacle_position - reference_disc_center;
+    const double dist = delta.norm();
+    hs.reference_distance = dist;
+    if (dist > direction_epsilon) {
+        hs.normal = delta / dist;
+        hs.used_fallback_normal = false;
+    } else {
+        hs.normal = fallback_normal ? fallback_normal->normalized()
+                                    : Eigen::Vector2d::UnitX();
+        hs.used_fallback_normal = true;
+    }
+    // normal^T c <= normal^T x_obs - R.
+    hs.upper_bound = hs.normal.dot(obstacle_position) - safety_radius;
+    return hs;
+}
+
+double get_disc_longitudinal_offset(int disc_index, int num_discs, double vehicle_length) {
+    if (num_discs <= 1) return 0.0;
+    const double step = vehicle_length / (num_discs - 1);
+    return -vehicle_length / 2.0 + disc_index * step;
+}
+
+AffineDiscConstraint linearize_disc_halfspace(
+    const LinearizedCollisionHalfspace& halfspace,
+    double reference_px,
+    double reference_py,
+    double reference_heading,
+    double longitudinal_disc_offset
+) {
+    const double ell = longitudinal_disc_offset;
+    // c_d(x) ≈ c_bar + J_d (x - x_bar),  J_d = [[1,0,-ℓ sinθ],[0,1,ℓ cosθ]].
+    Eigen::Matrix<double, 2, 3> J;
+    J << 1.0, 0.0, -ell * std::sin(reference_heading),
+         0.0, 1.0,  ell * std::cos(reference_heading);
+    AffineDiscConstraint out;
+    out.coefficients = halfspace.normal.transpose() * J;   // n^T J_d  (row 1x3)
+    const Eigen::Vector3d xbar(reference_px, reference_py, reference_heading);
+    // normal^T c_d <= ub  =>  (n^T J) x <= ub - n^T c_bar + (n^T J) x_bar.
+    out.upper_bound = halfspace.upper_bound
+                      - halfspace.normal.dot(halfspace.reference_disc_center)
+                      + out.coefficients.dot(xbar);
+    return out;
+}
+
+CollisionConstraint halfspace_to_collision_constraint(
+    const LinearizedCollisionHalfspace& halfspace
+) {
+    // normal^T c <= upper_bound  <=>  (-normal)^T c >= -upper_bound.
+    // With CollisionConstraint::evaluate(p) = a^T p - b, this gives the signed clearance.
+    CollisionConstraint c(halfspace.horizon_step, halfspace.obstacle_id,
+                          halfspace.scenario_id, -halfspace.normal, -halfspace.upper_bound);
+    c.linearization_point = halfspace.reference_disc_center;
+    c.disc_index = halfspace.disc_index;
+    return c;
+}
+
+std::vector<LinearizedCollisionHalfspace> build_collision_halfspaces(
+    const std::vector<Scenario>& scenarios,
+    const std::vector<EgoState>& ego_linearization_traj,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin,
+    int num_discs,
+    double vehicle_length,
+    int safe_horizon
+) {
+    std::vector<LinearizedCollisionHalfspace> out;
+    const double R = ego_radius + obstacle_radius + safety_margin;
+    const int H = static_cast<int>(ego_linearization_traj.size());
+    if (H == 0) return out;
+    std::optional<Eigen::Vector2d> prev_normal;
+    for (const auto& scenario : scenarios) {
+        for (const auto& [obs_id, traj] : scenario.trajectories) {
+            const int kmax = (safe_horizon >= 0) ? std::min(safe_horizon, H - 1) : (H - 1);
+            for (int k = 0; k <= kmax; ++k) {
+                if (k >= static_cast<int>(traj.steps.size())) break;
+                const Eigen::Vector2d obs_pos = traj.steps[k].mean;
+                const EgoState& ref = ego_linearization_traj[std::min(k, H - 1)];
+                auto discs = compute_ego_disc_positions(ref, num_discs, vehicle_length);
+                for (int d = 0; d < static_cast<int>(discs.size()); ++d) {
+                    auto hs = make_collision_halfspace(obs_pos, discs[d], R, prev_normal);
+                    hs.scenario_id = scenario.scenario_id;
+                    hs.obstacle_id = obs_id;
+                    hs.horizon_step = k;
+                    hs.disc_index = d;
+                    if (!hs.used_fallback_normal) prev_normal = hs.normal;
+                    out.push_back(hs);
+                }
+            }
+        }
+    }
+    return out;
 }
 
 }  // namespace scenario_mpc

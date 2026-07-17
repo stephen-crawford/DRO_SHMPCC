@@ -20,6 +20,102 @@
 namespace scenario_mpc {
 
 /**
+ * @brief A fixed (pre-optimization) linearized collision half-space.
+ *
+ *     normal^T c <= upper_bound,   upper_bound = normal^T x_obs - safety_radius,
+ *
+ * with `normal = (x_obs - c_bar)/||x_obs - c_bar||` computed from a NUMERICAL reference
+ * disc center c_bar. The normal is held FIXED during the QP solve (it never depends on the
+ * optimizer decision variables), so each row is a genuine affine half-space.
+ */
+struct LinearizedCollisionHalfspace {
+    Eigen::Vector2d normal = Eigen::Vector2d::UnitX();
+    Eigen::Vector2d obstacle_position = Eigen::Vector2d::Zero();
+    Eigen::Vector2d reference_disc_center = Eigen::Vector2d::Zero();
+    double safety_radius = 0.0;
+    double reference_distance = 0.0;
+    double upper_bound = 0.0;
+    int scenario_id = -1;
+    int obstacle_id = -1;
+    int horizon_step = -1;
+    int disc_index = -1;
+    bool used_fallback_normal = false;
+};
+
+/**
+ * @brief Affine map of a fixed half-space through the disc-center Jacobian.
+ *
+ *     coefficients * [p_x, p_y, theta]^T <= upper_bound.
+ */
+struct AffineDiscConstraint {
+    Eigen::RowVector3d coefficients = Eigen::RowVector3d::Zero();
+    double upper_bound = 0.0;
+};
+
+/**
+ * @brief Construct one fixed collision half-space around a numerical reference disc center.
+ *
+ * `normal = (x_obs - c_bar)/||x_obs - c_bar||`;  the conservative affine constraint is
+ * `normal^T c <= normal^T x_obs - R`. If the obstacle and disc coincide (distance <=
+ * direction_epsilon), `fallback_normal` is used (or UnitX) and used_fallback_normal is set.
+ */
+LinearizedCollisionHalfspace make_collision_halfspace(
+    const Eigen::Vector2d& obstacle_position,
+    const Eigen::Vector2d& reference_disc_center,
+    double safety_radius,
+    const std::optional<Eigen::Vector2d>& fallback_normal = std::nullopt,
+    double direction_epsilon = 1e-6
+);
+
+/**
+ * @brief Longitudinal offset of disc d along the vehicle centerline.
+ * Matches the placement convention in compute_ego_disc_positions().
+ */
+double get_disc_longitudinal_offset(
+    int disc_index,
+    int num_discs,
+    double vehicle_length
+);
+
+/**
+ * @brief Linearize `normal^T c_d(x)` about a reference pose for heading-dependent discs.
+ *
+ *     c_d ≈ c_bar + J_d (x - x_bar),
+ *     J_d = [[1, 0, -ℓ sin θ̄], [0, 1, ℓ cos θ̄]].
+ */
+AffineDiscConstraint linearize_disc_halfspace(
+    const LinearizedCollisionHalfspace& halfspace,
+    double reference_px,
+    double reference_py,
+    double reference_heading,
+    double longitudinal_disc_offset
+);
+
+/**
+ * @brief Build fixed collision half-spaces for all active scenarios.
+ * Normals are computed from `ego_linearization_traj` only (numerical), never from
+ * optimizer decision variables. `safe_horizon` (inclusive) caps the constrained steps; -1 = full.
+ */
+std::vector<LinearizedCollisionHalfspace> build_collision_halfspaces(
+    const std::vector<Scenario>& scenarios,
+    const std::vector<EgoState>& ego_linearization_traj,
+    double ego_radius,
+    double obstacle_radius,
+    double safety_margin = 0.0,
+    int num_discs = 1,
+    double vehicle_length = 4.0,
+    int safe_horizon = -1
+);
+
+/**
+ * @brief Convert a fixed half-space into the legacy a^T p >= b form
+ * (a = -normal, b = -upper_bound), so evaluate(p) = a^T p - b = clearance.
+ */
+CollisionConstraint halfspace_to_collision_constraint(
+    const LinearizedCollisionHalfspace& halfspace
+);
+
+/**
  * @brief Compute linearized collision constraints for all scenarios.
  *
  * Following Section 7:
