@@ -79,3 +79,6 @@ target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
 
 add_executable(test_mode_belief tests/test_mode_belief.cpp)
 target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
+
+add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
+target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)

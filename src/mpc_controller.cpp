@@ -989,6 +989,38 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         qp_solver_.warm_start(delta_u * 0.0);  // zero since we re-linearize
     }
 
+    // Hard velocity-bound enforcement on the returned plan.
+    // The velocity update is exact (v_{k+1} = v_k + a_k dt), so clamping each
+    // acceleration to the interval that keeps v_{k+1} in [min_velocity, max_velocity]
+    // (intersected with the accel box) guarantees the bound in every downstream
+    // rollout -- including the harness, which re-applies these inputs -- regardless
+    // of whether the ADMM QP fully converged the soft velocity rows above. When the
+    // reference speed exceeds the cap the per-step QP row is momentarily infeasible
+    // (cannot brake far enough in one dt); this saturation is the hard backstop.
+    if (config_.enable_velocity_bounds) {
+        double v_cur = ego_state.v;
+        for (int k = 0; k < N; ++k) {
+            const double v_lo_a = (config_.min_velocity - v_cur) / config_.dt;
+            const double v_hi_a = (config_.max_velocity - v_cur) / config_.dt;
+            const double lo = std::max(config_.min_acceleration, v_lo_a);
+            const double hi = std::min(config_.max_acceleration, v_hi_a);
+            double a;
+            if (lo <= hi) {
+                a = std::clamp(u_ref[k].a, lo, hi);       // velocity-feasible accel window
+            } else if (v_hi_a < config_.min_acceleration) {
+                a = config_.min_acceleration;             // above v_max: brake as hard as allowed
+            } else {
+                a = config_.max_acceleration;             // below v_min: accelerate as hard as allowed
+            }
+            u_ref[k] = EgoInput(a, u_ref[k].delta);
+            v_cur += a * config_.dt;                      // exact velocity propagation
+        }
+        // Re-roll the trajectory so x_ref matches the clamped inputs.
+        x_ref = reference_path_.has_value()
+                    ? ego_dynamics_.rollout_with_spline(ego_state, u_ref, *reference_path_)
+                    : ego_dynamics_.rollout(ego_state, u_ref);
+    }
+
     // Compute progress-aware goal weight
     double effective_goal_weight = config_.goal_weight;
     bool progress_aware = (path_progress >= 0 && path_length > 0);
@@ -1377,6 +1409,36 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
             // Left boundary: -n^T * p_ego >= -(n^T * p_path + half_width)
             C_new.row(row_left) = -nT * P_all[k];
             d_new(row_left) = -(n_ref.dot(pp.position) + half_width) + n_ref.dot(x_ref[k].position());
+        }
+
+        C = C_new;
+        d = d_new;
+    }
+
+    // Step 5c: Hard velocity bounds  v_k in [min_velocity, max_velocity].
+    // Velocity is a state, not a decision variable, so it is enforced through the
+    // condensed velocity sensitivity V_all[k] (1 x n_dec, dv_k/d(delta_u)):
+    //   v_ref[k] + V_all[k] du <= v_max   =>  -V_all[k] du >= v_ref[k] - v_max
+    //   v_ref[k] + V_all[k] du >= v_min   =>   V_all[k] du >= v_min - v_ref[k]
+    // Two rows per step k=1..N. Kept in the same >= convention as the other rows.
+    if (config_.enable_velocity_bounds) {
+        const int n_cur = static_cast<int>(C.rows());
+        const int n_vel = 2 * N;
+        Eigen::MatrixXd C_new(n_cur + n_vel, n_dec);
+        Eigen::VectorXd d_new(n_cur + n_vel);
+        C_new.topRows(n_cur) = C;
+        d_new.head(n_cur) = d;
+
+        for (int k = 1; k <= N; ++k) {
+            const double v_ref_k = x_ref[k].v;
+            int row_lo = n_cur + 2 * (k - 1);      // lower bound: v_k >= v_min
+            int row_hi = n_cur + 2 * (k - 1) + 1;  // upper bound: v_k <= v_max
+
+            C_new.row(row_lo) = V_all[k];
+            d_new(row_lo) = config_.min_velocity - v_ref_k;
+
+            C_new.row(row_hi) = -V_all[k];
+            d_new(row_hi) = v_ref_k - config_.max_velocity;
         }
 
         C = C_new;

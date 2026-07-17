@@ -61,6 +61,9 @@ struct ScenarioMPCConfig {
     double max_acceleration = 3.0;    ///< Maximum acceleration [m/s^2]
     double min_acceleration = -5.0;   ///< Minimum acceleration (braking) [m/s^2]
     double max_steering_rate = 0.8;   ///< Maximum steering rate [rad/s]
+    double max_velocity = 4.0;        ///< Hard upper bound on speed [m/s] (~2.7x the 1.5 m/s cruise)
+    double min_velocity = 0.0;        ///< Hard lower bound on speed [m/s] (no reverse)
+    bool enable_velocity_bounds = true;  ///< Enforce v in [min_velocity, max_velocity] as QP rows
 
     // Obstacle parameters
     double obstacle_radius = 0.5;     ///< Default obstacle collision radius [m]
