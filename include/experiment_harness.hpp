@@ -309,7 +309,8 @@ struct ExperimentConfig {
     /// Confidence-calibrated ambiguity radius (theory chain link 1). Off by
     /// default so CDC'26 stays reproducible; on for anything claiming a
     /// belief-coverage guarantee.
-    bool use_calibrated_radius = false;
+    bool use_calibrated_radius = true;   /// DEFAULT ON: proper calibrated radius
+    bool use_primal_ot = true;   ///< DEFAULT ON: true Wasserstein-metric (primal OT) reweighting
     double confidence_beta = 0.05;
     /// Entropic allocator (the pivot's core claim): guarantees min_m q_m > 0 so
     /// the sampling certificate L <= 1/q_min is finite. Off by default.
@@ -321,7 +322,7 @@ struct ExperimentConfig {
     double road_width = 7.0;   ///< Symmetric road width [m] about the reference path
     bool use_entropic_allocator = false;
     double entropic_tau = 0.05;
-    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;
+    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
     /// Sample mode SEQUENCES from the estimated Markov transition matrix
     /// instead of one i.i.d. mode held for the horizon. Off by default so

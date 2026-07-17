@@ -337,13 +337,16 @@ DROResult WassersteinDRO::compute_worst_case_weights(
         // Fall through to the LP recovery if the entropic solve failed.
     }
     //
-    // Default path: dual-guided bracketing + plan mixing (a heuristic primal
-    // recovery restricted to convex mixtures of two deterministic transport
-    // plans). Opt-in path (env USE_PRIMAL_OT=1): the TRUE Wasserstein-metric
-    // reweighting -- solve the primal OT LP exactly, allowing fractional
-    // source-splits. See src/primal_ot.cpp.
-    const char* use_primal_ot = std::getenv("USE_PRIMAL_OT");
-    if (use_primal_ot && use_primal_ot[0] == '1') {
+    // TRUE Wasserstein-metric reweighting: solve the primal OT LP exactly, allowing
+    // fractional source-splits (src/primal_ot.cpp). This is the DEFAULT (config_.use_primal_ot);
+    // the env var USE_PRIMAL_OT can force it (=1) or disable it (=0) for the heuristic baseline.
+    // The remaining fallback is the dual-guided bracketing + plan-mixing heuristic (a primal
+    // recovery restricted to convex mixtures of two deterministic transport plans).
+    bool want_primal_ot = config_.use_primal_ot;
+    if (const char* env_ot = std::getenv("USE_PRIMAL_OT")) {
+        want_primal_ot = (env_ot[0] == '1');
+    }
+    if (want_primal_ot) {
         PrimalOTResult ot = solve_primal_ot(
             nominal_weights, result.risk_per_mode,
             result.transport_cost_matrix, mode_ids, rho);
@@ -351,6 +354,18 @@ DROResult WassersteinDRO::compute_worst_case_weights(
             result.worst_case_weights = std::move(ot.q);
             result.implied_transport_cost = ot.transport_cost;
             result.recovery_feasible = (ot.transport_cost <= rho + 1e-6);
+            // Certificate diagnostics on the primal-OT q*.
+            double floor_val = std::numeric_limits<double>::infinity();
+            int support = 0;
+            for (const auto& [_, w] : result.worst_case_weights) {
+                floor_val = std::min(floor_val, w);
+                if (w > 0.0) ++support;
+            }
+            result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
+            result.qstar_support_size = support;
+            result.satisfies_full_support =
+                (support == static_cast<int>(result.worst_case_weights.size()))
+                && (result.qstar_support_floor > 0.0);
             return result;
         }
         // Fall through to the heuristic recovery if the LP failed.

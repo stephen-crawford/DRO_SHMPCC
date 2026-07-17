@@ -346,6 +346,7 @@ RolloutRecord run_experiment_rollout(
         mpc_cfg.dro_ground_cost = dro_cfg.ground_cost_type;
         mpc_cfg.dro_risk_mode = dro_cfg.risk_mode;
         mpc_cfg.dro_use_calibrated_radius = config.use_calibrated_radius;
+        mpc_cfg.dro_use_primal_ot = config.use_primal_ot;
         mpc_cfg.dro_confidence_beta = config.confidence_beta;
         mpc_cfg.dro_use_entropic_allocator = config.use_entropic_allocator;
         mpc_cfg.dro_entropic_tau = config.entropic_tau;

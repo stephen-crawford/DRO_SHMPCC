@@ -44,10 +44,13 @@ struct DROConfig {
     bool adaptive_rho = true;        ///< Enable adaptive rho scaling
     double confidence_alpha = 1.0;   ///< Scaling for 1/sqrt(n_obs) term
     double entropy_gamma = 0.5;      ///< Scaling for entropy term
-    bool use_calibrated_radius = false;  ///< Use confidence-calibrated simplex-concentration rho_n(beta)
+    bool use_calibrated_radius = true;   ///< DEFAULT ON: confidence-calibrated simplex-concentration rho_n(beta)
     double confidence_beta = 0.05;   ///< Target miscoverage (1-beta coverage) for the calibrated radius
     double alpha_one_sided = 0.95;   ///< Risk level alpha (VaR/CVaR tail level, and z_alpha for the surrogate)
-    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports (see DRORiskMeasure)
+    /// Use the TRUE Wasserstein-metric primal OT reweighting (exact W1 LP) instead of the
+    /// dual-guided heuristic recovery. DEFAULT ON (the reviewer-requested true metric).
+    bool use_primal_ot = true;
+    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;  ///< DEFAULT: Bonferroni joint-horizon VaR (see DRORiskMeasure)
     /// Monte Carlo sample count for JOINT_VAR / JOINT_CVAR.
     /// Measured on the canonical 6-mode scenario (error vs 2M-sample ground truth,
     /// and cost of one compute_risk_vector call over 6 modes x 15 steps):

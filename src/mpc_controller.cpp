@@ -32,6 +32,7 @@ AdaptiveScenarioMPC::AdaptiveScenarioMPC(const ScenarioMPCConfig& config)
         dro_cfg.rho_max = config_.dro_rho_max;
         dro_cfg.adaptive_rho = config_.dro_adaptive_rho;
         dro_cfg.use_calibrated_radius = config_.dro_use_calibrated_radius;
+        dro_cfg.use_primal_ot = config_.dro_use_primal_ot;
         dro_cfg.confidence_beta = config_.dro_confidence_beta;
         dro_cfg.use_entropic_allocator = config_.dro_use_entropic_allocator;
         dro_cfg.entropic_tau = config_.dro_entropic_tau;

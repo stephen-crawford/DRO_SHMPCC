@@ -108,8 +108,11 @@ struct ScenarioMPCConfig {
     /// n=10^4, vs 0.127 and shrinking for the calibrated radius). The calibrated
     /// form certifies p* in B_eps(p_hat) w.p. >= 1-beta and is link 1 of the
     /// theory chain -- it MUST be reachable from an experiment.
-    bool dro_use_calibrated_radius = false;
+    bool dro_use_calibrated_radius = true;   ///< DEFAULT ON: proper confidence-calibrated radius (theory chain link 1)
     double dro_confidence_beta = 0.05;  ///< Target miscoverage beta for the calibrated radius
+    /// Use the TRUE Wasserstein-metric primal OT reweighting (exact W1 LP, fractional
+    /// source splits) instead of the dual-guided heuristic recovery. DEFAULT ON.
+    bool dro_use_primal_ot = true;
     /// Entropic allocator: makes min_m q_m > 0, hence the sampling certificate
     /// L <= 1/q_min FINITE. The raw W1-LP gives L = inf whenever the transport
     /// budget is slack (Theorem 2(i)), and ~86% of the time when it binds.
@@ -118,7 +121,7 @@ struct ScenarioMPCConfig {
     double dro_entropic_tau = 0.05;   ///< Temperature; tau -> 0 recovers the raw LP
     DROGroundCostType dro_ground_cost = DROGroundCostType::W2_BURES;  ///< Ground cost for the transport matrix D
     DRORiskMode dro_risk_mode = DRORiskMode::FULL;                    ///< Covariance handling in the risk score
-    DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR;  ///< Which risk functional r[m] reports
+    DRORiskMeasure dro_risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;  ///< DEFAULT: Bonferroni joint-horizon VaR bound (r[m])
     double dro_alpha_one_sided = 0.95;      ///< Risk level alpha
     int dro_joint_risk_samples = 8000;      ///< MC samples when dro_risk_measure is JOINT_*
     double adversarial_sigma_scale = 1.5;    ///< Scale for adversarial injection (sigma multiplier)
