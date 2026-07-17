@@ -79,14 +79,22 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
             const PredictionStep& obs_step = trajectory.steps[k];
             Eigen::Vector2d obs_position = obs_step.mean;
 
-            // For each disc, compute constraint
-            for (const auto& disc_pos : disc_positions) {
+            // For each disc, compute constraint. The normal a is frozen from the
+            // reference disc center (pre-solve); thread the disc index + longitudinal
+            // offset ℓ_d so build_condensed_qp can apply the heading Jacobian
+            // J_d = [[1,0,-ℓ sinθ̄],[0,1,ℓ cosθ̄]] and keep the row a proper affine
+            // half-space in the decision variables (x, y, θ). Without this the QP would
+            // translate the disc rigidly with the center and drop the O(ℓ·δθ) rotation.
+            for (int d = 0; d < static_cast<int>(disc_positions.size()); ++d) {
                 auto constraint = compute_single_constraint(
                     k, obs_id, scenario.scenario_id,
-                    disc_pos, obs_position, combined_radius
+                    disc_positions[d], obs_position, combined_radius
                 );
                 if (constraint.has_value()) {
-                    constraints.push_back(constraint.value());
+                    CollisionConstraint c = constraint.value();
+                    c.disc_index = d;
+                    c.disc_offset = get_disc_longitudinal_offset(d, num_discs, vehicle_length);
+                    constraints.push_back(c);
                 }
             }
         }
