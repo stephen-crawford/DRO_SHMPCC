@@ -85,3 +85,6 @@ target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)
 
 add_executable(support_aware_probe tests/support_aware_probe.cpp)
 target_link_libraries(support_aware_probe PRIVATE scenario_mpc)
+
+add_executable(support_aware_ab tests/support_aware_ab.cpp)
+target_link_libraries(support_aware_ab PRIVATE scenario_mpc)
