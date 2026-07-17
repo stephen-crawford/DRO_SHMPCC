@@ -83,7 +83,8 @@ std::vector<std::string> sample_mode_sequence(
     const Eigen::MatrixXd& transition,
     const std::vector<std::string>& modes,
     int horizon,
-    std::mt19937& rng
+    std::mt19937& rng,
+    bool predict_before_first_sample = false
 );
 
 /**

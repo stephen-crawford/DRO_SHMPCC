@@ -242,19 +242,26 @@ std::vector<std::string> sample_mode_sequence(
     const Eigen::MatrixXd& transition,
     const std::vector<std::string>& modes,
     int horizon,
-    std::mt19937& rng
+    std::mt19937& rng,
+    bool predict_before_first_sample
 ) {
     const int M = static_cast<int>(modes.size());
     std::vector<std::string> seq;
     if (M == 0 || horizon <= 0) return seq;
     seq.reserve(horizon);
 
-    // mode_0 ~ initial_belief (uniform fallback if empty/degenerate).
+    // If the first sampled mode governs the interval [t, t+1], draw it from the one-step
+    // predictive p_{t+1|t} = T^T p_t; otherwise seed directly from the current belief.
+    const ModeDistribution seed =
+        predict_before_first_sample ? predict_mode_belief(initial_belief, transition, modes)
+                                    : initial_belief;
+
+    // mode_0 ~ seed (uniform fallback if empty/degenerate).
     std::vector<double> w0(M);
     double s0 = 0.0;
     for (int i = 0; i < M; ++i) {
-        auto it = initial_belief.find(modes[i]);
-        w0[i] = (it != initial_belief.end() && it->second > 0.0) ? it->second : 0.0;
+        auto it = seed.find(modes[i]);
+        w0[i] = (it != seed.end() && it->second > 0.0) ? it->second : 0.0;
         s0 += w0[i];
     }
     if (!(s0 > 0.0)) std::fill(w0.begin(), w0.end(), 1.0);
@@ -300,18 +307,30 @@ ModeDistribution update_mode_belief(
     double floor
 ) {
     ModeDistribution predictive = predict_mode_belief(prior, transition, modes);
+    // Divide likelihoods by their maximum before multiplying: Gaussian innovation
+    // densities can be tiny and underflow. This leaves the Bayesian posterior unchanged
+    // but conditions the arithmetic (the shared 1/max cancels in the normalization).
+    double max_like = 0.0;
+    for (const auto& m : modes) {
+        auto it = likelihood.find(m);
+        if (it != likelihood.end() && std::isfinite(it->second) && it->second > 0.0)
+            max_like = std::max(max_like, it->second);
+    }
+    if (max_like <= floor) {
+        return predictive;   // no informative likelihood: fall back to the predictive belief
+    }
     ModeDistribution post;
     double Z = 0.0;
     for (const auto& m : modes) {
         auto it = likelihood.find(m);
-        const double like = (it != likelihood.end()) ? it->second : 0.0;
-        const double val = predictive[m] * like;
+        double like = (it != likelihood.end() && std::isfinite(it->second) && it->second > 0.0)
+                          ? it->second : 0.0;
+        // Floor the scaled likelihood so a single observation cannot hard-zero a known mode.
+        const double val = predictive[m] * std::max(like / max_like, floor);
         post[m] = val;
         Z += val;
     }
-    if (Z <= floor) {
-        return predictive;   // degenerate likelihood: fall back to the predictive belief
-    }
+    if (Z <= 0.0) return predictive;
     for (auto& [m, w] : post) w /= Z;
     return post;
 }
