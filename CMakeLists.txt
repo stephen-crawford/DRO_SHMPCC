@@ -82,3 +82,9 @@ target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
 
 add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
 target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)
+
+add_executable(paper_recompute tests/paper_recompute.cpp)
+target_link_libraries(paper_recompute PRIVATE scenario_mpc)
+
+add_executable(paper_recompute_coverage tests/paper_recompute_coverage.cpp)
+target_link_libraries(paper_recompute_coverage PRIVATE scenario_mpc)
