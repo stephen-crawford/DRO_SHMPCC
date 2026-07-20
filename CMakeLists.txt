@@ -88,3 +88,6 @@ target_link_libraries(support_aware_probe PRIVATE scenario_mpc)
 
 add_executable(support_aware_ab tests/support_aware_ab.cpp)
 target_link_libraries(support_aware_ab PRIVATE scenario_mpc)
+
+add_executable(road_on_conservatism tests/road_on_conservatism.cpp)
+target_link_libraries(road_on_conservatism PRIVATE scenario_mpc)

@@ -57,6 +57,8 @@ int main() {
                 cfg.num_scenarios = S;
                 cfg.rollout_steps = 60;
                 cfg.support_aware_alpha = alpha;
+                // Match the ACC paper's corrected benchmark: ego constrained to the road.
+                cfg.enable_contouring_constraints = true;
                 // Keep every other knob at the justified main defaults.
                 RolloutRecord r = run_experiment_rollout(cfg, 1000u + s);
                 a.add(r);

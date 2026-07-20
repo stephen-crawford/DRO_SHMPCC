@@ -52,3 +52,24 @@ story, not a collision-rate win — do not claim the latter.
 Caveat: at p ≈ 0.16, N = 200 the collision CI half-width is ≈5%, so a sub-2% effect
 could be masked; but since coverage was driven fully to 0 with no visible collision
 movement, a coverage-driven collision reduction of any size is not in evidence.
+
+## Road-constrained replication (`enable_contouring_constraints=true`)
+
+Re-run of the same A/B on the paper's road-constrained benchmark (ego confined to
+the road), so the numbers sit on the same footing as `tab:road_on`:
+
+| S | α | coll% [95% CI] | missed% | rareMiss% | contour | velErr |
+|---|---|---|---|---|---|---|
+| 5 | 0 (base) | 23.0 [17.2,28.8] | 25.1 | 14.2 | 1.67 | 2.37 |
+| 5 | 0.2 | 23.5 [17.6,29.4] | **0.0** | **0.0** | 1.65 | 2.37 |
+| 5 | 0.5 | 22.5 [16.7,28.3] | **0.0** | **0.0** | 1.67 | 2.37 |
+| 20 | 0 (base) | 18.5 [13.1,23.9] | 24.9 | 14.3 | 1.69 | 2.37 |
+| 20 | 0.2 | 20.5 [14.9,26.1] | **0.0** | **0.0** | 1.70 | 2.37 |
+| 20 | 0.5 | 20.0 [14.5,25.5] | **0.0** | **0.0** | 1.68 | 2.37 |
+
+Identical qualitative result with road constraints on: coverage → exactly 0,
+collision statistically unchanged (overlapping CIs), conservatism flat. This is the
+interventional evidence cited in the ACC draft's §VI-B (`sec:res_mechanism`). Note the
+α=0 collision here (~19–23%) is higher than the paper's 0.140 headline because this is
+a single-obstacle S-curve config, not the ONCOMING benchmark of `tab:road_on`; the
+claim rests on the *intervention* (Δcoverage large, Δcollision zero), not the level.
