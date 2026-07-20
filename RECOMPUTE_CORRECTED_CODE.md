@@ -54,3 +54,39 @@ mechanism) — and with no safety benefit there is no positive effect left to at
 Diagnosis of WHICH correction removed the benefit (leading suspect: the fixed-normal /
 J_d collision-constraint fix, which changes the base and WDRO evasion geometry) is the
 open question that decides whether the empirical paper is salvageable or dead.
+
+## Diagnosis — why the benefit vanished (2026-07)
+
+Reproducible: `tests/diagnose_wdro_benefit.cpp`, `tests/shift_test.cpp`.
+
+**It is NOT the DRO tuning.** Offset-0 bisection (base 0.540), each toggled back to old:
+| WDRO config | coll | benefit |
+|---|---|---|
+| NEW default | 0.570 | −3.0 pp |
+| calib radius OFF (old heuristic ρ) | 0.570 | −3.0 pp |
+| SURROGATE_VAR (old risk) | 0.530 | +1.0 pp |
+| primal-OT OFF (old recovery) | 0.545 | −0.5 pp |
+| ALL OLD DRO | 0.570 | −3.0 pp |
+
+Even the exact pre-correction DRO config gives no benefit. `num_discs=1` rules out the
+J_d collision fix. So the 47.6 pp headline was not produced by anything in the DRO layer.
+
+**It does not reappear under distribution shift** (offset 0, N=200):
+| shift | base | WDRO | benefit |
+|---|---|---|---|
+| none | 0.555 | 0.565 | −1.0 pp |
+| dangerous-boost 0.2 | 0.555 | 0.535 | +2.0 pp |
+| dangerous-boost 0.4 | 0.360 | 0.350 | +1.0 pp |
+| random 0.3 | 0.665 | 0.655 | +1.0 pp |
+| random 0.3 + boost 0.3 | 0.695 | 0.685 | +1.0 pp |
+
+All within noise. CAVEAT: `boosted_mode=-1` forces `lane_change_left`, which for the
+oncoming geometry steers the obstacle *away* (base drops at boost 0.4), so this did NOT
+cleanly test "a high-risk mode under-represented in the belief" — a targeted boost of the
+actual collision-causing mode is the one regime not yet ruled out.
+
+**Conclusion.** Under corrected code the WDRO layer is safety-neutral in the paper's
+headline scenario and every shift regime tested. The 0.656→0.140 benefit was a
+pre-correction artifact (leading suspect: the zero-mask belief bug, which WDRO's
+risk-reweighting compensated for). The certificate/coverage theory (support-aware floor,
+entropic allocator, calibrated radius) is independent of this and unaffected.

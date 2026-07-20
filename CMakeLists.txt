@@ -88,3 +88,9 @@ target_link_libraries(paper_recompute PRIVATE scenario_mpc)
 
 add_executable(paper_recompute_coverage tests/paper_recompute_coverage.cpp)
 target_link_libraries(paper_recompute_coverage PRIVATE scenario_mpc)
+
+add_executable(diagnose_wdro_benefit tests/diagnose_wdro_benefit.cpp)
+target_link_libraries(diagnose_wdro_benefit PRIVATE scenario_mpc)
+
+add_executable(shift_test tests/shift_test.cpp)
+target_link_libraries(shift_test PRIVATE scenario_mpc)
