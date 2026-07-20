@@ -106,3 +106,6 @@ target_link_libraries(injection_test PRIVATE scenario_mpc)
 
 add_executable(pipeline_verify tests/pipeline_verify.cpp)
 target_link_libraries(pipeline_verify PRIVATE scenario_mpc)
+
+add_executable(risk_and_rho_verify tests/risk_and_rho_verify.cpp)
+target_link_libraries(risk_and_rho_verify PRIVATE scenario_mpc)
