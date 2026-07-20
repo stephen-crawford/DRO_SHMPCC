@@ -100,3 +100,6 @@ target_link_libraries(wdro_mechanism_probe PRIVATE scenario_mpc)
 
 add_executable(fixed_rho_test tests/fixed_rho_test.cpp)
 target_link_libraries(fixed_rho_test PRIVATE scenario_mpc)
+
+add_executable(injection_test tests/injection_test.cpp)
+target_link_libraries(injection_test PRIVATE scenario_mpc)
