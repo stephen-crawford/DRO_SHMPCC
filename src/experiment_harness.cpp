@@ -352,6 +352,15 @@ RolloutRecord run_experiment_rollout(
         mpc_cfg.dro_entropic_tau = config.entropic_tau;
         mpc_cfg.dro_risk_measure = config.risk_measure;
         mpc_cfg.dro_joint_risk_samples = config.joint_risk_samples;
+        if (config.fixed_rho > 0.0) {
+            // Force a constant ambiguity radius: disable both the calibrated and the
+            // legacy-adaptive shrinkage so rho does not collapse with observation count.
+            mpc_cfg.dro_use_calibrated_radius = false;
+            mpc_cfg.dro_adaptive_rho = false;
+            mpc_cfg.dro_rho_base = config.fixed_rho;
+            mpc_cfg.dro_rho_min = std::min(mpc_cfg.dro_rho_min, config.fixed_rho);
+            mpc_cfg.dro_rho_max = std::max(mpc_cfg.dro_rho_max, config.fixed_rho);
+        }
     }
 
     AdaptiveScenarioMPC controller(mpc_cfg);

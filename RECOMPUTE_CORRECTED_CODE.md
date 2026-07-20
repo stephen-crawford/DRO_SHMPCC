@@ -90,3 +90,39 @@ headline scenario and every shift regime tested. The 0.656→0.140 benefit was a
 pre-correction artifact (leading suspect: the zero-mask belief bug, which WDRO's
 risk-reweighting compensated for). The certificate/coverage theory (support-aware floor,
 entropic allocator, calibrated radius) is independent of this and unaffected.
+
+## Mechanism analysis — WDRO hedges correctly but the hedge is counterproductive (2026-07)
+
+Reproducible: `tests/wdro_mechanism_probe.cpp`, `tests/fixed_rho_test.cpp` (adds
+`ExperimentConfig::fixed_rho` to force a constant radius).
+
+**The mechanism IS active and hedges toward the most dangerous mode.** On a head-on
+scenario q* up-weights argmax(r): at rho>=0.3 it goes bang-bang, q*=1.0 on the highest-
+risk mode (decelerating, r=0.965). Hedge check +0.83 vs nominal. Not broken.
+
+**The calibrated radius defangs it in-loop.** rho shrinks with observation count
+(0.39 -> 0.037 as n_obs 1 -> 200; q*[danger] 1.0 -> 0.33), and the controller sets
+observation_count = mode-history size, so a 200-step rollout runs mostly at rho~0.04.
+
+**Forcing a constant LARGE radius makes WDRO WORSE, not better** (offset 0, road ON, N=200):
+| WDRO rho | offset 0 coll | benefit | offset 1 coll | benefit |
+|---|---|---|---|---|
+| base | 0.565 | -- | 0.260 | -- |
+| calibrated (~0.04 in-loop) | 0.550 | +1.5pp | 0.245 | +1.5pp |
+| fixed 0.30 | 0.610 | -4.5pp | 0.280 | -2.0pp |
+| fixed 0.50 | 0.650 | -8.5pp | 0.260 | 0.0pp |
+
+No fixed radius recovers a benefit; a stronger hedge is monotonically harmful at offset 0.
+
+**Mechanistic conclusion.** WDRO's worst-case reweighting concentrates the S scenarios on
+the single highest-risk mode. For a SWITCHING obstacle this destroys the scenario DIVERSITY
+needed to cover the other modes the obstacle actually switches into, so a stronger hedge
+raises collisions. Worst-case mode concentration is strategically mismatched to scenario-
+based collision avoidance under switching dynamics: the useful objective is coverage/
+diversity, not worst-case concentration -- and coverage itself is not the collision
+bottleneck here (fig:coverage). This is the honest, theory-consistent explanation of the
+neutral-to-negative WDRO effect, and it is the opposite of the original headline claim.
+
+(NOTE: `RolloutRecord::active_constraints` reads 0 because the controller never populates
+`MPCResult::active_scenarios` -- a reporting stub, not evidence about binding. The plan-
+change is instead proven by the collision shift itself: fixed rho=0.5 collides +8.5pp.)

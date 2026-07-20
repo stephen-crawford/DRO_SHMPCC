@@ -97,3 +97,6 @@ target_link_libraries(shift_test PRIVATE scenario_mpc)
 
 add_executable(wdro_mechanism_probe tests/wdro_mechanism_probe.cpp)
 target_link_libraries(wdro_mechanism_probe PRIVATE scenario_mpc)
+
+add_executable(fixed_rho_test tests/fixed_rho_test.cpp)
+target_link_libraries(fixed_rho_test PRIVATE scenario_mpc)

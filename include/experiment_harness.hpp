@@ -324,6 +324,7 @@ struct ExperimentConfig {
     double entropic_tau = 0.05;
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
     int joint_risk_samples = 8000;  ///< MC samples when risk_measure is JOINT_*
+    double fixed_rho = -1.0;   ///< If > 0, force a constant Wasserstein radius (disables calibrated/adaptive shrinkage)
     /// Sample mode SEQUENCES from the estimated Markov transition matrix
     /// instead of one i.i.d. mode held for the horizon. Off by default so
     /// CDC'26 numbers stay reproducible.
