@@ -109,3 +109,6 @@ target_link_libraries(pipeline_verify PRIVATE scenario_mpc)
 
 add_executable(risk_and_rho_verify tests/risk_and_rho_verify.cpp)
 target_link_libraries(risk_and_rho_verify PRIVATE scenario_mpc)
+
+add_executable(ablation_confound_check tests/ablation_confound_check.cpp)
+target_link_libraries(ablation_confound_check PRIVATE scenario_mpc)

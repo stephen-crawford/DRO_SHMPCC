@@ -301,7 +301,7 @@ struct ExperimentConfig {
     InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;
 
     // Legacy ablation variant (used by configure_ablation helper)
-    AblationVariant ablation = AblationVariant::DRO_FULL;
+    AblationVariant ablation = AblationVariant::NO_INJECTION;  // FIX: was DRO_FULL -> silently enabled DRO on "base" arms
     DROGroundCostType ground_cost = DROGroundCostType::W2_BURES;
     /// Risk functional r[m] reports. SURROGATE_VAR is the CDC'26 default.
     /// JOINT_* costs ~28 ms/call vs ~0 for the surrogates -- do not use it in the
