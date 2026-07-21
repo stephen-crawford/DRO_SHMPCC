@@ -98,7 +98,7 @@ struct ScenarioMPCConfig {
     InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;  ///< Injection strategy when enable_dro=true
     double dro_rho_base = 0.1;               ///< Base Wasserstein ball radius rho
     double dro_rho_min = 0.01;              ///< Minimum rho (clamped)
-    double dro_rho_max = 0.5;              ///< Maximum rho (clamped)
+    double dro_rho_max = 0.10;  // FIX: cap below mode-transport collapse cost so q* stays graded              ///< Maximum rho (clamped)
     bool dro_adaptive_rho = true;           ///< Enable adaptive rho scaling
     // --- fields below are forwarded verbatim into the controller's DROConfig ---
     // They exist because ScenarioMPCConfig is the ONLY channel from the experiment

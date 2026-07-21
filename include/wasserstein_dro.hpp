@@ -40,7 +40,7 @@ namespace scenario_mpc {
 struct DROConfig {
     double rho_base = 0.1;           ///< Base Wasserstein ball radius rho
     double rho_min = 0.01;           ///< Minimum rho (clamped)
-    double rho_max = 0.5;            ///< Maximum rho (clamped)
+    double rho_max = 0.10;  // FIX: cap below mode-transport collapse cost (was 0.5 -> q* bang-bang)            ///< Maximum rho (clamped)
     bool adaptive_rho = true;        ///< Enable adaptive rho scaling
     double confidence_alpha = 1.0;   ///< Scaling for 1/sqrt(n_obs) term
     double entropy_gamma = 0.5;      ///< Scaling for entropy term
