@@ -148,3 +148,30 @@ conservatism (contour 1.47 / vel 2.37 / effort ~158) flat across arms.
 **Conclusion:** the ρ-cap fixes the reweighting mechanism (q* graded), but WDRO is
 safety-neutral across the ENTIRE offset regime and every belief/allocator arm. Consistent
 with coverage-null: scenario mode-composition is not the collision driver in this benchmark.
+
+## CORRECTION (2026-07): the base arm was silently running WDRO
+
+A harness bug invalidated every prior base-vs-WDRO comparison above. `ExperimentConfig::
+ablation` defaulted to `DRO_FULL`, and the legacy guard (`!enable_dro && ablation !=
+NO_INJECTION`) fired on every "base" arm, silently enabling DRO (injection_mode=NONE falls
+through to the QSTAR_SAMPLE branch). So "base" == WDRO in all the tables above, which is why
+WDRO looked neutral. Fixed: default ablation -> NO_INJECTION.
+
+With a TRUE base, WDRO works and matches the paper's offset-sweep story:
+
+| offset | base (true) | WDRO | benefit |
+|---|---|---|---|
+| 0.0 | 0.800 | 0.596 | **+20.4 pp** |
+| 0.5 | 0.704 | 0.372 | **+33.2 pp** |
+| 1.0 | 0.464 | 0.256 | **+20.8 pp** |
+| 1.5 | 0.288 | 0.156 | **+13.2 pp** |
+| 2.0 | 0.096 | 0.100 | −0.4 pp |
+| 3.0 | 0.004 | 0.004 | 0.0 pp |
+
+Large benefit in the lane-intrusion regime (offset <=1.5), vanishing once the obstacle
+cannot enter the ego lane -- exactly the original characterization. WDRO also holds more
+clearance (e.g. 0.77 vs 0.51 at offset 0). 5-arm base(true) = 0.824 [.777,.871].
+
+ALL earlier "WDRO neutral / not working / mechanism defective" conclusions in this file and
+the diagnosis commits are ARTIFACTS of the confounded base and are retracted. The pipeline,
+the risk model, and the reweighting were working; the experiment's baseline was wrong.
