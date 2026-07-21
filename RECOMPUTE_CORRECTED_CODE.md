@@ -126,3 +126,25 @@ neutral-to-negative WDRO effect, and it is the opposite of the original headline
 (NOTE: `RolloutRecord::active_constraints` reads 0 because the controller never populates
 `MPCResult::active_scenarios` -- a reporting stub, not evidence about binding. The plan-
 change is instead proven by the collision shift itself: fixed rho=0.5 collides +8.5pp.)
+
+## Full sweep under the ρ-cap fix (rho_max=0.10, graded q*)
+
+After capping rho_max at 0.10 so q* is graded (not bang-bang), the full offset sweep and
+5-arm table were re-run (road ON, S=40, N=250/arm):
+
+| offset | base | WDRO | benefit |
+|---|---|---|---|
+| 0.0 | 0.560 | 0.556 | +0.4 |
+| 0.5 | 0.356 | 0.360 | −0.4 |
+| 1.0 | 0.276 | 0.260 | +1.6 |
+| 1.5 | 0.152 | 0.144 | +0.8 |
+| 2.0 | 0.092 | 0.092 | 0.0 |
+| 3.0 | 0.012 | 0.012 | 0.0 |
+
+5-arm at offset 0: base 0.544 [.482,.606], ε-greedy 0.580, uniform 0.616,
+WDRO raw-LP 0.576 [.515,.637], WDRO entropic 0.548 [.486,.610] — all CIs overlap;
+conservatism (contour 1.47 / vel 2.37 / effort ~158) flat across arms.
+
+**Conclusion:** the ρ-cap fixes the reweighting mechanism (q* graded), but WDRO is
+safety-neutral across the ENTIRE offset regime and every belief/allocator arm. Consistent
+with coverage-null: scenario mode-composition is not the collision driver in this benchmark.
