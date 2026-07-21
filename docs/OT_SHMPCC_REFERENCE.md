@@ -1187,7 +1187,7 @@ The integration hub -- `AdaptiveScenarioMPC` orchestrates all modules.
 
 ```mermaid
 classDiagram
-    class AdaptiveScenarioMPC {
+    class DROMPC {
         -ScenarioMPCConfig config_
         -EgoDynamics ego_dynamics_
         -ADMMSolver qp_solver_

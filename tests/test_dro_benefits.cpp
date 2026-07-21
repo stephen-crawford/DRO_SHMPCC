@@ -30,7 +30,7 @@
 #include "mpc_controller.hpp"
 #include "wasserstein_dro.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -128,42 +128,41 @@ static std::string method_name(Method m) {
 static ExperimentConfig make_config(Method method, double switch_prob, double rare_prob,
                                      int num_scenarios = NUM_SCENARIOS, int num_obs = 1) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = num_scenarios;
-    cfg.switch_prob = switch_prob;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = rare_prob;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.safe_horizon_enabled = true;
-    cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = 0.95;
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = false;
-    cfg.injection_mode = InjectionMode::NONE;
-    cfg.eps_wass = 0.1;
-    cfg.ablation = AblationVariant::NO_INJECTION;
-    cfg.num_obstacles = num_obs;
-    cfg.obstacles_per_class = 1;
-    cfg.method_name = method_name(method);
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = num_scenarios;
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.mpc.safe_horizon_enabled = true;
+    cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = 0.95;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = false;
+    cfg.dro.injection_mode = InjectionMode::NONE;
+    cfg.dro.solver.base_radius = 0.1;
+    cfg.obstacles.num_obstacles = num_obs;
+    cfg.obstacles.obstacles_per_class = 1;
+    cfg.rollout.method_name = method_name(method);
 
     switch (method) {
         case Method::BASE:
             break;
         case Method::WDRO_SAMPLING:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
         case Method::WDRO_INJECTION:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
             break;
         case Method::WDRO_COMBINED:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
             break;
     }
     return cfg;
@@ -223,8 +222,8 @@ static void run_exp_a() {
                     EnvironmentSetup env_setup = create_environment(env, env_rng);
 
                     ExperimentConfig cfg = make_config(method, sp, RARE_PROB);
-                    cfg.initial_obstacle_states = {env_setup.initial_obs};
-                    cfg.obs_modes = env_setup.obs_modes;
+                    cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                    cfg.obstacles.obs_modes = env_setup.obs_modes;
 
                     RolloutRecord rec = run_experiment_rollout(cfg, seed);
                     met.add(rec);
@@ -373,8 +372,8 @@ static void run_exp_c() {
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
             ExperimentConfig cfg = make_config(method, SWITCH_PROB, RARE_PROB);
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -472,36 +471,34 @@ static void run_exp_d() {
                 EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
                 ExperimentConfig cfg;
-                cfg.horizon = HORIZON;
-                cfg.num_scenarios = NUM_SCENARIOS;
-                cfg.switch_prob = SWITCH_PROB;
-                cfg.rollout_steps = ROLLOUT_STEPS;
-                cfg.obs_modes = env_setup.obs_modes;
-                cfg.rare_mode = RARE_MODE;
-                cfg.rare_switch_prob = RARE_PROB;
-                cfg.num_discs = NUM_DISCS;
-                cfg.vehicle_length = VEHICLE_LENGTH;
-                cfg.safe_horizon_enabled = true;
-                cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-                cfg.path_completion_termination = true;
-                cfg.path_completion_fraction = 0.95;
-                cfg.weight_type = WeightType::FREQUENCY;
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.num_obstacles = 1;
-                cfg.obstacles_per_class = 1;
-                cfg.method_name = met.method;
+                cfg.mpc.horizon = HORIZON;
+                cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+                cfg.obstacles.switch_prob = SWITCH_PROB;
+                cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
+                cfg.obstacles.rare_mode = RARE_MODE;
+                cfg.obstacles.rare_switch_prob = RARE_PROB;
+                cfg.mpc.ego.num_discs = NUM_DISCS;
+                cfg.mpc.ego.length = VEHICLE_LENGTH;
+                cfg.mpc.safe_horizon_enabled = true;
+                cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+                cfg.environment.path_completion_termination = true;
+                cfg.environment.path_completion_fraction = 0.95;
+                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.num_obstacles = 1;
+                cfg.obstacles.obstacles_per_class = 1;
+                cfg.rollout.method_name = met.method;
 
                 if (K == 0) {
                     // K=0: no injection, just base scenario MPC
-                    cfg.enable_dro = false;
-                    cfg.injection_mode = InjectionMode::NONE;
+                    cfg.dro.enabled = false;
+                    cfg.dro.injection_mode = InjectionMode::NONE;
                 } else {
-                    cfg.enable_dro = true;
-                    cfg.injection_mode = inj_mode;
-                    cfg.dro_injection_count = K;
+                    cfg.dro.enabled = true;
+                    cfg.dro.injection_mode = inj_mode;
+                    cfg.dro.injection_count = K;
                 }
-                cfg.ablation = AblationVariant::NO_INJECTION;
-
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);
 

@@ -33,7 +33,7 @@
 #include "mpc_controller.hpp"
 #include "wasserstein_dro.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -135,34 +135,33 @@ struct MethodDef {
 static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_prob = 0.1,
                                           int num_obs = 1) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = NUM_SCENARIOS;
-    cfg.switch_prob = switch_prob;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = rare_prob;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.safe_horizon_enabled = true;
-    cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = 0.95;
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = false;
-    cfg.injection_mode = InjectionMode::NONE;
-    cfg.ablation = AblationVariant::NO_INJECTION;
-    cfg.num_obstacles = num_obs;
-    cfg.obstacles_per_class = 1;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.mpc.safe_horizon_enabled = true;
+    cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = 0.95;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = false;
+    cfg.dro.injection_mode = InjectionMode::NONE;
+    cfg.obstacles.num_obstacles = num_obs;
+    cfg.obstacles.obstacles_per_class = 1;
     return cfg;
 }
 
 static ExperimentConfig apply_method(ExperimentConfig cfg, const MethodDef& m) {
-    cfg.enable_dro = m.enable_dro;
-    cfg.injection_mode = m.injection_mode;
-    cfg.softmax_tau = m.softmax_tau;
-    cfg.eps_greedy_epsilon = m.eps_greedy_epsilon;
-    cfg.method_name = m.name;
+    cfg.dro.enabled = (m.enable_dro);
+    cfg.dro.injection_mode = m.injection_mode;
+    cfg.dro.softmax_tau = m.softmax_tau;
+    cfg.dro.eps_greedy_epsilon = m.eps_greedy_epsilon;
+    cfg.rollout.method_name = m.name;
     return cfg;
 }
 
@@ -230,8 +229,8 @@ static void run_e1() {
 
                 ExperimentConfig cfg = make_base_config();
                 cfg = apply_method(cfg, method);
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);
@@ -284,18 +283,18 @@ static void run_e2() {
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
             ExperimentConfig cfg = make_base_config();
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
 
             if (K == 0) {
-                cfg.enable_dro = false;
-                cfg.injection_mode = InjectionMode::NONE;
+                cfg.dro.enabled = false;
+                cfg.dro.injection_mode = InjectionMode::NONE;
             } else {
-                cfg.enable_dro = true;
-                cfg.injection_mode = InjectionMode::DRO;
-                cfg.dro_injection_count = K;
+                cfg.dro.enabled = true;
+                cfg.dro.injection_mode = InjectionMode::DRO;
+                cfg.dro.injection_count = K;
             }
-            cfg.method_name = met.method;
+            cfg.rollout.method_name = met.method;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -352,8 +351,8 @@ static void run_e4() {
 
             ExperimentConfig cfg = make_base_config();
             cfg = apply_method(cfg, method);
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             all_avg.push_back(rec.avg_solve_ms);
@@ -423,8 +422,8 @@ static void run_baselines() {
 
             ExperimentConfig cfg = make_base_config();
             cfg = apply_method(cfg, method);
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -451,7 +450,7 @@ static void run_a1() {
     std::cout << "================================================================\n";
     auto t0 = std::chrono::steady_clock::now();
 
-    struct GCDef { std::string name; DROGroundCostType type; };
+    struct GCDef { std::string name; DROGroundCostType ground_cost; };
     const std::vector<GCDef> COSTS = {
         {"W2-Bures",       DROGroundCostType::W2_BURES},
         {"Zero-One",       DROGroundCostType::ZERO_ONE},
@@ -475,17 +474,17 @@ static void run_a1() {
 
         for (int i = 0; i < N; ++i) {
             if (i > 0 && i % 250 == 0) { std::cout << i << " "; std::cout.flush(); }
-            unsigned seed = static_cast<unsigned>(static_cast<int>(gc.type) * 100000 + i + 6000000);
+            unsigned seed = static_cast<unsigned>(static_cast<int>(gc.ground_cost) * 100000 + i + 6000000);
             std::mt19937 env_rng(seed);
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
             ExperimentConfig cfg = make_base_config();
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
-            cfg.ground_cost = gc.type;
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
-            cfg.method_name = gc.name;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.solver.ground_cost_type = gc.ground_cost;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
+            cfg.rollout.method_name = gc.name;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -537,12 +536,12 @@ static void run_a2() {
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
             ExperimentConfig cfg = make_base_config();
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
-            cfg.eps_wass = rho;
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
-            cfg.method_name = label;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.solver.base_radius = rho;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
+            cfg.rollout.method_name = label;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -603,12 +602,12 @@ static void run_d1_env(EnvironmentType env_type, const std::string& env_label,
                 EnvironmentSetup env_setup = create_environment(env_type, env_rng);
 
                 ExperimentConfig cfg = make_base_config();
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
-                cfg.enable_dro = true;
-                cfg.injection_mode = sel.mode;
-                cfg.dro_injection_count = K;
-                cfg.method_name = label;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
+                cfg.dro.enabled = true;
+                cfg.dro.injection_mode = sel.mode;
+                cfg.dro.injection_count = K;
+                cfg.rollout.method_name = label;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);
@@ -656,11 +655,11 @@ static void run_d2_env(EnvironmentType env_type, const std::string& env_label,
             std::mt19937 env_rng(seed);
             EnvironmentSetup env_setup = create_environment(env_type, env_rng);
             ExperimentConfig cfg = make_base_config();
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
-            cfg.method_name = "WDRO-sampling";
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+            cfg.rollout.method_name = "WDRO-sampling";
             met.add(run_experiment_rollout(cfg, seed));
         }
         ofs << "WDRO,0,"; write_csv_row(ofs, met, N);
@@ -681,12 +680,12 @@ static void run_d2_env(EnvironmentType env_type, const std::string& env_label,
             std::mt19937 env_rng(seed);
             EnvironmentSetup env_setup = create_environment(env_type, env_rng);
             ExperimentConfig cfg = make_base_config();
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::SOFTMAX_RISK;
-            cfg.softmax_tau = tau;
-            cfg.method_name = label;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::SOFTMAX_RISK;
+            cfg.dro.softmax_tau = tau;
+            cfg.rollout.method_name = label;
             met.add(run_experiment_rollout(cfg, seed));
         }
         ofs << "Softmax," << std::setprecision(1) << tau << ","; write_csv_row(ofs, met, N);
@@ -706,11 +705,11 @@ static void run_d2_env(EnvironmentType env_type, const std::string& env_label,
             std::mt19937 env_rng(seed);
             EnvironmentSetup env_setup = create_environment(env_type, env_rng);
             ExperimentConfig cfg = make_base_config();
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
-            cfg.enable_dro = false;
-            cfg.injection_mode = InjectionMode::NONE;
-            cfg.method_name = "Base";
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
+            cfg.dro.enabled = false;
+            cfg.dro.injection_mode = InjectionMode::NONE;
+            cfg.rollout.method_name = "Base";
             met.add(run_experiment_rollout(cfg, seed));
         }
         ofs << "Base,0,"; write_csv_row(ofs, met, N);
@@ -759,12 +758,12 @@ static void run_d3_env(EnvironmentType env_type, const std::string& env_label,
                 std::mt19937 env_rng(seed);
                 EnvironmentSetup env_setup = create_environment(env_type, env_rng);
                 ExperimentConfig cfg = make_base_config();
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
-                cfg.enable_dro = method.dro;
-                cfg.injection_mode = method.mode;
-                cfg.max_history_length = hist_len;
-                cfg.method_name = method.name;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
+                cfg.dro.enabled = (method.dro);
+                cfg.dro.injection_mode = method.mode;
+                cfg.mpc.sampling.max_history_length = hist_len;
+                cfg.rollout.method_name = method.name;
                 met.add(run_experiment_rollout(cfg, seed));
             }
             ofs << hist_len << ","; write_csv_row(ofs, met, N);
@@ -789,7 +788,7 @@ static void run_d4() {
     std::cout << "================================================================\n";
     auto t0 = std::chrono::steady_clock::now();
 
-    struct GCDef { std::string name; DROGroundCostType type; };
+    struct GCDef { std::string name; DROGroundCostType ground_cost; };
     const std::vector<GCDef> COSTS = {
         {"W2-Bures",       DROGroundCostType::W2_BURES},
         {"Zero-One",       DROGroundCostType::ZERO_ONE},
@@ -824,18 +823,18 @@ static void run_d4() {
             for (int i = 0; i < N; ++i) {
                 if (i > 0 && i % 250 == 0) { std::cout << i << " "; std::cout.flush(); }
                 unsigned seed = static_cast<unsigned>(
-                    static_cast<int>(gc.type) * 1000000 + static_cast<int>(method.mode) * 100000 + i + 13000000);
+                    static_cast<int>(gc.ground_cost) * 1000000 + static_cast<int>(method.mode) * 100000 + i + 13000000);
                 std::mt19937 env_rng(seed);
                 EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
                 ExperimentConfig cfg = make_base_config();
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
-                cfg.enable_dro = true;
-                cfg.injection_mode = method.mode;
-                cfg.dro_injection_count = method.K;
-                cfg.ground_cost = gc.type;
-                cfg.method_name = method.name;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
+                cfg.dro.enabled = true;
+                cfg.dro.injection_mode = method.mode;
+                cfg.dro.injection_count = method.K;
+                cfg.dro.solver.ground_cost_type = gc.ground_cost;
+                cfg.rollout.method_name = method.name;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);

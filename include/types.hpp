@@ -9,8 +9,8 @@
  * - Section 5: Trajectory and Scenario Structures
  */
 
-#ifndef SCENARIO_MPC_TYPES_HPP
-#define SCENARIO_MPC_TYPES_HPP
+#ifndef DRO_MPC_TYPES_HPP
+#define DRO_MPC_TYPES_HPP
 
 #include <Eigen/Dense>
 #include <string>
@@ -20,7 +20,7 @@
 #include <optional>
 #include <cmath>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 // =============================================================================
 // Section 2: State Representations
@@ -373,18 +373,10 @@ struct MPCResult {
 };
 
 /**
- * @brief Risk computation mode for DRO ablation experiments.
- */
-enum class DRORiskMode {
-    FULL,           ///< Full risk with covariance inflation (default)
-    NO_COV,         ///< Risk without covariance inflation (sigma_scale=0)
-    DISTANCE_ONLY   ///< Pure distance-based risk (no covariance term)
-};
-
-/**
  * @brief Ground cost type for the Wasserstein ball transport matrix.
  */
 enum class DROGroundCostType {
+    W1_METRIC,      ///< Gaussian W1 metric
     W2_BURES,       ///< Gaussian W2 Bures metric (default)
     ZERO_ONE,       ///< D[i][j] = (i!=j) ? 1 : 0
     EUCLIDEAN_MEAN  ///< ||mu_i - mu_j|| averaged over horizon
@@ -569,6 +561,6 @@ struct ModeBeliefConfig {
     }
 };
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_TYPES_HPP

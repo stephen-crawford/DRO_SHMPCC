@@ -36,7 +36,7 @@
 #include "mpc_controller.hpp"
 #include "wasserstein_dro.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
@@ -242,32 +242,30 @@ struct StrategyMetrics {
 static ExperimentConfig make_config(const StrategyDef& strat,
                                      const ConditionSpec& cond) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = NUM_SCENARIOS;
-    cfg.rollout_steps = DEFAULT_ROLLOUT_STEPS;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
-    cfg.method_name = strat.name;
-    cfg.ablation = AblationVariant::NO_INJECTION;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+    cfg.rollout.rollout_steps = DEFAULT_ROLLOUT_STEPS;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
+    cfg.rollout.method_name = strat.name;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.switch_prob = cond.switch_prob;
+    cfg.obstacles.rare_switch_prob = cond.rare_prob;
 
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.switch_prob = cond.switch_prob;
-    cfg.rare_switch_prob = cond.rare_prob;
-
-    cfg.num_obstacles = cond.num_obstacles;
-    cfg.obstacles_per_class = cond.obstacles_per_class;
+    cfg.obstacles.num_obstacles = cond.num_obstacles;
+    cfg.obstacles.obstacles_per_class = cond.obstacles_per_class;
     if (cond.num_obstacles > 1) {
-        cfg.obs_arc_fractions = OBS_ARC_FRACS_4;
+        cfg.obstacles.obs_arc_fractions = OBS_ARC_FRACS_4;
     }
 
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = strat.enable_dro;
-    cfg.injection_mode = strat.injection_mode;
-    cfg.eps_wass = DRO_RHO_BASE;
-    cfg.safe_horizon_enabled = strat.safe_horizon;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = (strat.enable_dro);
+    cfg.dro.injection_mode = strat.injection_mode;
+    cfg.dro.solver.base_radius = DRO_RHO_BASE;
+    cfg.mpc.safe_horizon_enabled = strat.safe_horizon;
 
     return cfg;
 }

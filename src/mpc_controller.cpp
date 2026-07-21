@@ -9,39 +9,16 @@
 #include <cmath>
 #include <chrono>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
-AdaptiveScenarioMPC::AdaptiveScenarioMPC(const ScenarioMPCConfig& config)
-    : config_(config), ego_dynamics_(config.dt) {
+AdaptiveScenarioMPC::AdaptiveScenarioMPC(const RuntimeConfig& config)
+    : config_(config), ego_dynamics_(config.mpc.ego.dynamics, config.mpc.dt) {
     config_.validate();
-    default_modes_ = create_obstacle_mode_models(config_.dt);
+    default_modes_ = create_obstacle_mode_models(config_.mpc.dt);
 
-    // Initialize DRO module from config.
-    //
-    // This is the ONLY place the controller's WassersteinDRO gets configured, so
-    // every DROConfig field the harness needs to control must be forwarded here.
-    // It previously copied only the four rho fields, which silently pinned
-    // ground_cost_type and risk_mode to their defaults (W2_BURES / FULL) no matter
-    // what an experiment asked for -- experiment_harness.cpp set them on a LOCAL
-    // DROConfig that was discarded. Any "ground cost" or "risk mode" ablation run
-    // before this fix varied nothing but the seed.
-    if (config_.enable_dro) {
-        DROConfig dro_cfg;
-        dro_cfg.rho_base = config_.dro_rho_base;
-        dro_cfg.rho_min = config_.dro_rho_min;
-        dro_cfg.rho_max = config_.dro_rho_max;
-        dro_cfg.adaptive_rho = config_.dro_adaptive_rho;
-        dro_cfg.use_calibrated_radius = config_.dro_use_calibrated_radius;
-        dro_cfg.use_primal_ot = config_.dro_use_primal_ot;
-        dro_cfg.confidence_beta = config_.dro_confidence_beta;
-        dro_cfg.use_entropic_allocator = config_.dro_use_entropic_allocator;
-        dro_cfg.entropic_tau = config_.dro_entropic_tau;
-        dro_cfg.ground_cost_type = config_.dro_ground_cost;
-        dro_cfg.risk_mode = config_.dro_risk_mode;
-        dro_cfg.risk_measure = config_.dro_risk_measure;
-        dro_cfg.alpha_one_sided = config_.dro_alpha_one_sided;
-        dro_cfg.joint_risk_samples = config_.dro_joint_risk_samples;
-        dro_ = WassersteinDRO(dro_cfg);
+    // Initialize DRO module from nested DROConfig.
+    if (config_.dro.enabled) {
+        dro_ = WassersteinDRO(config_.dro.solver);
     }
 
     // Initialize random number generator
@@ -57,7 +34,7 @@ void AdaptiveScenarioMPC::initialize_obstacle(
     const auto& modes = available_modes.empty() ? default_modes_ : available_modes;
 
     ModeHistory history(obstacle_id, modes, obstacle_class);
-    history.max_history = (config_.max_history_length > 0) ? config_.max_history_length : config_.horizon * 10;
+    history.max_history = (config_.mpc.sampling.max_history_length > 0) ? config_.mpc.sampling.max_history_length : config_.mpc.horizon * 10;
 
     // Copy observations from any existing sibling of the same class
     for (const auto& [other_id, other_cls] : obstacle_classes_) {
@@ -137,70 +114,59 @@ MPCResult AdaptiveScenarioMPC::solve(
     // When DRO is enabled: compute worst-case distribution q* and either
     //   (a) QSTAR_SAMPLE: resample ALL S scenarios from q*, or
     //   (b) DRO/ADVERSARIAL: sample nominally, then inject worst-case scenario(s).
-    if (config_.enable_dro && !reference_trajectory_.empty()) {
-        const int S = config_.num_scenarios;
-        int pre_dro_safe_horizon = config_.safe_horizon_enabled
+    if (config_.dro.enabled && !reference_trajectory_.empty()) {
+        const int S = config_.mpc.sampling.num_scenarios;
+        int pre_dro_safe_horizon = config_.mpc.safe_horizon_enabled
             ? config_.compute_safe_horizon(S)
-            : config_.horizon;
+            : config_.mpc.horizon;
 
         // Compute DRO q* and nominal weights for each obstacle.
-        // per_obs_nominal: used for scenario SAMPLING (may include OT weights).
-        // per_obs_dro_nominal: used for DRO Q* computation (may differ if
-        //   dro_nominal_source == FREQUENCY to avoid OT interference).
+        // per_obs_nominal: the single P_hat from belief/weights (or custom OT).
         std::map<int, DROResult> dro_results;
         std::map<int, std::map<std::string, double>> per_obs_nominal;
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto hist_it = mode_histories_.find(obs_id);
             if (hist_it == mode_histories_.end()) continue;
 
-            // Frequency-based weights (always available)
+            // Frequency / belief-based weights (the single nominal P_hat).
             auto freq_weights = compute_mode_weights(
-                hist_it->second, config_.weight_type,
-                config_.recency_decay, iteration_count_
+                hist_it->second, config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay, iteration_count_
             );
 
-            // For sampling: use custom (OT) weights if available
+            // Optional custom weights override both sampling and DRO center.
             auto ot_it = custom_per_obstacle_weights_.find(obs_id);
             bool have_custom = ot_it != custom_per_obstacle_weights_.end()
                                && !ot_it->second.empty();
-            std::map<std::string, double> sampling_nominal =
+            std::map<std::string, double> nominal =
                 have_custom ? ot_it->second : freq_weights;
 
-            // For DRO Q*: respect dro_nominal_source setting
-            std::map<std::string, double> dro_nominal;
-            if (config_.dro_nominal_source == DRONominalSource::FREQUENCY
-                || !have_custom) {
-                dro_nominal = freq_weights;
-            } else {
-                dro_nominal = ot_it->second;  // AUTO with custom weights
-            }
-
-            if (sampling_nominal.empty()) continue;
-            per_obs_nominal[obs_id] = sampling_nominal;
+            if (nominal.empty()) continue;
+            per_obs_nominal[obs_id] = nominal;
             dro_.set_observation_count(
                 static_cast<int>(hist_it->second.observed_modes.size()));
 
             dro_results[obs_id] = dro_.compute_worst_case_weights(
-                dro_nominal, obs_state, hist_it->second.available_modes,
-                reference_trajectory_, config_.horizon,
-                config_.ego_radius, config_.obstacle_radius,
-                config_.safety_margin,
+                nominal, obs_state, hist_it->second.available_modes,
+                reference_trajectory_, config_.mpc.horizon,
+                config_.mpc.ego.radius, config_.obstacle_radius,
+                config_.mpc.constraints.safety_margin,
                 pre_dro_safe_horizon,
-                config_.num_discs,
-                config_.vehicle_length
+                config_.mpc.ego.num_discs,
+                config_.mpc.ego.length
             );
         }
 
-        if (config_.injection_mode == InjectionMode::UNIFORM_COVERAGE) {
+        if (config_.dro.resolved_injection_mode() == InjectionMode::UNIFORM_COVERAGE) {
             // BASELINE B1: Force each observed mode to appear at least once.
             // Use nominal weights but with ensure_mode_coverage=true.
             if (!per_obs_nominal.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, per_obs_nominal,
-                    config_.horizon, S, true /*ensure_mode_coverage*/, &rng_
+                    config_.mpc.horizon, S, true /*ensure_mode_coverage*/, &rng_
                 );
             }
-        } else if (config_.injection_mode == InjectionMode::SOFTMAX_RISK) {
+        } else if (config_.dro.resolved_injection_mode() == InjectionMode::SOFTMAX_RISK) {
             // BASELINE B2: p(m) ∝ exp(tau * r_m), no Wasserstein geometry.
             std::map<int, std::map<std::string, double>> softmax_weights;
             for (auto& [obs_id, dro_result] : dro_results) {
@@ -210,7 +176,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                     max_r = std::max(max_r, r);
                 double sum = 0.0;
                 for (const auto& [m, r] : dro_result.risk_per_mode) {
-                    w[m] = std::exp(config_.softmax_tau * (r - max_r));  // subtract max for stability
+                    w[m] = std::exp(config_.dro.softmax_tau * (r - max_r));  // subtract max for stability
                     sum += w[m];
                 }
                 if (sum > 0.0) for (auto& [_, v] : w) v /= sum;
@@ -219,13 +185,13 @@ MPCResult AdaptiveScenarioMPC::solve(
             if (!softmax_weights.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, softmax_weights,
-                    config_.horizon, S, config_.ensure_mode_coverage, &rng_
+                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
             }
-        } else if (config_.injection_mode == InjectionMode::EPSILON_GREEDY_INJ) {
+        } else if (config_.dro.resolved_injection_mode() == InjectionMode::EPSILON_GREEDY_INJ) {
             // BASELINE B3: (1-eps)*nominal + eps*uniform over modes.
             std::map<int, std::map<std::string, double>> eg_weights;
-            double eps = config_.eps_greedy_epsilon;
+            double eps = config_.dro.eps_greedy_epsilon;
             for (auto& [obs_id, nom_w] : per_obs_nominal) {
                 std::map<std::string, double> w;
                 int M_modes = static_cast<int>(nom_w.size());
@@ -238,19 +204,19 @@ MPCResult AdaptiveScenarioMPC::solve(
             if (!eg_weights.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, eg_weights,
-                    config_.horizon, S, config_.ensure_mode_coverage, &rng_
+                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
             }
-        } else if (config_.injection_mode == InjectionMode::TOP_RISK_INJECT) {
+        } else if (config_.dro.resolved_injection_mode() == InjectionMode::TOP_RISK_INJECT) {
             // BASELINE B4: Sample nominally, then inject top-K modes by r_m (no WDRO).
             if (!per_obs_nominal.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, per_obs_nominal,
-                    config_.horizon, S, config_.ensure_mode_coverage, &rng_
+                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
             }
             int next_id = S;
-            int K = config_.dro_injection_count;
+            int K = config_.dro.injection_count;
             for (const auto& [obs_id, obs_state] : obstacles) {
                 auto dr_it = dro_results.find(obs_id);
                 if (dr_it == dro_results.end()) continue;
@@ -276,7 +242,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                     auto s = dro_.generate_worst_case_scenario(
                         fake_result, obs_id, obs_state,
                         hist_it->second.available_modes,
-                        config_.horizon, next_id);
+                        config_.mpc.horizon, next_id);
                     if (!s.trajectories.empty()) {
                         scenarios_.push_back(std::move(s));
                         dro_injected++;
@@ -284,17 +250,17 @@ MPCResult AdaptiveScenarioMPC::solve(
                     }
                 }
             }
-        } else if (config_.injection_mode == InjectionMode::DIVERSE_RISK_INJECT) {
+        } else if (config_.dro.resolved_injection_mode() == InjectionMode::DIVERSE_RISK_INJECT) {
             // BASELINE B5: Greedy diverse-risk selection (facility-location style).
             // Select K modes maximizing risk * min-distance-to-already-selected.
             if (!per_obs_nominal.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, per_obs_nominal,
-                    config_.horizon, S, config_.ensure_mode_coverage, &rng_
+                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
             }
             int next_id = S;
-            int K = config_.dro_injection_count;
+            int K = config_.dro.injection_count;
             for (const auto& [obs_id, obs_state] : obstacles) {
                 auto dr_it = dro_results.find(obs_id);
                 if (dr_it == dro_results.end()) continue;
@@ -355,7 +321,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                     auto s = dro_.generate_worst_case_scenario(
                         fake_result, obs_id, obs_state,
                         hist_it->second.available_modes,
-                        config_.horizon, next_id);
+                        config_.mpc.horizon, next_id);
                     if (!s.trajectories.empty()) {
                         scenarios_.push_back(std::move(s));
                         dro_injected++;
@@ -363,20 +329,20 @@ MPCResult AdaptiveScenarioMPC::solve(
                     }
                 }
             }
-        } else if (config_.injection_mode == InjectionMode::DRO ||
-                   config_.injection_mode == InjectionMode::ADVERSARIAL) {
+        } else if (config_.dro.resolved_injection_mode() == InjectionMode::DRO ||
+                   config_.dro.resolved_injection_mode() == InjectionMode::ADVERSARIAL) {
             // INJECTION PATH: sample using nominal/OT weights, then inject
             // worst-case scenario(s) as additional hard constraints.
             if (!per_obs_nominal.empty()) {
                 scenarios_ = sample_scenarios_with_weights(
                     obstacles, mode_histories_, per_obs_nominal,
-                    config_.horizon, S,
-                    config_.ensure_mode_coverage, &rng_
+                    config_.mpc.horizon, S,
+                    config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
             }
 
             int next_id = S;
-            int K = config_.dro_injection_count;
+            int K = config_.dro.injection_count;
             for (const auto& [obs_id, obs_state] : obstacles) {
                 auto dr_it = dro_results.find(obs_id);
                 if (dr_it == dro_results.end()) continue;
@@ -385,33 +351,33 @@ MPCResult AdaptiveScenarioMPC::solve(
                 if (hist_it == mode_histories_.end()) continue;
 
                 std::vector<Scenario> injected_scenarios;
-                if (config_.injection_mode == InjectionMode::DRO) {
+                if (config_.dro.resolved_injection_mode() == InjectionMode::DRO) {
                     if (K == 1) {
                         auto s = dro_.generate_worst_case_scenario(
                             dr_it->second, obs_id, obs_state,
                             hist_it->second.available_modes,
-                            config_.horizon, next_id);
+                            config_.mpc.horizon, next_id);
                         if (!s.trajectories.empty()) injected_scenarios.push_back(std::move(s));
                     } else {
                         injected_scenarios = dro_.generate_topk_worst_case_scenarios(
                             dr_it->second, obs_id, obs_state,
                             hist_it->second.available_modes,
-                            config_.horizon, next_id, K);
+                            config_.mpc.horizon, next_id, K);
                     }
                 } else {
                     if (K == 1) {
                         auto s = dro_.generate_adversarial_scenario(
                             dr_it->second, obs_id, obs_state,
                             hist_it->second.available_modes,
-                            reference_trajectory_, config_.horizon, next_id,
-                            config_.adversarial_sigma_scale);
+                            reference_trajectory_, config_.mpc.horizon, next_id,
+                            config_.dro.adversarial_sigma_scale);
                         if (!s.trajectories.empty()) injected_scenarios.push_back(std::move(s));
                     } else {
                         injected_scenarios = dro_.generate_topk_adversarial_scenarios(
                             dr_it->second, obs_id, obs_state,
                             hist_it->second.available_modes,
-                            reference_trajectory_, config_.horizon, next_id, K,
-                            config_.adversarial_sigma_scale);
+                            reference_trajectory_, config_.mpc.horizon, next_id, K,
+                            config_.dro.adversarial_sigma_scale);
                     }
                 }
 
@@ -430,20 +396,20 @@ MPCResult AdaptiveScenarioMPC::solve(
             }
 
             if (!per_obs_weights_dro.empty()) {
-                if (config_.use_markov_mode_sampling) {
+                if (config_.mpc.sampling.use_markov_mode_sampling) {
                     // Seed the Markov chain from Q*: the reweighted belief sets the
                     // initial mode distribution, then the estimated transition
                     // matrix propagates it over the horizon.
                     scenarios_ = sample_scenarios_markov(
                         obstacles, mode_histories_, &per_obs_weights_dro,
-                        config_.horizon, S, config_.weight_type,
-                        config_.mode_belief, &rng_
+                        config_.mpc.horizon, S, config_.mpc.sampling.weight_type,
+                        config_.mpc.sampling.mode_belief, &rng_
                     );
                 } else {
                     scenarios_ = sample_scenarios_with_weights(
                         obstacles, mode_histories_, per_obs_weights_dro,
-                        config_.horizon, S,
-                        config_.ensure_mode_coverage, &rng_
+                        config_.mpc.horizon, S,
+                        config_.mpc.sampling.ensure_mode_coverage, &rng_
                     );
                 }
             }
@@ -455,31 +421,31 @@ MPCResult AdaptiveScenarioMPC::solve(
     if (scenarios_.empty() && !custom_per_obstacle_weights_.empty()) {
         scenarios_ = sample_scenarios_with_weights(
             obstacles, mode_histories_, custom_per_obstacle_weights_,
-            config_.horizon, config_.num_scenarios,
-            config_.ensure_mode_coverage, &rng_
+            config_.mpc.horizon, config_.mpc.sampling.num_scenarios,
+            config_.mpc.sampling.ensure_mode_coverage, &rng_
         );
     }
 
     if (scenarios_.empty()) {
-        if (config_.use_markov_mode_sampling) {
+        if (config_.mpc.sampling.use_markov_mode_sampling) {
             // Base (non-DRO) Markov path: belief derived from weight_type +
             // the Dirichlet prior, no Q* override.
             scenarios_ = sample_scenarios_markov(
                 obstacles, mode_histories_, nullptr,
-                config_.horizon, config_.num_scenarios, config_.weight_type,
-                config_.mode_belief, &rng_
+                config_.mpc.horizon, config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.mode_belief, &rng_
             );
-        } else if (config_.ensure_mode_coverage) {
+        } else if (config_.mpc.sampling.ensure_mode_coverage) {
             scenarios_ = sample_scenarios_with_mode_coverage(
-                obstacles, mode_histories_, config_.horizon,
-                config_.num_scenarios, config_.weight_type,
-                config_.recency_decay, iteration_count_, &rng_
+                obstacles, mode_histories_, config_.mpc.horizon,
+                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
             );
         } else {
             scenarios_ = sample_scenarios(
-                obstacles, mode_histories_, config_.horizon,
-                config_.num_scenarios, config_.weight_type,
-                config_.recency_decay, iteration_count_, &rng_
+                obstacles, mode_histories_, config_.mpc.horizon,
+                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
             );
         }
     }
@@ -497,21 +463,21 @@ MPCResult AdaptiveScenarioMPC::solve(
     // Verify scenario sufficiency for epsilon guarantee (Part 4)
     {
         int n_x = 4, n_u = 2;
-        int d = config_.horizon * n_x + config_.horizon * n_u;
+        int d = config_.mpc.horizon * n_x + config_.mpc.horizon * n_u;
         int S_actual = static_cast<int>(scenarios_.size());
         int S_required = config_.compute_required_scenarios(d);
         (void)config_.compute_effective_epsilon(S_actual, d);
 
-        if (S_actual < S_required && config_.enforce_scenario_count) {
+        if (S_actual < S_required && config_.mpc.sampling.enforce_scenario_count) {
             // Auto-increase: sample additional scenarios
             int additional_count = S_required - S_actual;
             auto additional = sample_scenarios(
                 obstacles,
                 mode_histories_,
-                config_.horizon,
+                config_.mpc.horizon,
                 additional_count,
-                config_.weight_type,
-                config_.recency_decay,
+                config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay,
                 iteration_count_,
                 &rng_
             );
@@ -519,15 +485,15 @@ MPCResult AdaptiveScenarioMPC::solve(
         } else if (S_actual < 3) {
             // Ensure minimum scenario count even without enforcement
             int additional_count = std::max(
-                5, config_.num_scenarios - S_actual
+                5, config_.mpc.sampling.num_scenarios - S_actual
             );
             auto additional = sample_scenarios(
                 obstacles,
                 mode_histories_,
-                config_.horizon,
+                config_.mpc.horizon,
                 additional_count,
-                config_.weight_type,
-                config_.recency_decay,
+                config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay,
                 iteration_count_,
                 &rng_
             );
@@ -536,18 +502,18 @@ MPCResult AdaptiveScenarioMPC::solve(
     }
 
     // Step 3b: Verify scenario sufficiency for epsilon guarantee (Part 4)
-    if (config_.enforce_scenario_count) {
+    if (config_.mpc.sampling.enforce_scenario_count) {
         int n_x = 4, n_u = 2;
-        int d = config_.horizon * n_x + config_.horizon * n_u;
+        int d = config_.mpc.horizon * n_x + config_.mpc.horizon * n_u;
         int S_required = config_.compute_required_scenarios(d);
         int S_actual = static_cast<int>(scenarios_.size());
         if (S_actual < S_required) {
             // Auto-increase: sample additional scenarios
             int additional_count = S_required - S_actual;
             auto additional = sample_scenarios(
-                obstacles, mode_histories_, config_.horizon,
-                additional_count, config_.weight_type,
-                config_.recency_decay, iteration_count_, &rng_
+                obstacles, mode_histories_, config_.mpc.horizon,
+                additional_count, config_.mpc.sampling.weight_type,
+                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
             );
             scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
         }
@@ -560,28 +526,28 @@ MPCResult AdaptiveScenarioMPC::solve(
     auto constraints = compute_linearized_constraints(
         reference_trajectory_,
         scenarios_,
-        config_.ego_radius,
+        config_.mpc.ego.radius,
         config_.obstacle_radius,
-        config_.safety_margin,
-        config_.num_discs,
-        config_.vehicle_length
+        config_.mpc.constraints.safety_margin,
+        config_.mpc.ego.num_discs,
+        config_.mpc.ego.length
     );
     // Step 4b: Safe horizon truncation (SH-MPC)
     // Reduce constraint horizon to N_safe based on configured mode:
     // - PRACTICAL:          N_safe = min(N, floor(S / (2*n_u)))
     // - THEORETICAL_SIMPLE: Eq. 23, S >= (2/eps)*(ln(1/beta) + d)
     // - THEORETICAL_TIGHT:  Eq. 25 (very conservative)
-    int effective_horizon = config_.horizon;
-    if (config_.safe_horizon_enabled) {
+    int effective_horizon = config_.mpc.horizon;
+    if (config_.mpc.safe_horizon_enabled) {
         // Use only i.i.d. sampled scenario count for safe horizon computation.
         // DRO-injected scenarios are deterministic additional constraints that
         // tighten the feasible set but do NOT satisfy the i.i.d. assumption
         // required by Calafiore-Campi scenario theory (Theorem 1).
         // Counting them would inflate N_safe beyond what the theory certifies.
-        int S_for_sh = config_.num_scenarios;
+        int S_for_sh = config_.mpc.sampling.num_scenarios;
         effective_horizon = config_.compute_safe_horizon(S_for_sh);
 
-        if (effective_horizon < config_.horizon) {
+        if (effective_horizon < config_.mpc.horizon) {
             // Filter out constraints beyond the safe horizon
             constraints.erase(
                 std::remove_if(constraints.begin(), constraints.end(),
@@ -642,19 +608,19 @@ void AdaptiveScenarioMPC::initialize_reference_trajectory(
         reference_trajectory_.erase(reference_trajectory_.begin());
 
         // Extend to full horizon
-        while (static_cast<int>(reference_trajectory_.size()) <= config_.horizon) {
+        while (static_cast<int>(reference_trajectory_.size()) <= config_.mpc.horizon) {
             const EgoState& last = reference_trajectory_.back();
             // Simple constant velocity extension
             EgoState new_state(
-                last.x + last.v * std::cos(last.theta) * config_.dt,
-                last.y + last.v * std::sin(last.theta) * config_.dt,
+                last.x + last.v * std::cos(last.theta) * config_.mpc.dt,
+                last.y + last.v * std::sin(last.theta) * config_.mpc.dt,
                 last.theta,
                 last.v
             );
             // Propagate spline parameter algebraically
             if (last.has_spline() && reference_path_.has_value()) {
                 new_state.s = EgoDynamics::compute_spline_update(
-                    last, new_state, *reference_path_, config_.dt);
+                    last, new_state, *reference_path_, config_.mpc.dt);
             }
             reference_trajectory_.push_back(new_state);
         }
@@ -673,7 +639,7 @@ std::vector<EgoState> AdaptiveScenarioMPC::generate_straight_line_trajectory(
     double reference_velocity
 ) {
     std::vector<EgoState> trajectory;
-    trajectory.reserve(config_.horizon + 1);
+    trajectory.reserve(config_.mpc.horizon + 1);
 
     // Initialize spline parameter for starting state if path available
     EgoState start_with_s = start;
@@ -684,7 +650,7 @@ std::vector<EgoState> AdaptiveScenarioMPC::generate_straight_line_trajectory(
 
     EgoState current = start_with_s;
 
-    for (int k = 0; k < config_.horizon; ++k) {
+    for (int k = 0; k < config_.mpc.horizon; ++k) {
         // Direction to goal
         Eigen::Vector2d to_goal = goal - current.position();
         double dist = to_goal.norm();
@@ -698,18 +664,18 @@ std::vector<EgoState> AdaptiveScenarioMPC::generate_straight_line_trajectory(
         }
 
         // Simple propagation - use reference_velocity as cap instead of hardcoded 2.0
-        double v = std::min(current.v + 0.5 * config_.dt, reference_velocity);
+        double v = std::min(current.v + 0.5 * config_.mpc.dt, reference_velocity);
 
         EgoState next_state(
-            current.x + v * std::cos(desired_theta) * config_.dt,
-            current.y + v * std::sin(desired_theta) * config_.dt,
+            current.x + v * std::cos(desired_theta) * config_.mpc.dt,
+            current.y + v * std::sin(desired_theta) * config_.mpc.dt,
             desired_theta,
             v
         );
         // Propagate spline parameter
         if (current.has_spline() && reference_path_.has_value()) {
             next_state.s = EgoDynamics::compute_spline_update(
-                current, next_state, *reference_path_, config_.dt);
+                current, next_state, *reference_path_, config_.mpc.dt);
         }
         trajectory.push_back(next_state);
         current = next_state;
@@ -727,7 +693,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
     double path_length,
     int cost_horizon
 ) {
-    if (config_.use_sqp_solver) {
+    if (config_.solver.use_sqp_solver) {
         return solve_optimization_sqp(
             ego_state, goal, reference_velocity, constraints,
             path_progress, path_length, cost_horizon
@@ -735,7 +701,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
     }
 
     // Heuristic fallback: simple optimization without CasADi
-    int N = config_.horizon;
+    int N = config_.mpc.horizon;
 
     auto trajectory = generate_straight_line_trajectory(ego_state, goal, reference_velocity);
     std::vector<EgoInput> inputs;
@@ -746,11 +712,11 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
             const EgoState& current = trajectory[k];
             const EgoState& next_state = trajectory[k + 1];
 
-            double a = (next_state.v - current.v) / config_.dt;
-            double w = (next_state.theta - current.theta) / config_.dt;
+            double a = (next_state.v - current.v) / config_.mpc.dt;
+            double w = (next_state.theta - current.theta) / config_.mpc.dt;
 
-            a = std::clamp(a, config_.min_acceleration, config_.max_acceleration);
-            w = std::clamp(w, -config_.max_steering_rate, config_.max_steering_rate);
+            a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
 
             inputs.emplace_back(a, w);
         } else {
@@ -770,16 +736,16 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
         inputs = new_inputs;
     }
 
-    double effective_goal_weight = config_.goal_weight;
+    double effective_goal_weight = config_.mpc.objective.goal_weight;
     bool progress_aware = (path_progress >= 0 && path_length > 0);
     double progress_fraction = 0.0;
     if (progress_aware) {
         progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.goal_scale_start_fraction)
-                     / (1.0 - config_.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.goal_weight * scale;
+        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
+            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
+                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
+            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
+            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
         }
     }
 
@@ -790,20 +756,20 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
         if (k == N) weight *= 2.0;
         cost += weight * pos_diff.squaredNorm();
 
-        double w_vel = config_.velocity_weight;
+        double w_vel = config_.mpc.objective.velocity_weight;
         double v_diff = trajectory[k].v - reference_velocity;
         cost += w_vel * v_diff * v_diff;
 
         if (progress_aware) {
-            double v_deficit = config_.min_velocity_threshold - trajectory[k].v;
+            double v_deficit = config_.mpc.objective.min_velocity_threshold - trajectory[k].v;
             if (v_deficit > 0) {
-                cost += config_.min_velocity_penalty * v_deficit * v_deficit;
+                cost += config_.mpc.objective.min_velocity_penalty * v_deficit * v_deficit;
             }
         }
     }
     for (int k = 0; k < N; ++k) {
-        cost += config_.acceleration_weight * inputs[k].a * inputs[k].a;
-        cost += config_.steering_weight * inputs[k].delta * inputs[k].delta;
+        cost += config_.mpc.objective.acceleration_weight * inputs[k].a * inputs[k].a;
+        cost += config_.mpc.objective.steering_weight * inputs[k].delta * inputs[k].delta;
     }
 
     // MPCC cost terms for heuristic solver (all steps 1..N)
@@ -824,8 +790,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
             Eigen::Vector2d diff = trajectory[k].position() - pp.position;
             double e_c = n_ref.dot(diff);
             double e_l = -t_ref.dot(diff);
-            cost += config_.contour_weight * e_c * e_c;
-            cost += config_.lag_weight * e_l * e_l;
+            cost += config_.mpc.objective.contour_weight * e_c * e_c;
+            cost += config_.mpc.objective.lag_weight * e_l * e_l;
         }
         double s_term;
         if (trajectory[N].has_spline()) {
@@ -837,7 +803,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
         double heading_err = trajectory[N].theta - desired_heading;
         while (heading_err > M_PI) heading_err -= 2 * M_PI;
         while (heading_err < -M_PI) heading_err += 2 * M_PI;
-        cost += config_.terminal_heading_weight * heading_err * heading_err;
+        cost += config_.mpc.objective.terminal_heading_weight * heading_err * heading_err;
     }
 
     MPCResult result;
@@ -862,7 +828,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     double path_length,
     int cost_horizon
 ) {
-    const int N = config_.horizon;
+    const int N = config_.mpc.horizon;
 
     // 1. Build initial reference trajectory and extract inputs
     auto x_ref = generate_straight_line_trajectory(ego_state, goal, reference_velocity);
@@ -871,10 +837,10 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
 
     for (int k = 0; k < N; ++k) {
         if (k + 1 < static_cast<int>(x_ref.size())) {
-            double a = (x_ref[k + 1].v - x_ref[k].v) / config_.dt;
-            double w = (x_ref[k + 1].theta - x_ref[k].theta) / config_.dt;
-            a = std::clamp(a, config_.min_acceleration, config_.max_acceleration);
-            w = std::clamp(w, -config_.max_steering_rate, config_.max_steering_rate);
+            double a = (x_ref[k + 1].v - x_ref[k].v) / config_.mpc.dt;
+            double w = (x_ref[k + 1].theta - x_ref[k].theta) / config_.mpc.dt;
+            a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
             u_ref.emplace_back(a, w);
         } else {
             u_ref.emplace_back(0, 0);
@@ -897,10 +863,10 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         for (int k = 0; k < N; ++k) {
             const auto& curr = reference_trajectory_[k];
             const auto& next = reference_trajectory_[k + 1];
-            double a = (next.v - curr.v) / config_.dt;
-            double w = (next.theta - curr.theta) / config_.dt;
-            a = std::clamp(a, config_.min_acceleration, config_.max_acceleration);
-            w = std::clamp(w, -config_.max_steering_rate, config_.max_steering_rate);
+            double a = (next.v - curr.v) / config_.mpc.dt;
+            double w = (next.theta - curr.theta) / config_.mpc.dt;
+            a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
             warm_inputs.emplace_back(a, w);
         }
         std::vector<EgoState> warm_traj;
@@ -921,12 +887,12 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     // Douglas-Rachford projection: ensure warmstart satisfies collision constraints
     if (!constraints.empty()) {
         project_warmstart_to_safety(
-            x_ref, constraints, config_.ego_radius,
-            config_.obstacle_radius, config_.safety_margin);
+            x_ref, constraints, config_.mpc.ego.radius,
+            config_.obstacle_radius, config_.mpc.constraints.safety_margin);
     }
 
     // 2. SQP loop
-    for (int sqp_iter = 0; sqp_iter < config_.sqp_max_iterations; ++sqp_iter) {
+    for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter) {
         // Build and solve QP subproblem
         QPProblem qp = build_condensed_qp(
             x_ref, u_ref, goal, reference_velocity, constraints,
@@ -934,8 +900,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         );
 
         QPSettings qp_settings;
-        qp_settings.max_iterations = config_.qp_max_iterations;
-        qp_settings.abs_tol = config_.qp_tolerance;
+        qp_settings.max_iterations = config_.solver.qp_max_iterations;
+        qp_settings.abs_tol = config_.solver.qp_tolerance;
         qp_settings.adaptive_rho = true;
 
         QPResult qp_result = qp_solver_.solve(qp, qp_settings);
@@ -943,7 +909,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         Eigen::VectorXd delta_u = qp_result.x;
 
         // Check SQP convergence
-        if (delta_u.norm() < config_.sqp_convergence_tol) {
+        if (delta_u.norm() < config_.solver.sqp_convergence_tol) {
             break;
         }
 
@@ -959,8 +925,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             for (int k = 0; k < N; ++k) {
                 double a_new = u_ref[k].a + alpha * delta_u(2 * k);
                 double w_new = u_ref[k].delta + alpha * delta_u(2 * k + 1);
-                a_new = std::clamp(a_new, config_.min_acceleration, config_.max_acceleration);
-                w_new = std::clamp(w_new, -config_.max_steering_rate, config_.max_steering_rate);
+                a_new = std::clamp(a_new, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
+                w_new = std::clamp(w_new, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
                 trial_inputs.emplace_back(a_new, w_new);
             }
 
@@ -997,23 +963,23 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     // of whether the ADMM QP fully converged the soft velocity rows above. When the
     // reference speed exceeds the cap the per-step QP row is momentarily infeasible
     // (cannot brake far enough in one dt); this saturation is the hard backstop.
-    if (config_.enable_velocity_bounds) {
+    if (config_.mpc.constraints.enable_velocity_bounds) {
         double v_cur = ego_state.v;
         for (int k = 0; k < N; ++k) {
-            const double v_lo_a = (config_.min_velocity - v_cur) / config_.dt;
-            const double v_hi_a = (config_.max_velocity - v_cur) / config_.dt;
-            const double lo = std::max(config_.min_acceleration, v_lo_a);
-            const double hi = std::min(config_.max_acceleration, v_hi_a);
+            const double v_lo_a = (config_.mpc.ego.dynamics.min_velocity - v_cur) / config_.mpc.dt;
+            const double v_hi_a = (config_.mpc.ego.dynamics.max_velocity - v_cur) / config_.mpc.dt;
+            const double lo = std::max(config_.mpc.ego.dynamics.min_acceleration, v_lo_a);
+            const double hi = std::min(config_.mpc.ego.dynamics.max_acceleration, v_hi_a);
             double a;
             if (lo <= hi) {
                 a = std::clamp(u_ref[k].a, lo, hi);       // velocity-feasible accel window
-            } else if (v_hi_a < config_.min_acceleration) {
-                a = config_.min_acceleration;             // above v_max: brake as hard as allowed
+            } else if (v_hi_a < config_.mpc.ego.dynamics.min_acceleration) {
+                a = config_.mpc.ego.dynamics.min_acceleration;             // above v_max: brake as hard as allowed
             } else {
-                a = config_.max_acceleration;             // below v_min: accelerate as hard as allowed
+                a = config_.mpc.ego.dynamics.max_acceleration;             // below v_min: accelerate as hard as allowed
             }
             u_ref[k] = EgoInput(a, u_ref[k].delta);
-            v_cur += a * config_.dt;                      // exact velocity propagation
+            v_cur += a * config_.mpc.dt;                      // exact velocity propagation
         }
         // Re-roll the trajectory so x_ref matches the clamped inputs.
         x_ref = reference_path_.has_value()
@@ -1022,15 +988,15 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     }
 
     // Compute progress-aware goal weight
-    double effective_goal_weight = config_.goal_weight;
+    double effective_goal_weight = config_.mpc.objective.goal_weight;
     bool progress_aware = (path_progress >= 0 && path_length > 0);
     if (progress_aware) {
         double progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.goal_scale_start_fraction)
-                     / (1.0 - config_.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.goal_weight * scale;
+        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
+            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
+                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
+            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
+            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
         }
     }
 
@@ -1043,20 +1009,20 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         if (k == N) weight *= 2.0;
         cost += weight * pos_diff.squaredNorm();
 
-        double w_vel = config_.velocity_weight;
+        double w_vel = config_.mpc.objective.velocity_weight;
         double v_diff = x_ref[k].v - reference_velocity;
         cost += w_vel * v_diff * v_diff;
 
         if (progress_aware) {
-            double v_deficit = config_.min_velocity_threshold - x_ref[k].v;
+            double v_deficit = config_.mpc.objective.min_velocity_threshold - x_ref[k].v;
             if (v_deficit > 0) {
-                cost += config_.min_velocity_penalty * v_deficit * v_deficit;
+                cost += config_.mpc.objective.min_velocity_penalty * v_deficit * v_deficit;
             }
         }
     }
     for (int k = 0; k < N; ++k) {
-        cost += config_.acceleration_weight * u_ref[k].a * u_ref[k].a;
-        cost += config_.steering_weight * u_ref[k].delta * u_ref[k].delta;
+        cost += config_.mpc.objective.acceleration_weight * u_ref[k].a * u_ref[k].a;
+        cost += config_.mpc.objective.steering_weight * u_ref[k].delta * u_ref[k].delta;
     }
 
     // MPCC cost terms for final cost report (all steps 1..N)
@@ -1077,8 +1043,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             Eigen::Vector2d diff = x_ref[k].position() - pp.position;
             double e_c = n_ref.dot(diff);
             double e_l = -t_ref.dot(diff);
-            cost += config_.contour_weight * e_c * e_c;
-            cost += config_.lag_weight * e_l * e_l;
+            cost += config_.mpc.objective.contour_weight * e_c * e_c;
+            cost += config_.mpc.objective.lag_weight * e_l * e_l;
         }
         double s_term;
         if (x_ref[N].has_spline()) {
@@ -1090,7 +1056,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         double heading_err = x_ref[N].theta - desired_heading;
         while (heading_err > M_PI) heading_err -= 2 * M_PI;
         while (heading_err < -M_PI) heading_err += 2 * M_PI;
-        cost += config_.terminal_heading_weight * heading_err * heading_err;
+        cost += config_.mpc.objective.terminal_heading_weight * heading_err * heading_err;
     }
 
     // Check feasibility
@@ -1128,7 +1094,7 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     double path_length,
     int cost_horizon
 ) {
-    const int N = config_.horizon;
+    const int N = config_.mpc.horizon;
     const int n_u = 2;  // [a, w]
     const int n_dec = n_u * N;  // total decision variables (delta_u)
 
@@ -1212,15 +1178,15 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     //       + diag(w_accel, w_steer, w_accel, w_steer, ...)
 
     // Compute progress-aware goal weight
-    double effective_goal_weight = config_.goal_weight;
+    double effective_goal_weight = config_.mpc.objective.goal_weight;
     bool progress_aware = (path_progress >= 0 && path_length > 0);
     if (progress_aware) {
         double progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.goal_scale_start_fraction)
-                     / (1.0 - config_.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.goal_weight * scale;
+        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
+            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
+                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
+            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
+            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
         }
     }
 
@@ -1235,14 +1201,14 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
         H += w_goal * P_all[k].transpose() * P_all[k];
 
         // Velocity tracking: w_vel * V[k]^T * V[k]
-        double w_vel = config_.velocity_weight;
+        double w_vel = config_.mpc.objective.velocity_weight;
         H += w_vel * V_all[k].transpose() * V_all[k];
     }
 
     // Control effort: diagonal terms
     for (int k = 0; k < N; ++k) {
-        H(2 * k, 2 * k) += config_.acceleration_weight;
-        H(2 * k + 1, 2 * k + 1) += config_.steering_weight;
+        H(2 * k, 2 * k) += config_.mpc.objective.acceleration_weight;
+        H(2 * k + 1, 2 * k + 1) += config_.mpc.objective.steering_weight;
     }
 
     // Regularize for positive definiteness
@@ -1258,9 +1224,9 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     // since it evolves algebraically rather than jumping between
     // closest-point projections.
     if (reference_path_.has_value()) {
-        const double w_c = config_.contour_weight;
-        const double w_l = config_.lag_weight;
-        const double w_theta = config_.terminal_heading_weight;
+        const double w_c = config_.mpc.objective.contour_weight;
+        const double w_l = config_.mpc.objective.lag_weight;
+        const double w_theta = config_.mpc.objective.terminal_heading_weight;
         const auto& path = *reference_path_;
 
         for (int k = 1; k <= N; ++k) {
@@ -1325,7 +1291,7 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
         g += w_goal * P_all[k].transpose() * pos_err;
 
         // Velocity error at reference: v_ref[k] - v_target
-        double w_vel = config_.velocity_weight;
+        double w_vel = config_.mpc.objective.velocity_weight;
         double vel_err = x_ref[k].v - reference_velocity;
         g += w_vel * V_all[k].transpose() * vel_err;
     }
@@ -1376,9 +1342,9 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     // For each timestep, enforce ego stays within road_width/2 of path centerline.
     // Left boundary:  -n^T * p_ego >= -(n^T * p_path + road_width/2)
     // Right boundary:  n^T * p_ego >=  (n^T * p_path - road_width/2)
-    if (config_.enable_contouring_constraints && reference_path_.has_value()) {
+    if (config_.mpc.enable_contouring_constraints && reference_path_.has_value()) {
         const auto& path = *reference_path_;
-        const double half_width = config_.road_width / 2.0;
+        const double half_width = config_.mpc.constraints.road_width / 2.0;
         const int n_road = 2 * N;  // 2 constraints per timestep (left + right)
 
         // Expand C and d to include road boundary constraints
@@ -1421,7 +1387,7 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     //   v_ref[k] + V_all[k] du <= v_max   =>  -V_all[k] du >= v_ref[k] - v_max
     //   v_ref[k] + V_all[k] du >= v_min   =>   V_all[k] du >= v_min - v_ref[k]
     // Two rows per step k=1..N. Kept in the same >= convention as the other rows.
-    if (config_.enable_velocity_bounds) {
+    if (config_.mpc.constraints.enable_velocity_bounds) {
         const int n_cur = static_cast<int>(C.rows());
         const int n_vel = 2 * N;
         Eigen::MatrixXd C_new(n_cur + n_vel, n_dec);
@@ -1435,10 +1401,10 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
             int row_hi = n_cur + 2 * (k - 1) + 1;  // upper bound: v_k <= v_max
 
             C_new.row(row_lo) = V_all[k];
-            d_new(row_lo) = config_.min_velocity - v_ref_k;
+            d_new(row_lo) = config_.mpc.ego.dynamics.min_velocity - v_ref_k;
 
             C_new.row(row_hi) = -V_all[k];
-            d_new(row_hi) = v_ref_k - config_.max_velocity;
+            d_new(row_hi) = v_ref_k - config_.mpc.ego.dynamics.max_velocity;
         }
 
         C = C_new;
@@ -1448,10 +1414,10 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     // Step 6: Box constraints on delta_u
     Eigen::VectorXd lb(n_dec), ub(n_dec);
     for (int k = 0; k < N; ++k) {
-        lb(2 * k) = config_.min_acceleration - u_ref[k].a;
-        ub(2 * k) = config_.max_acceleration - u_ref[k].a;
-        lb(2 * k + 1) = -config_.max_steering_rate - u_ref[k].delta;
-        ub(2 * k + 1) = config_.max_steering_rate - u_ref[k].delta;
+        lb(2 * k) = config_.mpc.ego.dynamics.min_acceleration - u_ref[k].a;
+        ub(2 * k) = config_.mpc.ego.dynamics.max_acceleration - u_ref[k].a;
+        lb(2 * k + 1) = -config_.mpc.ego.dynamics.max_steering_rate - u_ref[k].delta;
+        ub(2 * k + 1) = config_.mpc.ego.dynamics.max_steering_rate - u_ref[k].delta;
     }
 
     QPProblem qp;
@@ -1512,8 +1478,8 @@ AdaptiveScenarioMPC::apply_simple_avoidance(
 
                         // Apply steering adjustment
                         double new_w = new_inputs[k].delta + 0.3 * heading_diff;
-                        new_w = std::clamp(new_w, -config_.max_steering_rate,
-                                          config_.max_steering_rate);
+                        new_w = std::clamp(new_w, -config_.mpc.ego.dynamics.max_steering_rate,
+                                          config_.mpc.ego.dynamics.max_steering_rate);
                         new_inputs[k] = EgoInput(new_inputs[k].a, new_w);
                     }
                 }
@@ -1530,13 +1496,13 @@ AdaptiveScenarioMPC::apply_simple_avoidance(
 MPCResult AdaptiveScenarioMPC::generate_safe_fallback(const EgoState& ego_state) {
     std::vector<EgoState> trajectory;
     std::vector<EgoInput> inputs;
-    trajectory.reserve(config_.horizon + 1);
-    inputs.reserve(config_.horizon);
+    trajectory.reserve(config_.mpc.horizon + 1);
+    inputs.reserve(config_.mpc.horizon);
 
     trajectory.push_back(ego_state);
     EgoState current = ego_state;
 
-    for (int k = 0; k < config_.horizon; ++k) {
+    for (int k = 0; k < config_.mpc.horizon; ++k) {
         // Brake gently
         EgoInput input(-1.0, 0.0);
         inputs.push_back(input);
@@ -1633,5 +1599,5 @@ void AdaptiveScenarioMPC::update_mode_model(
     }
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 

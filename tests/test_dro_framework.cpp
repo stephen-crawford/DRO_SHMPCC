@@ -38,7 +38,7 @@
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
@@ -114,20 +114,20 @@ static RolloutResult run_rollout(
 
     auto mode_models = create_obstacle_mode_models(DT);
 
-    ScenarioMPCConfig config;
-    config.horizon = horizon;
-    config.dt = DT;
-    config.num_scenarios = num_scenarios;
-    config.ego_radius = 0.5;
+    RuntimeConfig config;
+    config.mpc.horizon = horizon;
+    config.mpc.dt = DT;
+    config.mpc.sampling.num_scenarios = num_scenarios;
+    config.mpc.ego.radius = 0.5;
     config.obstacle_radius = 0.35;
-    config.safety_margin = 0.2;
-    config.use_sqp_solver = true;
-    config.ensure_mode_coverage = true;
-    config.enable_dro = enable_dro;
-    config.num_discs = num_discs;
-    config.safe_horizon_enabled = safe_horizon_enabled;
-    config.safe_horizon_min = 3;
-    config.weight_type = WeightType::FREQUENCY;
+    config.mpc.constraints.safety_margin = 0.2;
+    config.solver.use_sqp_solver = true;
+    config.mpc.sampling.ensure_mode_coverage = true;
+    config.dro.enabled = enable_dro;
+    config.mpc.ego.num_discs = num_discs;
+    config.mpc.safe_horizon_enabled = safe_horizon_enabled;
+    config.mpc.constraints.safe_horizon_min = 3;
+    config.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
     AdaptiveScenarioMPC controller(config);
 
@@ -155,7 +155,7 @@ static RolloutResult run_rollout(
     EgoState ego(0.0, 0.0, 0.0, 1.5);
     Eigen::Vector2d goal(20.0, 0.0);
     EgoDynamics dynamics(DT);
-    double collision_radius = config.ego_radius + config.obstacle_radius;
+    double collision_radius = config.mpc.ego.radius + config.obstacle_radius;
 
     // Initial mode observations
     for (int i = 0; i < 5; ++i) {

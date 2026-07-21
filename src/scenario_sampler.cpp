@@ -6,7 +6,7 @@
 #include "scenario_sampler.hpp"
 #include <cmath>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 namespace {
 
@@ -787,4 +787,4 @@ int compute_required_scenarios(double epsilon, double beta, int num_decision_var
     ));
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

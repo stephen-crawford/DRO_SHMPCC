@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 namespace {
 
@@ -157,4 +157,4 @@ PrimalOTResult solve_primal_ot(
     return out;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

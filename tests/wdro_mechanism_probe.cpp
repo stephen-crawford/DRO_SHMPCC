@@ -11,7 +11,7 @@
 #include <vector>
 #include <algorithm>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static std::vector<std::string> ids_of(const std::map<std::string,double>& m) {
     std::vector<std::string> v; for (auto& kv : m) v.push_back(kv.first); return v;

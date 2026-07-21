@@ -7,7 +7,7 @@
 #include "collision_constraints.hpp"
 #include <cmath>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 namespace {
 
@@ -486,4 +486,4 @@ std::vector<LinearizedCollisionHalfspace> build_collision_halfspaces(
     return out;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

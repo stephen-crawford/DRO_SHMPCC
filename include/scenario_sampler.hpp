@@ -15,7 +15,7 @@
 #include "mode_weights.hpp"
 #include <random>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /**
  * @brief Sample scenarios following Algorithm 1.
@@ -206,6 +206,6 @@ std::vector<Scenario> sample_scenarios_stratified(
  */
 int compute_required_scenarios(double epsilon, double beta, int num_decision_vars);
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_SCENARIO_SAMPLER_HPP

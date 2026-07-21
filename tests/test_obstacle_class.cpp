@@ -33,7 +33,7 @@
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 int main() {
     std::cout << "=== Test: Obstacle Class Sharing ===\n\n";
@@ -41,11 +41,11 @@ int main() {
     constexpr double DT = 0.1;
     auto mode_models = create_obstacle_mode_models(DT);
 
-    ScenarioMPCConfig cfg;
-    cfg.horizon = 10;
-    cfg.dt = DT;
-    cfg.num_scenarios = 10;
-    cfg.use_sqp_solver = true;
+    RuntimeConfig cfg;
+    cfg.mpc.horizon = 10;
+    cfg.mpc.dt = DT;
+    cfg.mpc.sampling.num_scenarios = 10;
+    cfg.solver.use_sqp_solver = true;
 
     // -------------------------------------------------------
     // Test 1: Observations sync within same class
@@ -194,13 +194,13 @@ int main() {
     {
         std::cout << "Test 5: ExperimentConfig multi-obstacle fields... ";
         ExperimentConfig ecfg;
-        ecfg.num_obstacles = 3;
-        ecfg.obstacles_per_class = 3;  // all share class 0
-        ecfg.num_scenarios = 10;
-        ecfg.rollout_steps = 10;
-        ecfg.horizon = 10;
-        ecfg.ablation = AblationVariant::NO_INJECTION;
-        ecfg.safe_horizon_enabled = false;
+        ecfg.obstacles.num_obstacles = 3;
+        ecfg.obstacles.obstacles_per_class = 3;  // all share class 0
+        ecfg.mpc.sampling.num_scenarios = 10;
+        ecfg.rollout.rollout_steps = 10;
+        ecfg.mpc.horizon = 10;
+        ecfg.dro.enabled = false;
+        ecfg.mpc.safe_horizon_enabled = false;
 
         auto rec = run_experiment_rollout(ecfg, 42);
         assert(rec.total_steps == 10);

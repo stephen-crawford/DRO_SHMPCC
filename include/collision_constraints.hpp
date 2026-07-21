@@ -11,13 +11,13 @@
  * Constraints are linearized around a reference trajectory to enable QP/SQP solving.
  */
 
-#ifndef SCENARIO_MPC_COLLISION_CONSTRAINTS_HPP
-#define SCENARIO_MPC_COLLISION_CONSTRAINTS_HPP
+#ifndef DRO_MPC_COLLISION_CONSTRAINTS_HPP
+#define DRO_MPC_COLLISION_CONSTRAINTS_HPP
 
 #include "types.hpp"
 #include <optional>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /**
  * @brief A fixed (pre-optimization) linearized collision half-space.
@@ -263,6 +263,6 @@ int project_warmstart_to_safety(
     double safety_margin = 0.0
 );
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_COLLISION_CONSTRAINTS_HPP

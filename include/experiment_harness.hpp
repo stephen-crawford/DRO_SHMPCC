@@ -1,23 +1,29 @@
 /**
  * @file experiment_harness.hpp
- * @brief Canonical rollout runner, obstacle simulator, stats, and CSV writer.
+ * @brief World / experiment / test layer over the controller runtime config.
  *
- * ALL rollout logic lives here. The paper_experiment_runner configures
- * ExperimentConfig and calls run_experiment_rollout() — it does NOT
- * duplicate obstacle simulation, collision detection, or mode tracking.
+ * config.hpp owns the controller runtime (RuntimeConfig = mpc + dro + solver).
+ * THIS header owns everything around a trial: the ground-truth obstacle process,
+ * the environment/road setup, the test (experiment) composition, result logging,
+ * result reporting/statistics, and the rollout helper functions.
  *
- * Configuration is split into independent sections so complex experiments
- * can be assembled by composing:
+ * ExperimentConfig composes the controller sections (MPCConfig, DROControllerConfig,
+ * SolverSettings) with world sections (obstacles, environment, sampling, rollout)
+ * and maps them down into a RuntimeConfig via to_scenario_mpc_config().
  *
- *   DRO  +  MPC  +  Obstacle  +  Environment  +  Sampling  +  Rollout
+ * ── File layout ──────────────────────────────────────────────────────────────
+ *   1. Obstacle configurations   — mode-switch / history enums, obstacle config,
+ *                                   ground-truth ObstacleSim
+ *   2. Environment configurations — road / path / initial-state setup
+ *   3. Test configurations       — sampling baselines, rollout protocol, the
+ *                                   assembled ExperimentConfig + arm builders
+ *   4. Test logging              — CSV writer
+ *   5. Results reporting         — RolloutRecord / RolloutResult + statistics
+ *   6. Helper functions          — seeds, shift, path/placement, the rollout runner
  *
- * Key features of run_experiment_rollout():
- *   - S-curve reference path (L=25m, A=3m) matching Python tests
- *   - Multi-obstacle with class-based mode observation sharing
- *   - Multi-disc collision detection (configurable num_discs)
- *   - Path completion termination at configurable fraction (default 95%)
- *   - Distribution shift injection
- *   - Per-step callbacks for experiment-specific logic (e.g. oracle flood)
+ * run_experiment_rollout() is THE canonical rollout. paper_experiment_runner and
+ * all tests configure an ExperimentConfig and call it — they do NOT duplicate
+ * obstacle simulation, collision detection, or mode tracking.
  */
 
 #ifndef DRO_MPC_EXPERIMENT_HARNESS_HPP
@@ -25,7 +31,6 @@
 
 #include "types.hpp"
 #include "config.hpp"
-#include "wasserstein_dro.hpp"
 #include "reference_path.hpp"
 
 #include <cmath>
@@ -37,306 +42,54 @@
 #include <string>
 #include <vector>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
-// Forward declarations
+// Forward declarations (controller lives in mpc_controller.hpp; only referenced
+// by pointer/reference in callback signatures here).
 class AdaptiveScenarioMPC;
 
-// ============================================================================
-// DRO Configuration Enums
-// ============================================================================
+// ############################################################################
+// # 1. OBSTACLE CONFIGURATIONS
+// ############################################################################
 
-enum class DROConfiguration {
-    BASE,  ///< DRO off (nominal scenario MPC)
-    DRO,   ///< DRO-enabled
-};
-
-enum class ReweightedDistributionConfiguration {
-    SAMPLING_ONLY,          ///< Resample scenarios from Q*
-    INJECTION_ONLY,         ///< Keep nominal samples; inject worst-case constraint(s)
-    SAMPLING_AND_INJECTION, ///< Both Q* resampling and injection
-};
-
-enum class RiskMeasureConfiguration {
-    VAR_BONFERRONI,  ///< Closed-form union-bound surrogate VaR
-    VAR,             ///< Per-step surrogate VaR (CDC'26-style)
-    CVAR,            ///< Per-step surrogate CVaR
-    SURROGATE_VAR,   ///< Explicit CDC'26 default alias of VAR
-    JOINT_RISK,      ///< Joint-horizon Euclidean risk (MC)
-};
-
-enum class NominalModeBeliefConfiguration {
-    DIRICHLET,  ///< Symmetric Dirichlet prior, no sticky bias
-    STICKY,     ///< Dirichlet rows + self-persistence prior
-};
-
-enum class GroundCostConfiguration {
-    W2,             ///< Gaussian W2 / Bures metric
-    W1_METRIC,      ///< W1 ground cost (when available)
-    ZERO_ONE,       ///< Discrete 0-1 mode mismatch cost
-    EUCLIDEAN_MEAN, ///< Mean-trajectory Euclidean distance
-};
-
-// ============================================================================
-// DRO Configuration Enum Names
-// ============================================================================
-
-inline std::string dro_configuration_name(DROConfiguration c) {
-    switch (c) {
-        case DROConfiguration::BASE: return "base_sh_mpcc";
-        case DROConfiguration::DRO:  return "dro_enabled";
-        default: return "unknown";
-    }
-}
-
-inline std::string reweighted_distribution_configuration_name(
-    ReweightedDistributionConfiguration r
-) {
-    switch (r) {
-        case ReweightedDistributionConfiguration::SAMPLING_ONLY:
-            return "sampling_only";
-        case ReweightedDistributionConfiguration::INJECTION_ONLY:
-            return "injection_only";
-        case ReweightedDistributionConfiguration::SAMPLING_AND_INJECTION:
-            return "sampling_and_injection";
-        default: return "unknown";
-    }
-}
-
-inline std::string risk_measure_configuration_name(RiskMeasureConfiguration r) {
-    switch (r) {
-        case RiskMeasureConfiguration::VAR_BONFERRONI: return "var_bonferroni";
-        case RiskMeasureConfiguration::VAR:            return "var";
-        case RiskMeasureConfiguration::CVAR:           return "cvar";
-        case RiskMeasureConfiguration::SURROGATE_VAR:  return "surrogate_var";
-        case RiskMeasureConfiguration::JOINT_RISK:     return "joint_risk";
-        default: return "unknown";
-    }
-}
-
-inline std::string nominal_mode_belief_configuration_name(
-    NominalModeBeliefConfiguration n
-) {
-    switch (n) {
-        case NominalModeBeliefConfiguration::DIRICHLET: return "dirichlet";
-        case NominalModeBeliefConfiguration::STICKY:    return "sticky";
-        default: return "unknown";
-    }
-}
-
-inline std::string ground_cost_name(GroundCostConfiguration g) {
-    switch (g) {
-        case GroundCostConfiguration::W2:             return "w2";
-        case GroundCostConfiguration::W1_METRIC:      return "w1";
-        case GroundCostConfiguration::ZERO_ONE:       return "zero_one";
-        case GroundCostConfiguration::EUCLIDEAN_MEAN: return "euclidean_mean";
-        default: return "unknown";
-    }
-}
-
-inline std::string ground_cost_name(DROGroundCostType t) {
-    switch (t) {
-        case DROGroundCostType::W2_BURES:       return "w2_bures";
-        case DROGroundCostType::ZERO_ONE:       return "zero_one";
-        case DROGroundCostType::EUCLIDEAN_MEAN: return "euclidean_mean";
-        default: return "unknown";
-    }
-}
-
-// ============================================================================
-// DRO Configuration Mappings + Settings
-// ============================================================================
-
-inline DRORiskMeasure to_dro_risk_measure(RiskMeasureConfiguration r) {
-    switch (r) {
-        case RiskMeasureConfiguration::VAR_BONFERRONI:
-            return DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
-        case RiskMeasureConfiguration::VAR:
-        case RiskMeasureConfiguration::SURROGATE_VAR:
-            return DRORiskMeasure::SURROGATE_VAR;
-        case RiskMeasureConfiguration::CVAR:
-            return DRORiskMeasure::SURROGATE_CVAR;
-        case RiskMeasureConfiguration::JOINT_RISK:
-            return DRORiskMeasure::JOINT_VAR;
-        default:
-            return DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
-    }
-}
-
-inline DROGroundCostType to_dro_ground_cost(GroundCostConfiguration g) {
-    switch (g) {
-        case GroundCostConfiguration::W2:
-        case GroundCostConfiguration::W1_METRIC:
-            return DROGroundCostType::W2_BURES;
-        case GroundCostConfiguration::ZERO_ONE:
-            return DROGroundCostType::ZERO_ONE;
-        case GroundCostConfiguration::EUCLIDEAN_MEAN:
-            return DROGroundCostType::EUCLIDEAN_MEAN;
-        default:
-            return DROGroundCostType::W2_BURES;
-    }
-}
-
-inline InjectionMode to_injection_mode(ReweightedDistributionConfiguration r) {
-    switch (r) {
-        case ReweightedDistributionConfiguration::SAMPLING_ONLY:
-            return InjectionMode::QSTAR_SAMPLE;
-        case ReweightedDistributionConfiguration::INJECTION_ONLY:
-            return InjectionMode::DRO;
-        case ReweightedDistributionConfiguration::SAMPLING_AND_INJECTION:
-            return InjectionMode::DRO;
-        default:
-            return InjectionMode::QSTAR_SAMPLE;
-    }
-}
-
-inline ModeBeliefConfig to_mode_belief_config(
-    NominalModeBeliefConfiguration n,
-    double self_persistence_prior = 0.8
-) {
-    ModeBeliefConfig cfg;
-    cfg.prior = DirichletPrior::KRICHEVSKY_TROFIMOV;
-    cfg.self_persistence_prior =
-        (n == NominalModeBeliefConfiguration::STICKY) ? self_persistence_prior
-                                                      : 0.0;
-    return cfg;
-}
-
-/**
- * @brief DRO-axis knobs for an experiment.
- *
- * Compose with MPC / Obstacle / Environment / Rollout settings to build a
- * full ExperimentConfig.
- */
-struct DROExperimentConfig {
-    DROConfiguration dro = DROConfiguration::BASE;
-    ReweightedDistributionConfiguration reweighting =
-        ReweightedDistributionConfiguration::SAMPLING_ONLY;
-    RiskMeasureConfiguration risk_measure =
-        RiskMeasureConfiguration::VAR_BONFERRONI;
-    NominalModeBeliefConfiguration mode_belief_kind =
-        NominalModeBeliefConfiguration::DIRICHLET;
-    GroundCostConfiguration ground_cost = GroundCostConfiguration::W2;
-
-    double eps_wass = 0.1;
-    double sigma_scale = 1.0;
-    double fixed_rho = -1.0;  ///< >0 forces constant radius
-    bool use_calibrated_radius = true;
-    bool use_primal_ot = true;
-    double confidence_beta = 0.05;
-    bool use_entropic_allocator = false;
-    double entropic_tau = 0.05;
-    int joint_risk_samples = 8000;
-    int dro_injection_count = 1;
-    double softmax_tau = 5.0;
-    double eps_greedy_epsilon = 0.3;
-    ModeBeliefConfig mode_belief{};
-    bool use_markov_mode_sampling = false;
-
-    bool enabled() const { return dro == DROConfiguration::DRO; }
-};
-
-// ============================================================================
-// MPC Configuration Enums
-// ============================================================================
-
-enum class MPCConfiguration {
-    MPC,     ///< Point-to-point / goal-tracking MPC
-    MPCC,    ///< Contouring control (path following)
-    SH_MPCC, ///< Safe-horizon MPCC
-};
-
-// ============================================================================
-// MPC Configuration Enum Names
-// ============================================================================
-
-inline std::string mpc_configuration_name(MPCConfiguration m) {
-    switch (m) {
-        case MPCConfiguration::MPC:     return "mpc";
-        case MPCConfiguration::MPCC:    return "mpcc";
-        case MPCConfiguration::SH_MPCC: return "sh_mpcc";
-        default: return "unknown";
-    }
-}
-
-// ============================================================================
-// MPC Configuration Settings
-// ============================================================================
-
-/**
- * @brief Controller / QP-axis knobs for an experiment.
- */
-struct MPCExperimentConfig {
-    MPCConfiguration mpc = MPCConfiguration::SH_MPCC;
-    int horizon = 20;
-    int num_scenarios = 20;
-    int num_discs = 3;
-    double vehicle_length = 4.0;
-    bool safe_horizon_enabled = true;
-    int forced_safe_horizon = -1;
-    int safe_horizon_min = 3;
-    bool enable_contouring_constraints = false;
-    double road_width = 7.0;
-    WeightType weight_type = WeightType::FREQUENCY;
-    int max_history_length = -1;
-
-    bool uses_safe_horizon() const {
-        return mpc == MPCConfiguration::SH_MPCC || safe_horizon_enabled;
-    }
-
-    bool uses_contouring() const {
-        return mpc == MPCConfiguration::MPCC ||
-               mpc == MPCConfiguration::SH_MPCC ||
-               enable_contouring_constraints;
-    }
-};
-
-// ============================================================================
-// Obstacle Configuration Enums
-// ============================================================================
+// ---- Enums -----------------------------------------------------------------
 
 /**
  * @brief When the ground-truth obstacle is allowed to change mode.
  *
- * PER_STEP          -- switch may fire every rollout step (realistic; CDC'26).
- * HOLD_OVER_HORIZON -- mode frozen for `horizon` steps so the mode is constant
- *                      across any one prediction horizon (Theorem-1 regime).
+ * MARKOV_JUMP_SYSTEM — switch may fire every rollout step (realistic; CDC'26).
+ * HOLD_OVER_HORIZON  — mode frozen for `horizon` steps so it is constant across
+ *                      any one prediction horizon (Theorem-1 regime).
  */
-enum class ModeSwitchRegime {
-    PER_STEP,
+enum class ModeSwitchConfiguration {
+    MARKOV_JUMP_SYSTEM,
     HOLD_OVER_HORIZON
 };
 
-enum class ObstacleLayoutConfiguration {
-    SINGLE,            ///< One obstacle
-    MULTI_INDEPENDENT, ///< Several obstacles, one class each
-    MULTI_SHARED_CLASS ///< Several obstacles sharing class history
+enum class ObstacleHistoryConfiguration {
+    INDEPENDENT,  ///< Several obstacles, one class each
+    SHARED        ///< Several obstacles sharing class history
 };
 
-// ============================================================================
-// Obstacle Configuration Enum Names
-// ============================================================================
+// ---- Enum names ------------------------------------------------------------
 
-inline std::string switch_regime_name(ModeSwitchRegime r) {
+inline std::string switch_regime_name(ModeSwitchConfiguration r) {
     switch (r) {
-        case ModeSwitchRegime::PER_STEP:          return "PerStep";
-        case ModeSwitchRegime::HOLD_OVER_HORIZON: return "HoldOverHorizon";
-        default: return "unknown";
+        case ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM: return "MarkovJump";
+        case ModeSwitchConfiguration::HOLD_OVER_HORIZON:  return "HoldOverHorizon";
+        default: return "HoldOverHorizon";
     }
 }
 
-inline std::string obstacle_layout_name(ObstacleLayoutConfiguration L) {
+inline std::string obstacle_layout_name(ObstacleHistoryConfiguration L) {
     switch (L) {
-        case ObstacleLayoutConfiguration::SINGLE:            return "single";
-        case ObstacleLayoutConfiguration::MULTI_INDEPENDENT: return "multi_independent";
-        case ObstacleLayoutConfiguration::MULTI_SHARED_CLASS: return "multi_shared_class";
-        default: return "unknown";
+        case ObstacleHistoryConfiguration::INDEPENDENT: return "independent_history";
+        case ObstacleHistoryConfiguration::SHARED:      return "shared_history_classes";
+        default: return "independent_history";
     }
 }
 
-// ============================================================================
-// Obstacle Configuration Settings
-// ============================================================================
+// ---- Settings --------------------------------------------------------------
 
 struct DistributionShiftConfig {
     double rho = 0.0;
@@ -348,8 +101,10 @@ struct DistributionShiftConfig {
  * @brief Ground-truth obstacle / mode-process knobs for an experiment.
  */
 struct ObstacleExperimentConfig {
-    ObstacleLayoutConfiguration layout = ObstacleLayoutConfiguration::SINGLE;
-    ModeSwitchRegime switch_regime = ModeSwitchRegime::PER_STEP;
+    ObstacleHistoryConfiguration history =
+        ObstacleHistoryConfiguration::INDEPENDENT;
+    ModeSwitchConfiguration switch_regime =
+        ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM;
     double switch_prob = 0.1;
     int num_modes = 4;
     int num_obstacles = 1;
@@ -361,33 +116,55 @@ struct ObstacleExperimentConfig {
     std::string rare_mode = "lane_change_left";
     double rare_switch_prob = 0.05;
 
-    std::vector<double> obs_arc_fractions;  ///< Empty => auto placement
+    std::vector<double> obs_arc_fractions;               ///< Empty => auto placement
     std::vector<ObstacleState> initial_obstacle_states;  ///< Overrides arc fracs
     DistributionShiftConfig shift;
 
     void apply_layout() {
-        switch (layout) {
-            case ObstacleLayoutConfiguration::SINGLE:
-                num_obstacles = 1;
+        if (num_obstacles <= 1) {
+            num_obstacles = 1;
+            obstacles_per_class = 1;
+            return;
+        }
+        switch (history) {
+            case ObstacleHistoryConfiguration::INDEPENDENT:
                 obstacles_per_class = 1;
                 break;
-            case ObstacleLayoutConfiguration::MULTI_INDEPENDENT:
-                if (num_obstacles < 2) num_obstacles = 4;
-                obstacles_per_class = 1;
-                break;
-            case ObstacleLayoutConfiguration::MULTI_SHARED_CLASS:
-                if (num_obstacles < 2) num_obstacles = 4;
+            case ObstacleHistoryConfiguration::SHARED:
                 obstacles_per_class = num_obstacles;
                 break;
         }
     }
 };
 
-// ============================================================================
-// Environment Configuration Enums
-// ============================================================================
+// ---- Ground-truth simulator ------------------------------------------------
 
-// NOTE: every EnvironmentType below runs on the SAME S-curve reference path
+/**
+ * @brief Ground-truth obstacle simulator with mode switching.
+ *
+ * Used by all rollouts. Propagates the obstacle state under the current mode
+ * dynamics with small process noise and optional mode switching.
+ */
+struct ObstacleSim {
+    ObstacleState state;
+    std::string current_mode;
+    std::vector<std::string> available_modes;
+    std::map<std::string, ModeModel> mode_models;
+
+    /// Propagate one step under current mode dynamics with noise.
+    void step(double dt, std::mt19937& rng);
+
+    /// Switch to a random mode with the given probability.
+    void maybe_switch(double switch_prob, std::mt19937& rng);
+};
+
+// ############################################################################
+// # 2. ENVIRONMENT CONFIGURATIONS
+// ############################################################################
+
+// ---- Enums -----------------------------------------------------------------
+
+// NOTE: every EnvironmentType runs on the SAME S-curve reference path
 // (create_s_curve(S_CURVE_LENGTH, S_CURVE_AMPLITUDE, ...)). The variants differ
 // ONLY in obstacle placement/velocity, never in road geometry. OVERTAKE_SLOW_LEAD
 // places a slow lead obstacle (v in [0.1,0.4] m/s) travelling with the ego at
@@ -400,9 +177,7 @@ enum class EnvironmentType {
     ONCOMING
 };
 
-// ============================================================================
-// Environment Configuration Enum Names
-// ============================================================================
+// ---- Enum names ------------------------------------------------------------
 
 inline std::string environment_name(EnvironmentType env) {
     switch (env) {
@@ -414,9 +189,23 @@ inline std::string environment_name(EnvironmentType env) {
     }
 }
 
-// ============================================================================
-// Environment Configuration Settings
-// ============================================================================
+// ---- World / path constants ------------------------------------------------
+
+// ================ ACC / paper defaults ======================================
+inline constexpr int    DEFAULT_ROLLOUT_STEPS  = 200;
+inline constexpr double DEFAULT_DT             = 0.1;
+inline constexpr int    DEFAULT_HORIZON        = 15;
+inline constexpr int    DEFAULT_BASE_SCENARIOS = 40;
+inline constexpr double S_CURVE_LENGTH         = 25.0;
+inline constexpr double S_CURVE_AMPLITUDE      = 3.0;
+inline constexpr int    S_CURVE_POINTS         = 200;
+inline constexpr double PATH_COMPLETE_FRAC     = 0.95;
+inline constexpr double OBS_PATH_FRACTION      = 0.35;
+
+/// Default arc fractions for placing 4 obstacles along the S-curve.
+inline const std::vector<double> OBS_ARC_FRACS_4 = {0.20, 0.35, 0.50, 0.65};
+
+// ---- Settings --------------------------------------------------------------
 
 struct EnvironmentSetup {
     ObstacleState initial_obs;
@@ -437,9 +226,11 @@ struct EnvironmentExperimentConfig {
     double path_completion_fraction = 0.95;
 };
 
-// ============================================================================
-// Sampling Configuration Enums
-// ============================================================================
+// ############################################################################
+// # 3. TEST CONFIGURATIONS
+// ############################################################################
+
+// ---- Sampling baselines ----------------------------------------------------
 
 enum class SamplingBaseline {
     STANDARD,
@@ -451,10 +242,6 @@ enum class SamplingBaseline {
     RECENCY_WEIGHT,
     ORACLE_FLOOD
 };
-
-// ============================================================================
-// Sampling Configuration Enum Names
-// ============================================================================
 
 inline std::string baseline_name(SamplingBaseline b) {
     switch (b) {
@@ -484,61 +271,34 @@ inline WeightType baseline_to_weight(SamplingBaseline bl) {
     }
 }
 
-// ============================================================================
-// Sampling Configuration Settings
-// ============================================================================
-
+/**
+ * @brief Thin experiment overlay that can override mpc.sampling.weight_type.
+ */
 struct SamplingExperimentConfig {
     SamplingBaseline baseline = SamplingBaseline::STANDARD;
 
     WeightType weight_type() const { return baseline_to_weight(baseline); }
 };
 
-// ============================================================================
-// Obstacle Simulator
-// ============================================================================
+// ---- DRO arm label ---------------------------------------------------------
 
-/**
- * @brief Ground-truth obstacle simulator with mode switching.
- *
- * Used by all rollouts. Propagates obstacle state under the current mode
- * dynamics with small process noise and optional mode switching.
- */
-struct ObstacleSim {
-    ObstacleState state;
-    std::string current_mode;
-    std::vector<std::string> available_modes;
-    std::map<std::string, ModeModel> mode_models;
-
-    /// Propagate one step under current mode dynamics with noise.
-    void step(double dt, std::mt19937& rng);
-
-    /// Switch to a random mode with the given probability.
-    void maybe_switch(double switch_prob, std::mt19937& rng);
+/// Coarse experiment-arm label: is DRO reweighting on the controller or not.
+/// (The runtime switch is DROControllerConfig::enabled; this is naming sugar
+/// for arm builders.)
+enum class DROConfiguration {
+    BASE,  ///< Safe-horizon (scenario) MPCC, no DRO reweighting
+    DRO    ///< DRO-enabled
 };
 
-// ============================================================================
-// Rollout Configuration Constants
-// ============================================================================
+inline std::string dro_configuration_name(DROConfiguration c) {
+    switch (c) {
+        case DROConfiguration::BASE: return "base_sh_mpcc";
+        case DROConfiguration::DRO:  return "dro_enabled";
+        default: return "unknown";
+    }
+}
 
-// ================ ACC / paper defaults ======================================
-
-inline constexpr int    DEFAULT_ROLLOUT_STEPS  = 200;
-inline constexpr double DEFAULT_DT             = 0.1;
-inline constexpr int    DEFAULT_HORIZON        = 15;
-inline constexpr int    DEFAULT_BASE_SCENARIOS = 40;
-inline constexpr double S_CURVE_LENGTH         = 25.0;
-inline constexpr double S_CURVE_AMPLITUDE      = 3.0;
-inline constexpr int    S_CURVE_POINTS         = 200;
-inline constexpr double PATH_COMPLETE_FRAC     = 0.95;
-inline constexpr double OBS_PATH_FRACTION      = 0.35;
-
-/// Default arc fractions for placing 4 obstacles along the S-curve.
-inline const std::vector<double> OBS_ARC_FRACS_4 = {0.20, 0.35, 0.50, 0.65};
-
-// ============================================================================
-// Rollout Configuration Settings
-// ============================================================================
+// ---- Rollout protocol ------------------------------------------------------
 
 struct RolloutExperimentConfig {
     int rollout_steps = 60;
@@ -551,70 +311,6 @@ struct RolloutExperimentConfig {
         step_callback;
 };
 
-// ============================================================================
-// Legacy Composition Helpers (AblationVariant / PaperVariant)
-// ============================================================================
-//
-// Kept for existing runners and ablations. Prefer composing the section
-// configs above for new experiments.
-
-enum class AblationVariant {
-    NO_INJECTION,
-    DRO_FULL,
-    DRO_NO_COV,
-    DRO_DISTANCE_ONLY,
-    RANDOM_INJECTION,
-    ALWAYS_INJECT
-};
-
-inline std::string ablation_variant_name(AblationVariant v) {
-    switch (v) {
-        case AblationVariant::NO_INJECTION:      return "no_injection";
-        case AblationVariant::DRO_FULL:          return "dro_full";
-        case AblationVariant::DRO_NO_COV:        return "dro_no_cov";
-        case AblationVariant::DRO_DISTANCE_ONLY: return "dro_distance_only";
-        case AblationVariant::RANDOM_INJECTION:  return "random_injection";
-        case AblationVariant::ALWAYS_INJECT:     return "always_inject";
-        default: return "unknown";
-    }
-}
-
-enum class PaperVariant {
-    BASE,
-    BASE_SH,
-    DRO,
-    DRO_SH
-};
-
-inline const std::vector<PaperVariant> ALL_VARIANTS = {
-    PaperVariant::BASE,
-    PaperVariant::BASE_SH,
-    PaperVariant::DRO,
-    PaperVariant::DRO_SH
-};
-
-inline std::string variant_name(PaperVariant v) {
-    switch (v) {
-        case PaperVariant::BASE:    return "Base";
-        case PaperVariant::BASE_SH: return "Base+SH";
-        case PaperVariant::DRO:     return "DRO";
-        case PaperVariant::DRO_SH:  return "DRO+SH";
-        default: return "unknown";
-    }
-}
-
-inline bool uses_dro(PaperVariant v) {
-    return v == PaperVariant::DRO || v == PaperVariant::DRO_SH;
-}
-
-inline bool uses_sh(PaperVariant v) {
-    return v == PaperVariant::BASE_SH || v == PaperVariant::DRO_SH;
-}
-
-// ============================================================================
-// Assembled Experiment Configuration
-// ============================================================================
-
 struct SeedBundle {
     unsigned master;
     unsigned env;
@@ -622,194 +318,204 @@ struct SeedBundle {
     unsigned scenario;
 };
 
+// ---- Assembled experiment configuration ------------------------------------
+
 /**
- * @brief Full experiment configuration.
+ * @brief Full experiment configuration — composition of section configs only.
  *
- * Flat fields remain for existing call sites. Prefer building via
- * assemble_experiment_config() from the section structs above when
- * composing new complex configurations.
+ * Build by filling the nested members (or use make_arm_config helpers):
  *
- * Section ownership of fields:
- *   DRO        — enable_dro, injection_mode, risk/ground-cost/radius knobs
- *   MPC        — horizon, scenarios, discs, safe horizon, contouring
- *   Obstacle   — modes, switching, multi-obstacle layout, shift
- *   Environment— path, ego init, completion
- *   Sampling   — weight_type / baseline
- *   Rollout    — steps, tags, callbacks
+ *   ExperimentConfig cfg;
+ *   cfg.dro.enabled = true;
+ *   cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+ *   cfg.dro.solver.base_radius = 0.1;
+ *   cfg.mpc.type = MPCConfiguration::SH_MPCC;
+ *   cfg.mpc.sampling.num_scenarios = 40;
+ *   cfg.obstacles.switch_prob = 0.2;
+ *   cfg.rollout.rollout_steps = 200;
  */
 struct ExperimentConfig {
-    // ---- MPC ----
-    int num_scenarios = 20;
-    int horizon = 20;
-    int num_discs = 3;
-    double vehicle_length = 4.0;
-    bool safe_horizon_enabled = true;
-    int forced_safe_horizon = -1;
-    int safe_horizon_min = 3;
-    bool enable_contouring_constraints = false;
-    double road_width = 7.0;
-    WeightType weight_type = WeightType::FREQUENCY;
-    int max_history_length = -1;
+    MPCConfig mpc;
+    DROControllerConfig dro;
+    SolverSettings solver{};
+    double obstacle_radius = 0.35;
+    ObstacleExperimentConfig obstacles;
+    EnvironmentExperimentConfig environment;
+    SamplingExperimentConfig sampling;
+    RolloutExperimentConfig rollout;
 
-    // ---- DRO ----
-    double eps_wass = 0.1;
-    double sigma_scale = 1.0;
-    bool enable_dro = false;
-    InjectionMode injection_mode = InjectionMode::QSTAR_SAMPLE;
-    AblationVariant ablation = AblationVariant::NO_INJECTION;
-    DROGroundCostType ground_cost = DROGroundCostType::W2_BURES;
-    bool use_calibrated_radius = true;
-    bool use_primal_ot = true;
-    double confidence_beta = 0.05;
-    bool use_entropic_allocator = false;
-    double entropic_tau = 0.05;
-    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
-    int joint_risk_samples = 8000;
-    double fixed_rho = -1.0;
-    bool use_markov_mode_sampling = false;
-    ModeBeliefConfig mode_belief;
-    int dro_injection_count = 1;
-    double softmax_tau = 5.0;
-    double eps_greedy_epsilon = 0.3;
+    /// Apply layout rules; sync belief / fixed rho; auto-name the method.
+    /// Does not call mpc.sync_from_type() (would overwrite SH overrides set
+    /// after type selection).
+    void normalize() {
+        obstacles.apply_layout();
+        dro.apply_fixed_rho();
+        mpc.sampling.sync_belief();
+        if (sampling.baseline != SamplingBaseline::STANDARD) {
+            mpc.sampling.weight_type = sampling.weight_type();
+        }
+        if (rollout.method_name.empty()) {
+            rollout.method_name =
+                dro_configuration_name(
+                    dro.enabled ? DROConfiguration::DRO
+                                : DROConfiguration::BASE) +
+                "_" + mpc_configuration_name(mpc.type);
+            if (dro.enabled) {
+                rollout.method_name += "_" +
+                    reweighted_distribution_use_name(dro.reweighting);
+            }
+        }
+    }
 
-    // ---- Obstacle ----
-    double switch_prob = 0.1;
-    ModeSwitchRegime switch_regime = ModeSwitchRegime::PER_STEP;
-    int rollout_steps = 60;
-    int num_modes = 4;
-    std::vector<std::string> obs_modes = {
-        "constant_velocity", "turn_left", "turn_right", "decelerating"
-    };
-    std::string rare_mode = "lane_change_left";
-    double rare_switch_prob = 0.05;
-    int num_obstacles = 1;
-    int obstacles_per_class = 1;
-    std::vector<double> obs_arc_fractions;
-    std::vector<ObstacleState> initial_obstacle_states;
-    DistributionShiftConfig shift;
-
-    // ---- Environment ----
-    std::optional<ReferencePath> custom_ref_path;
-    std::optional<EgoState> custom_initial_ego;
-    bool path_completion_termination = true;
-    double path_completion_fraction = 0.95;
-
-    // ---- Rollout / meta ----
-    std::function<void(int, int, ObstacleSim&, AdaptiveScenarioMPC&, std::mt19937&)>
-        step_callback;
-    std::string scenario_tag = "baseline";
-    std::string method_name;
+    /// Map the nested experiment sections into the controller runtime config.
+    RuntimeConfig to_scenario_mpc_config(double dt = DEFAULT_DT) const {
+        RuntimeConfig cfg;
+        cfg.mpc = mpc;
+        cfg.dro = dro;
+        cfg.solver = solver;
+        cfg.obstacle_radius = obstacle_radius;
+        cfg.mpc.dt = dt;
+        if (sampling.baseline != SamplingBaseline::STANDARD) {
+            cfg.mpc.sampling.weight_type = sampling.weight_type();
+        }
+        cfg.normalize();  // belief sync + fixed_rho only
+        return cfg;
+    }
 };
 
+// ---- Arm builders ----------------------------------------------------------
+
 /**
- * @brief Assemble a flat ExperimentConfig from independent section configs.
+ * @brief Compose a standard Base / Base+SH / DRO / DRO+SH arm.
  *
- * Example:
- *   auto cfg = assemble_experiment_config(
- *       dro_cfg, mpc_cfg, obs_cfg, env_cfg, sampling_cfg, rollout_cfg);
+ * Prefer filling ExperimentConfig sections directly for new experiments.
  */
-inline ExperimentConfig assemble_experiment_config(
-    DROExperimentConfig dro,
-    MPCExperimentConfig mpc,
-    ObstacleExperimentConfig obstacles,
-    EnvironmentExperimentConfig environment,
-    SamplingExperimentConfig sampling = {},
-    RolloutExperimentConfig rollout = {}
+inline ExperimentConfig make_arm_config(
+    DROConfiguration dro_kind,
+    MPCConfiguration mpc_kind,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0,
+    int num_discs = 1,
+    double vehicle_length = 1.5
 ) {
-    obstacles.apply_layout();
-    if (dro.mode_belief_kind == NominalModeBeliefConfiguration::STICKY &&
-        dro.mode_belief.self_persistence_prior <= 0.0) {
-        dro.mode_belief = to_mode_belief_config(dro.mode_belief_kind);
-    } else if (dro.mode_belief_kind == NominalModeBeliefConfiguration::DIRICHLET) {
-        dro.mode_belief = to_mode_belief_config(dro.mode_belief_kind);
-    }
-
     ExperimentConfig cfg;
-
-    // MPC
-    cfg.horizon = mpc.horizon;
-    cfg.num_scenarios = mpc.num_scenarios;
-    cfg.num_discs = mpc.num_discs;
-    cfg.vehicle_length = mpc.vehicle_length;
-    cfg.safe_horizon_enabled = mpc.uses_safe_horizon();
-    cfg.forced_safe_horizon = mpc.forced_safe_horizon;
-    cfg.safe_horizon_min = mpc.safe_horizon_min;
-    cfg.enable_contouring_constraints = mpc.uses_contouring();
-    cfg.road_width = mpc.road_width;
-    cfg.weight_type = sampling.baseline == SamplingBaseline::STANDARD
-                          ? mpc.weight_type
-                          : sampling.weight_type();
-    cfg.max_history_length = mpc.max_history_length;
-
-    // DRO
-    cfg.enable_dro = dro.enabled();
-    cfg.injection_mode = dro.enabled() ? to_injection_mode(dro.reweighting)
-                                       : InjectionMode::NONE;
-    cfg.eps_wass = dro.eps_wass;
-    cfg.sigma_scale = dro.sigma_scale;
-    cfg.fixed_rho = dro.fixed_rho;
-    cfg.use_calibrated_radius = dro.use_calibrated_radius;
-    cfg.use_primal_ot = dro.use_primal_ot;
-    cfg.confidence_beta = dro.confidence_beta;
-    cfg.use_entropic_allocator = dro.use_entropic_allocator;
-    cfg.entropic_tau = dro.entropic_tau;
-    cfg.risk_measure = to_dro_risk_measure(dro.risk_measure);
-    cfg.joint_risk_samples = dro.joint_risk_samples;
-    cfg.dro_injection_count = dro.dro_injection_count;
-    cfg.softmax_tau = dro.softmax_tau;
-    cfg.eps_greedy_epsilon = dro.eps_greedy_epsilon;
-    cfg.ground_cost = to_dro_ground_cost(dro.ground_cost);
-    cfg.mode_belief = dro.mode_belief;
-    cfg.use_markov_mode_sampling = dro.use_markov_mode_sampling;
-    cfg.ablation = dro.enabled() ? AblationVariant::DRO_FULL
-                                 : AblationVariant::NO_INJECTION;
-
-    // Q* sampling + injection: keep injection_mode as DRO (inject) while
-    // callers that need pure Q* resampling use SAMPLING_ONLY -> QSTAR_SAMPLE.
-    if (dro.enabled() &&
-        dro.reweighting ==
-            ReweightedDistributionConfiguration::SAMPLING_AND_INJECTION) {
-        cfg.injection_mode = InjectionMode::DRO;
-    }
-
-    // Obstacle
-    cfg.switch_prob = obstacles.switch_prob;
-    cfg.switch_regime = obstacles.switch_regime;
-    cfg.num_modes = obstacles.num_modes;
-    cfg.num_obstacles = obstacles.num_obstacles;
-    cfg.obstacles_per_class = obstacles.obstacles_per_class;
-    cfg.obs_modes = obstacles.obs_modes;
-    cfg.rare_mode = obstacles.rare_mode;
-    cfg.rare_switch_prob = obstacles.rare_switch_prob;
-    cfg.obs_arc_fractions = obstacles.obs_arc_fractions;
-    cfg.initial_obstacle_states = obstacles.initial_obstacle_states;
-    cfg.shift = obstacles.shift;
-
-    // Environment
-    cfg.custom_ref_path = environment.custom_ref_path;
-    cfg.custom_initial_ego = environment.custom_initial_ego;
-    cfg.path_completion_termination = environment.path_completion_termination;
-    cfg.path_completion_fraction = environment.path_completion_fraction;
-
-    // Rollout
-    cfg.rollout_steps = rollout.rollout_steps;
-    cfg.scenario_tag = rollout.scenario_tag;
-    cfg.step_callback = std::move(rollout.step_callback);
-    if (!rollout.method_name.empty()) {
-        cfg.method_name = rollout.method_name;
+    cfg.dro.enabled = (dro_kind == DROConfiguration::DRO);
+    if (cfg.dro.enabled) {
+        cfg.dro.reweighting = ReweightedDistributionUse::SAMPLING_ONLY;
+        cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
     } else {
-        cfg.method_name =
-            dro_configuration_name(dro.dro) + "_" +
-            mpc_configuration_name(mpc.mpc) + "_" +
-            reweighted_distribution_configuration_name(dro.reweighting);
+        cfg.dro.injection_mode = InjectionMode::NONE;
     }
 
+    cfg.mpc.type = mpc_kind;
+    cfg.mpc.sync_from_type();
+    cfg.mpc.horizon = DEFAULT_HORIZON;
+    cfg.mpc.sampling.num_scenarios = num_scenarios;
+    cfg.mpc.ego.num_discs = num_discs;
+    cfg.mpc.ego.length = vehicle_length;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.obstacles.obs_modes = obs_modes;
+    cfg.obstacles.rare_mode = rare_mode;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
+
+    cfg.rollout.rollout_steps = rollout_steps;
+    cfg.normalize();
     return cfg;
 }
 
-// ============================================================================
-// Data Structures — Rollout Records
-// ============================================================================
+inline ExperimentConfig make_base_config(
+    double switch_prob, int num_scenarios, int rollout_steps,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "", double rare_prob = 0.0,
+    int num_discs = 1, double vehicle_length = 1.5
+) {
+    return make_arm_config(
+        DROConfiguration::BASE, MPCConfiguration::MPCC,
+        switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob, num_discs, vehicle_length);
+}
+
+inline ExperimentConfig make_base_sh_config(
+    double switch_prob, int num_scenarios, int rollout_steps,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "", double rare_prob = 0.0,
+    int num_discs = 1, double vehicle_length = 1.5
+) {
+    return make_arm_config(
+        DROConfiguration::BASE, MPCConfiguration::SH_MPCC,
+        switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob, num_discs, vehicle_length);
+}
+
+inline ExperimentConfig make_dro_config(
+    double switch_prob, int num_scenarios, int rollout_steps,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "", double rare_prob = 0.0,
+    int num_discs = 1, double vehicle_length = 1.5
+) {
+    return make_arm_config(
+        DROConfiguration::DRO, MPCConfiguration::MPCC,
+        switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob, num_discs, vehicle_length);
+}
+
+inline ExperimentConfig make_dro_sh_config(
+    double switch_prob, int num_scenarios, int rollout_steps,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "", double rare_prob = 0.0,
+    int num_discs = 1, double vehicle_length = 1.5
+) {
+    return make_arm_config(
+        DROConfiguration::DRO, MPCConfiguration::SH_MPCC,
+        switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob, num_discs, vehicle_length);
+}
+
+inline std::string arm_name(const ExperimentConfig& cfg) {
+    if (!cfg.rollout.method_name.empty()) return cfg.rollout.method_name;
+    const bool sh = cfg.mpc.uses_safe_horizon();
+    if (!cfg.dro.enabled) return sh ? "Base+SH" : "Base";
+    return sh ? "DRO+SH" : "DRO";
+}
+
+// ############################################################################
+// # 4. TEST LOGGING
+// ############################################################################
+
+struct RolloutRecord;  // defined in section 5
+
+class CSVWriter {
+public:
+    explicit CSVWriter(const std::string& filepath);
+    ~CSVWriter();
+
+    void write_header();
+    void write_record(const RolloutRecord& rec);
+    void flush();
+
+private:
+    std::ofstream ofs_;
+};
+
+// ############################################################################
+// # 5. RESULTS REPORTING
+// ############################################################################
+
+// ---- Per-rollout record ----------------------------------------------------
 
 /**
  * @brief Per-rollout record with all metrics.
@@ -871,10 +577,9 @@ struct RolloutRecord {
     int active_constraints = 0;
 };
 
-// ============================================================================
-// RolloutResult — thin adapter over RolloutRecord
-// ============================================================================
-
+/**
+ * @brief Thin adapter over RolloutRecord for lightweight callers.
+ */
 struct RolloutResult {
     bool collision = false;
     bool completed_path = false;
@@ -909,26 +614,7 @@ struct RolloutResult {
     }
 };
 
-// ============================================================================
-// CSV Writer
-// ============================================================================
-
-class CSVWriter {
-public:
-    explicit CSVWriter(const std::string& filepath);
-    ~CSVWriter();
-
-    void write_header();
-    void write_record(const RolloutRecord& rec);
-    void flush();
-
-private:
-    std::ofstream ofs_;
-};
-
-// ============================================================================
-// Statistical Helpers
-// ============================================================================
+// ---- Statistics ------------------------------------------------------------
 
 std::pair<double, double> wilson_ci(int successes, int n, double z = 1.96);
 
@@ -956,9 +642,11 @@ struct EffectSizes {
 
 EffectSizes compute_effect_sizes(double p_base, double p_comparison);
 
-// ============================================================================
-// Utilities
-// ============================================================================
+// ############################################################################
+// # 6. HELPER FUNCTIONS
+// ############################################################################
+
+// ---- Seeds / shift / placement ---------------------------------------------
 
 SeedBundle derive_seeds(unsigned master_seed, int idx);
 
@@ -967,15 +655,6 @@ void apply_distribution_shift(
     const DistributionShiftConfig& shift,
     ObstacleSim& obs_sim,
     std::mt19937& rng
-);
-
-/// Configure ScenarioMPCConfig + DROConfig from an AblationVariant.
-void configure_ablation(
-    ScenarioMPCConfig& config,
-    DROConfig& dro_cfg,
-    AblationVariant variant,
-    double eps_wass,
-    double sigma_scale
 );
 
 /// Place an obstacle on an S-curve path at the given arc-length fraction.
@@ -988,9 +667,7 @@ ObstacleState obstacle_on_s_curve(
 /// Compute percentile of a vector (p in [0,100]).
 double percentile(std::vector<double> v, double p);
 
-// ============================================================================
-// Rollout Runner
-// ============================================================================
+// ---- Rollout runner --------------------------------------------------------
 
 /**
  * @brief Run a single MPC rollout with the given configuration and seed.
@@ -1002,77 +679,47 @@ RolloutRecord run_experiment_rollout(
     unsigned seed
 );
 
-// ============================================================================
-// Paper Variant Helpers (implementations in experiment_harness.cpp)
-// ============================================================================
-
 /// Create a reference path and set it on the controller.
 ReferencePath setup_mpcc_path(AdaptiveScenarioMPC& ctrl);
 
-/// Map PaperVariant to ExperimentConfig fields.
-ExperimentConfig make_experiment_config(
-    PaperVariant variant,
-    double switch_prob,
-    int num_scenarios,
-    int rollout_steps,
-    const std::vector<std::string>& obs_modes = {
-        "constant_velocity", "turn_left", "turn_right", "decelerating"},
-    const std::string& rare_mode = "",
-    double rare_prob = 0.0,
-    bool safe_horizon_enabled = false,
-    int num_discs = 1,
-    double vehicle_length = 1.5
-);
+/// Run a single rollout from a fully composed ExperimentConfig.
+inline RolloutResult run_configured_rollout(
+    ExperimentConfig cfg,
+    unsigned seed
+) {
+    cfg.normalize();
+    return RolloutResult::from_record(run_experiment_rollout(cfg, seed));
+}
 
-/// Run a single rollout for a PaperVariant.
-RolloutResult run_single_rollout(
-    PaperVariant variant,
-    double switch_prob,
-    int num_scenarios,
-    int rollout_steps,
-    unsigned seed,
-    const std::vector<std::string>& obs_modes = {
-        "constant_velocity", "turn_left", "turn_right", "decelerating"},
-    const std::string& rare_mode = "",
-    double rare_prob = 0.0,
-    bool safe_horizon_enabled = false,
-    int num_discs = 1,
-    double vehicle_length = 1.5
-);
-
-/// Run a multi-obstacle rollout for a PaperVariant.
-RolloutResult run_multi_obstacle_rollout(
-    PaperVariant variant,
-    double switch_prob,
-    int num_scenarios,
-    int rollout_steps,
+/// Run a multi-obstacle rollout from a composed ExperimentConfig.
+inline RolloutResult run_multi_obstacle_rollout(
+    ExperimentConfig cfg,
     unsigned seed,
     int num_obstacles = 4,
     int num_classes = 4,
-    const std::vector<std::string>& obs_modes = {
-        "constant_velocity", "turn_left", "turn_right", "decelerating"},
-    const std::string& rare_mode = "",
-    double rare_prob = 0.0,
     const std::vector<double>& arc_fracs = OBS_ARC_FRACS_4
-);
+) {
+    cfg.obstacles.num_obstacles = num_obstacles;
+    cfg.obstacles.obstacles_per_class =
+        (num_classes > 0 && num_classes < num_obstacles)
+            ? (num_obstacles / num_classes) : 1;
+    cfg.obstacles.obs_arc_fractions = arc_fracs;
+    cfg.obstacles.history = ObstacleHistoryConfiguration::INDEPENDENT;
+    return run_configured_rollout(std::move(cfg), seed);
+}
 
 /// Create an environment setup for a given type.
 EnvironmentSetup create_environment(EnvironmentType env, std::mt19937& rng);
 
-/// Run a rollout with a custom environment setup.
+/// Run a rollout with a custom environment setup layered onto a base config.
 RolloutResult run_single_rollout_env(
-    PaperVariant variant,
-    double switch_prob,
-    int num_scenarios,
-    int rollout_steps,
+    ExperimentConfig cfg,
     unsigned seed,
     const EnvironmentSetup& env_setup,
     SamplingBaseline baseline = SamplingBaseline::STANDARD,
-    int forced_safe_horizon = -1,
-    int num_discs = 1,
-    double vehicle_length = 1.5
+    int forced_safe_horizon = -1
 );
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // DRO_MPC_EXPERIMENT_HARNESS_HPP

@@ -53,7 +53,7 @@
 #include "scenario_sampler.hpp"
 #include "mode_weights.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -417,27 +417,26 @@ static ExperimentConfig make_config(
     double rho = 0.1
 ) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = num_scenarios;
-    cfg.switch_prob = switch_prob;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = rare_prob;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.safe_horizon_enabled = true;
-    cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = 0.95;
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = false;
-    cfg.injection_mode = InjectionMode::NONE;
-    cfg.eps_wass = rho;
-    cfg.ablation = AblationVariant::NO_INJECTION;
-    cfg.num_obstacles = num_obs;
-    cfg.obstacles_per_class = 1;
-    cfg.method_name = method_name(method);
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = num_scenarios;
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.mpc.safe_horizon_enabled = true;
+    cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = 0.95;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = false;
+    cfg.dro.injection_mode = InjectionMode::NONE;
+    cfg.dro.solver.base_radius = rho;
+    cfg.obstacles.num_obstacles = num_obs;
+    cfg.obstacles.obstacles_per_class = 1;
+    cfg.rollout.method_name = method_name(method);
 
     switch (method) {
         case TrajDROMethod::SHMPCC_BASE:
@@ -445,13 +444,13 @@ static ExperimentConfig make_config(
             break;
 
         case TrajDROMethod::MODE_DRO_SAMPLE:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
 
         case TrajDROMethod::MODE_DRO_INJECT:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
             break;
 
         case TrajDROMethod::TRAJ_DRO_RESAMPLE:
@@ -461,7 +460,7 @@ static ExperimentConfig make_config(
             // trajectory-level DRO using the controller's inject_scenario API.
             // We leave enable_dro=false so the controller does normal sampling,
             // then our callback overrides with DRO-reweighted scenarios.
-            cfg.step_callback = [method, rho, num_scenarios](
+            cfg.rollout.step_callback = [method, rho, num_scenarios](
                 int step, int obs_id, ObstacleSim& obs_sim,
                 AdaptiveScenarioMPC& controller, std::mt19937& rng
             ) {
@@ -471,13 +470,13 @@ static ExperimentConfig make_config(
                 // Sample trajectory particles from the nominal distribution
                 // by propagating each mode's dynamics with noise
                 const auto& modes = obs_sim.mode_models;
-                int horizon = controller.config().horizon;
-                double ego_r = controller.config().ego_radius;
+                int horizon = controller.config().mpc.horizon;
+                double ego_r = controller.config().mpc.ego.radius;
                 double obs_r = controller.config().obstacle_radius;
-                double margin = controller.config().safety_margin;
+                double margin = controller.config().mpc.constraints.safety_margin;
                 double safety_radius = ego_r + obs_r + margin;
-                int n_discs = controller.config().num_discs;
-                double veh_len = controller.config().vehicle_length;
+                int n_discs = controller.config().mpc.ego.num_discs;
+                double veh_len = controller.config().mpc.ego.length;
 
                 // Get the ego reference trajectory (from controller's scenarios)
                 // We'll use the controller's current state as a proxy
@@ -665,8 +664,8 @@ static void run_exp_a() {
                 EnvironmentSetup env_setup = create_environment(env, env_rng);
 
                 ExperimentConfig cfg = make_config(method, SWITCH_PROB, RARE_PROB);
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);
@@ -799,8 +798,8 @@ static void run_exp_c() {
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
 
             ExperimentConfig cfg = make_config(method, SWITCH_PROB, RARE_PROB);
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
 
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
@@ -864,8 +863,8 @@ static void run_exp_d() {
             std::mt19937 env_rng(seed);
             EnvironmentSetup env_setup = create_environment(EnvironmentType::ONCOMING, env_rng);
             ExperimentConfig cfg = make_config(TrajDROMethod::SHMPCC_BASE, SWITCH_PROB, RARE_PROB);
-            cfg.initial_obstacle_states = {env_setup.initial_obs};
-            cfg.obs_modes = env_setup.obs_modes;
+            cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+            cfg.obstacles.obs_modes = env_setup.obs_modes;
             RolloutRecord rec = run_experiment_rollout(cfg, seed);
             met.add(rec);
         }
@@ -894,8 +893,8 @@ static void run_exp_d() {
 
                 ExperimentConfig cfg = make_config(
                     method, SWITCH_PROB, RARE_PROB, NUM_SCENARIOS, 1, rho);
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);

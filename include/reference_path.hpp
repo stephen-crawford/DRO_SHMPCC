@@ -16,7 +16,7 @@
 #include <cmath>
 #include <string>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /**
  * @brief Point on reference path with position and tangent.
@@ -159,6 +159,6 @@ private:
     PathPoint interpolate(const PathPoint& p1, const PathPoint& p2, double t) const;
 };
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_REFERENCE_PATH_HPP

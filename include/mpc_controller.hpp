@@ -30,7 +30,7 @@
 #include <optional>
 #include <vector>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /**
  * @brief Statistics from MPC controller.
@@ -54,7 +54,7 @@ public:
      * @brief Initialize the MPC controller.
      * @param config Configuration parameters
      */
-    explicit AdaptiveScenarioMPC(const ScenarioMPCConfig& config);
+    explicit AdaptiveScenarioMPC(const RuntimeConfig& config);
 
     /**
      * @brief Initialize mode history for a new obstacle.
@@ -119,7 +119,7 @@ public:
     void reset();
 
     /// Get the configuration
-    const ScenarioMPCConfig& config() const { return config_; }
+    const RuntimeConfig& config() const { return config_; }
 
     /// Get current scenarios
     const std::vector<Scenario>& scenarios() const { return scenarios_; }
@@ -141,7 +141,7 @@ public:
     void clear_custom_mode_weights();
 
     /// Mutable config access (for per-step adjustments like safety_margin).
-    ScenarioMPCConfig& mutable_config() { return config_; }
+    RuntimeConfig& mutable_config() { return config_; }
 
     /// Inject an extra scenario for the next solve() call.
     /// Pre-injected scenarios are added after normal sampling and marked
@@ -240,7 +240,7 @@ private:
      */
     MPCResult generate_safe_fallback(const EgoState& ego_state);
 
-    ScenarioMPCConfig config_;
+    RuntimeConfig config_;
     EgoDynamics ego_dynamics_;
     ADMMSolver qp_solver_;
     std::map<std::string, ModeModel> default_modes_;
@@ -262,6 +262,6 @@ private:
     std::vector<Scenario> pre_injected_scenarios_;
 };
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_MPC_CONTROLLER_HPP

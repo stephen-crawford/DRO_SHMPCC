@@ -19,6 +19,7 @@
 #define SCENARIO_MPC_WASSERSTEIN_DRO_HPP
 
 #include "types.hpp"
+#include "config.hpp"
 #include <vector>
 #include <map>
 #include <string>
@@ -26,63 +27,10 @@
 #include <random>
 #include <limits>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
-// NOTE: DRORiskMode / DROGroundCostType / DRORiskMeasure now live in types.hpp.
-// They are shared configuration vocabulary: ScenarioMPCConfig (config.hpp) must
-// name them to forward them into this module's DROConfig, and config.hpp cannot
-// include wasserstein_dro.hpp without inverting the layering. Both already
-// include types.hpp, so that is where they belong.
-
-/**
- * @brief Configuration for DRO worst-case weight computation.
- */
-struct DROConfig {
-    double rho_base = 0.1;           ///< Base Wasserstein ball radius rho
-    double rho_min = 0.01;           ///< Minimum rho (clamped)
-    double rho_max = 0.10;  // FIX: cap below mode-transport collapse cost (was 0.5 -> q* bang-bang)            ///< Maximum rho (clamped)
-    bool adaptive_rho = true;        ///< Enable adaptive rho scaling
-    double confidence_alpha = 1.0;   ///< Scaling for 1/sqrt(n_obs) term
-    double entropy_gamma = 0.5;      ///< Scaling for entropy term
-    bool use_calibrated_radius = true;   ///< DEFAULT ON: confidence-calibrated simplex-concentration rho_n(beta)
-    double confidence_beta = 0.05;   ///< Target miscoverage (1-beta coverage) for the calibrated radius
-    double alpha_one_sided = 0.95;   ///< Risk level alpha (VaR/CVaR tail level, and z_alpha for the surrogate)
-    /// Use the TRUE Wasserstein-metric primal OT reweighting (exact W1 LP) instead of the
-    /// dual-guided heuristic recovery. DEFAULT ON (the reviewer-requested true metric).
-    bool use_primal_ot = true;
-    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;  ///< DEFAULT: Bonferroni joint-horizon VaR (see DRORiskMeasure)
-    /// Monte Carlo sample count for JOINT_VAR / JOINT_CVAR.
-    /// Measured on the canonical 6-mode scenario (error vs 2M-sample ground truth,
-    /// and cost of one compute_risk_vector call over 6 modes x 15 steps):
-    ///     500 -> err 0.029, 1.7 ms  |  2000 -> err 0.021, 6.8 ms
-    ///    8000 -> err 0.008,  28 ms  | 32000 -> err 0.002, 111 ms
-    /// 8000 is the default: it is the smallest count whose VaR coverage lands inside
-    /// +/-0.5% of alpha. NOTE the cost -- at 28 ms this is ~19x the paper's quoted
-    /// <1.5 ms/step budget, so JOINT_* is an OFFLINE analysis / calibration tool,
-    /// not the online loop. SURROGATE_VAR remains the default risk_measure.
-    int joint_risk_samples = 8000;
-    uint64_t joint_risk_seed = 0x5150C0FFEEULL;  ///< Fixed RNG seed: deterministic across calls, common random numbers across modes
-    double sigma_floor = 1e-6;       ///< Floor for directional sigma (numerical stability)
-    /// Use the entropic (softmax) allocator instead of the raw W1-LP recovery.
-    ///
-    /// Theorem 2(i): when the transport budget is SLACK the LP optimum is exactly
-    /// q* = e_{argmax r}, so min_m q*_m = 0 and the likelihood ratio L = inf --
-    /// there is NO finite closed-loop certificate. When the budget binds, the LP
-    /// support is bounded by #{distinct destinations}+1 and is deficient ~86% of
-    /// the time (measured over 3000 random instances; 14.1% retain full support).
-    ///
-    /// The entropic row softmax is STRICTLY positive, so q_min > 0 and
-    /// L <= 1/q_min < inf UNCONDITIONALLY. entropic_tau trades protection
-    /// (<q_tau,r>, non-increasing in tau) against certificate tightness
-    /// (1/q_min, decreasing in tau). Off by default: CDC'26 used the raw LP.
-    bool use_entropic_allocator = false;
-    /// Temperature tau > 0. tau -> 0 recovers the raw LP (and its infinite L).
-    /// Measured on the canonical 6-mode scenario at rho=0.15: tau=0.05 costs 2.5%
-    /// protection (0.7517 -> 0.7326) and takes L from inf to 166.8.
-    double entropic_tau = 0.05;
-    DRORiskMode risk_mode = DRORiskMode::FULL;                ///< Risk computation mode
-    DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;  ///< Ground cost type
-};
+// DROConfig lives in dro_config.hpp so RuntimeConfig can nest it without
+// including this solver header. DROGroundCostType / DRORiskMeasure are in types.hpp.
 
 /**
  * @brief Tie-breaking policy for deterministic transport plan construction.
@@ -398,7 +346,9 @@ public:
     );
 
     /// Get adaptive Wasserstein radius rho based on observation count and entropy
-    double get_adaptive_rho() const;
+    /// Adaptive Wasserstein radius rho. The calibrated (true-W1) radius folds in
+    /// the ground-metric diameter diam(D) = max_{i,j} D[i][j] explicitly.
+    double get_adaptive_rho(double ground_metric_diameter = 1.0) const;
 
     /// Update prediction error tracking (for potential future adaptive rho refinement)
     void update_prediction_error(double error);
@@ -595,6 +545,6 @@ private:
     double max_entropy_ = 1.0;  ///< log(M) for M modes
 };
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_WASSERSTEIN_DRO_HPP

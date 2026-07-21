@@ -13,7 +13,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 int main() {
     auto mm = create_obstacle_mode_models(0.1);

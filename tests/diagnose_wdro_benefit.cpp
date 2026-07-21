@@ -8,7 +8,7 @@
 #include <cmath>
 #include <string>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static ObstacleState place_oncoming(const ReferencePath& path, double offset) {
     double s = 0.60 * path.total_length();
@@ -21,17 +21,17 @@ static ObstacleState place_oncoming(const ReferencePath& path, double offset) {
 
 static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) {
     ExperimentConfig c;
-    c.horizon = DEFAULT_HORIZON; c.num_scenarios = DEFAULT_BASE_SCENARIOS;
-    c.switch_prob = 0.2; c.rollout_steps = DEFAULT_ROLLOUT_STEPS;
-    c.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
-    c.rare_mode = "lane_change_left"; c.rare_switch_prob = 0.1;
-    c.num_discs = 1; c.vehicle_length = 1.5;
-    c.safe_horizon_enabled = true; c.safe_horizon_min = 3;
-    c.path_completion_termination = true; c.path_completion_fraction = 0.95;
-    c.weight_type = WeightType::FREQUENCY; c.num_obstacles = 1;
-    c.enable_contouring_constraints = true; c.road_width = 4.0;
-    c.custom_ref_path = path; c.custom_initial_ego = EgoState(0,0,0,1.5);
-    c.initial_obstacle_states = {obs};
+    c.mpc.horizon = DEFAULT_HORIZON; c.mpc.sampling.num_scenarios = DEFAULT_BASE_SCENARIOS;
+    c.obstacles.switch_prob = 0.2; c.rollout.rollout_steps = DEFAULT_ROLLOUT_STEPS;
+    c.obstacles.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
+    c.obstacles.rare_mode = "lane_change_left"; c.obstacles.rare_switch_prob = 0.1;
+    c.mpc.ego.num_discs = 1; c.mpc.ego.length = 1.5;
+    c.mpc.safe_horizon_enabled = true; c.mpc.constraints.safe_horizon_min = 3;
+    c.environment.path_completion_termination = true; c.environment.path_completion_fraction = 0.95;
+    c.mpc.sampling.weight_type = WeightType::FREQUENCY; c.obstacles.num_obstacles = 1;
+    c.mpc.enable_contouring_constraints = true; c.mpc.constraints.road_width = 4.0;
+    c.environment.custom_ref_path = path; c.environment.custom_initial_ego = EgoState(0,0,0,1.5);
+    c.obstacles.initial_obstacle_states = {obs};
     return c;
 }
 
@@ -47,7 +47,7 @@ int main() {
     ExperimentConfig base = mk(path, place_oncoming(path, 0.0));
 
     std::printf("### Diagnose WDRO benefit at offset 0 (road ON, S=40, N=%d) ###\n", N);
-    ExperimentConfig b = base; b.enable_dro = false;
+    ExperimentConfig b = base; b.dro.enabled = false;
     double base_c = coll_rate(b, N);
     std::printf("base (no DRO): %.3f\n\n", base_c);
     std::printf("%-42s %8s %9s\n", "WDRO config", "coll", "benefit");
@@ -63,8 +63,8 @@ int main() {
     };
     for (const auto& k : cfgs) {
         ExperimentConfig w = base;
-        w.enable_dro = true; w.injection_mode = InjectionMode::QSTAR_SAMPLE;
-        w.use_calibrated_radius = k.calib; w.risk_measure = k.rm; w.use_primal_ot = k.ot;
+        w.dro.enabled = true; w.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+        w.dro.solver.radius_calibration.use_calibrated_radius = k.calib; w.dro.solver.radius_calibration.risk_measure = k.rm; w.dro.solver.radius_calibration.use_primal_ot = k.ot;
         double wc = coll_rate(w, N);
         std::printf("%-42s %8.3f %+8.1fpp\n", k.name, wc, 100.0*(base_c - wc));
         std::fflush(stdout);

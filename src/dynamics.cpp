@@ -8,9 +8,12 @@
 #include <cmath>
 #include <algorithm>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 EgoDynamics::EgoDynamics(double dt) : dt_(dt) {}
+
+EgoDynamics::EgoDynamics(const EgoDynamicsConfig& model_spec, double dt)
+    : model(model_spec), dt_(dt) {}
 
 Eigen::Vector4d EgoDynamics::continuous_dynamics(const Eigen::Vector4d& state,
                                                   const Eigen::Vector2d& input) const {
@@ -268,4 +271,4 @@ std::map<std::string, ModeModel> create_obstacle_mode_models(double dt) {
     return modes;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

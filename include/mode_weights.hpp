@@ -16,7 +16,7 @@
 #include "types.hpp"
 #include <random>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /// Belief over discrete modes: mode_id -> probability. Canonical type shared by the
 /// Bayesian mode-belief estimator, the Markov transition/prediction functions, and the
@@ -152,6 +152,6 @@ ModeDistribution update_mode_belief(
     double floor = 1e-12
 );
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_MODE_WEIGHTS_HPP

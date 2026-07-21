@@ -9,7 +9,7 @@
 #include <cmath>
 #include <vector>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 int main() {
     const int N = 250;
@@ -21,21 +21,21 @@ int main() {
         int coll = 0; double jm_c = 0, jm_s = 0; int nc = 0, ns = 0;
         for (int i = 0; i < N; ++i) {
             ExperimentConfig c;
-            c.horizon = DEFAULT_HORIZON;
-            c.num_scenarios = DEFAULT_BASE_SCENARIOS;
-            c.switch_prob = 0.2;
-            c.rollout_steps = DEFAULT_ROLLOUT_STEPS;
-            c.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
-            c.rare_mode = "lane_change_left";
-            c.rare_switch_prob = 0.1;
-            c.num_discs = 1; c.vehicle_length = 1.5;
-            c.safe_horizon_enabled = true; c.safe_horizon_min = 3;
-            c.path_completion_termination = true; c.path_completion_fraction = 0.95;
-            c.weight_type = WeightType::FREQUENCY;
-            c.enable_contouring_constraints = true; c.road_width = 4.0;
-            c.custom_ref_path = path; c.custom_initial_ego = EgoState(0.0,0.0,0.0,1.5);
-            c.num_obstacles = V;             // auto-placed along the S-curve
-            c.enable_dro = false;            // base planner
+            c.mpc.horizon = DEFAULT_HORIZON;
+            c.mpc.sampling.num_scenarios = DEFAULT_BASE_SCENARIOS;
+            c.obstacles.switch_prob = 0.2;
+            c.rollout.rollout_steps = DEFAULT_ROLLOUT_STEPS;
+            c.obstacles.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
+            c.obstacles.rare_mode = "lane_change_left";
+            c.obstacles.rare_switch_prob = 0.1;
+            c.mpc.ego.num_discs = 1; c.mpc.ego.length = 1.5;
+            c.mpc.safe_horizon_enabled = true; c.mpc.constraints.safe_horizon_min = 3;
+            c.environment.path_completion_termination = true; c.environment.path_completion_fraction = 0.95;
+            c.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            c.mpc.enable_contouring_constraints = true; c.mpc.constraints.road_width = 4.0;
+            c.environment.custom_ref_path = path; c.environment.custom_initial_ego = EgoState(0.0,0.0,0.0,1.5);
+            c.obstacles.num_obstacles = V;
+            c.dro.enabled = false;
             RolloutRecord r = run_experiment_rollout(c, 4000000u + unsigned(V*100000 + i));
             double jm = r.joint_mode_checks > 0 ? double(r.joint_missed_mode_steps)/r.joint_mode_checks : 0.0;
             if (r.collision) { coll++; jm_c += jm; nc++; } else { jm_s += jm; ns++; }

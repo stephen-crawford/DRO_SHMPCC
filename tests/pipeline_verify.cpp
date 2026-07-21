@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 static int fails = 0;
 static void check(bool ok, const char* msg) {
     std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", msg); if(!ok) ++fails;
@@ -49,7 +49,7 @@ int main() {
     check((int)nominal.size()==M && allpos, "nominal belief: every mode strictly positive (Dirichlet)");
     check(std::abs(nsum-1.0)<1e-9, "nominal belief normalized to 1");
     // risk scores (Bonferroni VaR) vs plain VaR
-    auto risk_of = [&](DRORiskMeasure rm){ DROConfig c; c.risk_measure=rm;
+    auto risk_of = [&](DRORiskMeasure rm){ DROConfig c; c.radius_calibration.risk_measure=rm;
         WassersteinDRO d(c); return d.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2); };
     DROResult bonf = risk_of(DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
     DROResult var  = risk_of(DRORiskMeasure::SURROGATE_VAR);
@@ -96,8 +96,8 @@ int main() {
     check(true, "merge step ran (inspect the collapse ratio above)");
 
     std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
-    ScenarioMPCConfig cfg; cfg.enable_dro=true; cfg.injection_mode=InjectionMode::QSTAR_SAMPLE;
-    cfg.num_scenarios=40; cfg.num_discs=1; cfg.vehicle_length=1.5;
+    RuntimeConfig cfg; cfg.dro.enabled=true; cfg.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;
+    cfg.mpc.sampling.num_scenarios=40; cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
     AdaptiveScenarioMPC ctrl(cfg);
     ctrl.set_reference_path(path);
     EgoState ego(0,0,0,1.5); Eigen::Vector2d goal(25,0);
@@ -113,7 +113,7 @@ int main() {
         std::map<std::string,int> c; for(auto&s:sc){auto it=s.trajectories.find(0); if(it!=s.trajectories.end())c[it->second.mode_id]++;}
         int nz=0; for(auto&kv:c) if(kv.second>0)++nz; return nz; };
     int raw_support = scenario_support(bonf);
-    DROConfig ec; ec.risk_measure=DRORiskMeasure::SURROGATE_VAR_BONFERRONI; ec.use_entropic_allocator=true; ec.entropic_tau=0.05;
+    DROConfig ec; ec.radius_calibration.risk_measure=DRORiskMeasure::SURROGATE_VAR_BONFERRONI; ec.radius_calibration.use_entropic_allocator=true; ec.radius_calibration.entropic_tau=0.05;
     WassersteinDRO ed(ec);
     DROResult ent = ed.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2);
     int ent_support = scenario_support(ent);

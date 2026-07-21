@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 ReferencePath ReferencePath::create_straight(
     const Eigen::Vector2d& start,
@@ -239,4 +239,4 @@ PathPoint ReferencePath::interpolate(const PathPoint& p1, const PathPoint& p2, d
     return result;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

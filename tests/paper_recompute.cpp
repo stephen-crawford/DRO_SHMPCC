@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static ObstacleState place_oncoming(const ReferencePath& path, double offset) {
     double s = 0.60 * path.total_length();
@@ -27,26 +27,26 @@ static ObstacleState place_oncoming(const ReferencePath& path, double offset) {
 
 static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) {
     ExperimentConfig c;
-    c.horizon = DEFAULT_HORIZON;
-    c.num_scenarios = DEFAULT_BASE_SCENARIOS;          // 40
-    c.switch_prob = 0.2;
-    c.rollout_steps = DEFAULT_ROLLOUT_STEPS;           // 200
-    c.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
-    c.rare_mode = "lane_change_left";
-    c.rare_switch_prob = 0.1;
-    c.num_discs = 1;
-    c.vehicle_length = 1.5;
-    c.safe_horizon_enabled = true;
-    c.safe_horizon_min = 3;
-    c.path_completion_termination = true;
-    c.path_completion_fraction = 0.95;
-    c.weight_type = WeightType::FREQUENCY;
-    c.num_obstacles = 1;
-    c.enable_contouring_constraints = true;            // road ON
-    c.road_width = 4.0;                                 // lane 4.0 m, ego +/- 2.0 m
-    c.custom_ref_path = path;
-    c.custom_initial_ego = EgoState(0.0, 0.0, 0.0, 1.5);
-    c.initial_obstacle_states = {obs};
+    c.mpc.horizon = DEFAULT_HORIZON;
+    c.mpc.sampling.num_scenarios = DEFAULT_BASE_SCENARIOS;
+    c.obstacles.switch_prob = 0.2;
+    c.rollout.rollout_steps = DEFAULT_ROLLOUT_STEPS;
+    c.obstacles.obs_modes = {"constant_velocity","turn_left","turn_right","decelerating"};
+    c.obstacles.rare_mode = "lane_change_left";
+    c.obstacles.rare_switch_prob = 0.1;
+    c.mpc.ego.num_discs = 1;
+    c.mpc.ego.length = 1.5;
+    c.mpc.safe_horizon_enabled = true;
+    c.mpc.constraints.safe_horizon_min = 3;
+    c.environment.path_completion_termination = true;
+    c.environment.path_completion_fraction = 0.95;
+    c.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    c.obstacles.num_obstacles = 1;
+    c.mpc.enable_contouring_constraints = true;
+    c.mpc.constraints.road_width = 4.0;
+    c.environment.custom_ref_path = path;
+    c.environment.custom_initial_ego = EgoState(0.0, 0.0, 0.0, 1.5);
+    c.obstacles.initial_obstacle_states = {obs};
     return c;
 }
 
@@ -56,11 +56,11 @@ static Res run(const ExperimentConfig& base, bool dro, WeightType wt, bool entro
     int c = 0; double cl=0, ct=0, ve=0, ef=0, ms=0;
     for (int i = 0; i < N; ++i) {
         ExperimentConfig cfg = base;
-        cfg.weight_type = wt;
-        cfg.enable_dro = dro;
-        cfg.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
-        cfg.use_entropic_allocator = entropic;
-        cfg.entropic_tau = 0.05;
+        cfg.mpc.sampling.weight_type = wt;
+        cfg.dro.enabled = (dro);
+        cfg.dro.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
+        cfg.dro.solver.radius_calibration.use_entropic_allocator = entropic;
+        cfg.dro.solver.radius_calibration.entropic_tau = 0.05;
         RolloutRecord r = run_experiment_rollout(cfg, 3000000u + unsigned(i));
         c += r.collision ? 1 : 0; cl += r.min_clearance; ct += r.mean_contouring_error();
         ve += r.mean_velocity_error(); ef += r.control_effort; ms += r.avg_solve_ms;
@@ -75,7 +75,6 @@ int main() {
 
     std::printf("### CORRECTED-CODE RECOMPUTE (main): calib radius + Bonferroni VaR + primal OT ###\n\n");
 
-    // ---- (1) Offset sweep -------------------------------------------------
     std::printf("== fig:offset -- lateral-offset sweep (road ON, S=40, N=%d/arm) ==\n", N);
     std::printf("%-8s %10s %10s %9s %9s %9s\n","offset","base_coll","WDRO_coll","benefit","base_clr","WDRO_clr");
     const double offs[] = {0.0, 0.5, 1.0, 1.5, 2.0, 3.0};
@@ -88,7 +87,6 @@ int main() {
         std::fflush(stdout);
     }
 
-    // ---- (2) Road-on 5-arm table at offset 0 ------------------------------
     std::printf("\n== tab:road_on -- 5-arm at offset 0 (road ON, S=40, N=%d/arm) ==\n", N);
     std::printf("%-22s %7s %14s %8s %8s %8s %9s %6s\n",
                 "Method","Coll.","[95%% CI]","Clear.","Contour","Vel.err","Effort","ms");

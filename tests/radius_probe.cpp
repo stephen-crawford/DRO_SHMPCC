@@ -11,7 +11,7 @@
 #include <iostream>
 #include <iomanip>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static double expected_risk(const std::map<std::string, double>& q,
                             const std::map<std::string, double>& r) {
@@ -33,8 +33,8 @@ static DROResult run(bool calibrated, int n_obs,
                      const std::map<std::string, ModeModel>& mm,
                      const std::vector<EgoState>& ego) {
     DROConfig cfg;                       // defaults: rho_base=0.1, rho_min=0.01, rho_max=0.5
-    cfg.use_calibrated_radius = calibrated;
-    cfg.confidence_beta = 0.05;          // 95% coverage
+    cfg.radius_calibration.use_calibrated_radius = calibrated;
+    cfg.radius_calibration.confidence_beta = 0.05;          // 95% coverage
     WassersteinDRO dro(cfg);
     dro.set_observation_count(n_obs);
     return dro.compute_worst_case_weights(nominal, obs, mm, ego, 15, 0.5, 0.35, 0.2);

@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 struct PrimalOTResult {
     std::map<std::string, double> q;                 ///< Q*_j = sum_i pi_ij
@@ -41,6 +41,6 @@ PrimalOTResult solve_primal_ot(
     const std::vector<std::string>& mode_ids,
     double rho);
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_PRIMAL_OT_HPP

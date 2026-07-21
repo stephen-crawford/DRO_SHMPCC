@@ -42,7 +42,7 @@
 #include "mpc_controller.hpp"
 #include "wasserstein_dro.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
@@ -220,27 +220,25 @@ struct StrategyMetrics {
 
 static ExperimentConfig make_strategy_config(const StrategyDef& strat) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = NUM_SCENARIOS;
-    cfg.switch_prob = SWITCH_PROB;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = RARE_PROB;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
-    cfg.method_name = strat.name;
-    cfg.ablation = AblationVariant::NO_INJECTION;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+    cfg.obstacles.switch_prob = SWITCH_PROB;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = RARE_PROB;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
+    cfg.rollout.method_name = strat.name;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
-    cfg.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = (strat.enable_dro);
+    cfg.dro.injection_mode = strat.injection_mode;
+    cfg.dro.solver.base_radius = DRO_RHO_BASE;
 
-    cfg.enable_dro = strat.enable_dro;
-    cfg.injection_mode = strat.injection_mode;
-    cfg.eps_wass = DRO_RHO_BASE;
-
-    cfg.safe_horizon_enabled = strat.safe_horizon;
+    cfg.mpc.safe_horizon_enabled = strat.safe_horizon;
 
     return cfg;
 }
@@ -303,8 +301,7 @@ static void write_config_file(const std::string& filepath, int total_rollouts,
     ofs << "rho_max = 0.5\n";
     ofs << "adaptive_rho = true\n";
     ofs << "alpha_one_sided = 0.95\n";
-    ofs << "ground_cost = W2_BURES\n";
-    ofs << "risk_mode = FULL\n\n";
+    ofs << "ground_cost = W2_BURES\n\n";
 
     ofs << "[strategies]\n";
     for (size_t i = 0; i < STRATEGIES.size(); i++) {
@@ -564,12 +561,12 @@ int main(int argc, char** argv) {
     std::vector<ExperimentConfig> configs(STRATEGIES.size());
     for (size_t i = 0; i < STRATEGIES.size(); i++) {
         configs[i] = make_strategy_config(STRATEGIES[i]);
-        configs[i].num_obstacles = num_obstacles;
-        configs[i].obstacles_per_class = obstacles_per_class;
+        configs[i].obstacles.num_obstacles = num_obstacles;
+        configs[i].obstacles.obstacles_per_class = obstacles_per_class;
         if (num_obstacles == 4) {
-            configs[i].obs_arc_fractions = OBS_ARC_FRACS_4;
+            configs[i].obstacles.obs_arc_fractions = OBS_ARC_FRACS_4;
         } else if (num_obstacles == 2) {
-            configs[i].obs_arc_fractions = {0.30, 0.55};
+            configs[i].obstacles.obs_arc_fractions = {0.30, 0.55};
         }
     }
 

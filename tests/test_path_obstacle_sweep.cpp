@@ -31,7 +31,7 @@
 #include <numeric>
 #include <random>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 // ============================================================================
 // Configuration
@@ -183,35 +183,33 @@ ExperimentConfig make_sweep_config(
     const ObsCountDef& obs_def
 ) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = NUM_SCENARIOS;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.num_discs = 1;
-    cfg.vehicle_length = 1.5;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
-    cfg.ablation = AblationVariant::NO_INJECTION;
-
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = strat.enable_dro;
-    cfg.injection_mode = strat.injection_mode;
-    cfg.eps_wass = DRO_RHO;
-    cfg.safe_horizon_enabled = strat.safe_horizon;
-    cfg.safe_horizon_min = 3;
-    cfg.method_name = strat.name;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.mpc.ego.num_discs = 1;
+    cfg.mpc.ego.length = 1.5;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = (strat.enable_dro);
+    cfg.dro.injection_mode = strat.injection_mode;
+    cfg.dro.solver.base_radius = DRO_RHO;
+    cfg.mpc.safe_horizon_enabled = strat.safe_horizon;
+    cfg.mpc.constraints.safe_horizon_min = 3;
+    cfg.rollout.method_name = strat.name;
 
     // Behavior settings
-    cfg.obs_modes = behav.modes;
-    cfg.rare_mode = behav.rare_mode;
-    cfg.rare_switch_prob = behav.rare_prob;
-    cfg.switch_prob = behav.switch_prob;
+    cfg.obstacles.obs_modes = behav.modes;
+    cfg.obstacles.rare_mode = behav.rare_mode;
+    cfg.obstacles.rare_switch_prob = behav.rare_prob;
+    cfg.obstacles.switch_prob = behav.switch_prob;
 
     // Path and obstacle settings
-    cfg.custom_ref_path = path_def.path;
-    cfg.custom_initial_ego = path_def.initial_ego;
-    cfg.num_obstacles = obs_def.num_obstacles;
-    cfg.obstacles_per_class = obs_def.obstacles_per_class;
-    cfg.obs_arc_fractions = obs_def.arc_fractions;
+    cfg.environment.custom_ref_path = path_def.path;
+    cfg.environment.custom_initial_ego = path_def.initial_ego;
+    cfg.obstacles.num_obstacles = obs_def.num_obstacles;
+    cfg.obstacles.obstacles_per_class = obs_def.obstacles_per_class;
+    cfg.obstacles.obs_arc_fractions = obs_def.arc_fractions;
 
     return cfg;
 }

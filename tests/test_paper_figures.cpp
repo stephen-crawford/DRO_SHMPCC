@@ -44,7 +44,7 @@
 #include "dynamics.hpp"
 #include "collision_constraints.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -199,47 +199,46 @@ static std::string method_name(MethodType m) {
 static ExperimentConfig make_base_config(double switch_prob, double rare_prob,
                                           int num_scenarios = NUM_SCENARIOS) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = num_scenarios;
-    cfg.switch_prob = switch_prob;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = OBS_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = rare_prob;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.safe_horizon_enabled = true;
-    cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = 0.95;
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = false;
-    cfg.injection_mode = InjectionMode::NONE;
-    cfg.eps_wass = 0.1;
-    cfg.ablation = AblationVariant::NO_INJECTION;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = num_scenarios;
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = OBS_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.mpc.safe_horizon_enabled = true;
+    cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = 0.95;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = false;
+    cfg.dro.injection_mode = InjectionMode::NONE;
+    cfg.dro.solver.base_radius = 0.1;
     return cfg;
 }
 
 static ExperimentConfig make_method_config(MethodType method, double switch_prob,
                                             double rare_prob, int num_scenarios = NUM_SCENARIOS) {
     ExperimentConfig cfg = make_base_config(switch_prob, rare_prob, num_scenarios);
-    cfg.method_name = method_name(method);
+    cfg.rollout.method_name = method_name(method);
 
     switch (method) {
         case MethodType::BASE:
             // Already configured
             break;
         case MethodType::WDRO_SAMPLING:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
         case MethodType::WDRO_INJECTION:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
             break;
         case MethodType::WDRO_COMBINED:
-            cfg.enable_dro = true;
-            cfg.injection_mode = InjectionMode::DRO;
+            cfg.dro.enabled = true;
+            cfg.dro.injection_mode = InjectionMode::DRO;
             break;
     }
     return cfg;
@@ -293,10 +292,10 @@ static void run_fig40_risk_lift() {
 
     // DRO probe for diagnostics
     DROConfig dro_cfg;
-    dro_cfg.rho_base = RHO_BASE;
-    dro_cfg.rho_min = 0.01;
-    dro_cfg.rho_max = 0.5;
-    dro_cfg.adaptive_rho = true;
+    dro_cfg.base_radius = RHO_BASE;
+    dro_cfg.min_radius = 0.01;
+    dro_cfg.max_radius = 0.5;
+    dro_cfg.adaptive_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
     WassersteinDRO dro_probe(dro_cfg);
 
@@ -543,10 +542,10 @@ static void run_fig43_geometry_ablation() {
         auto t1 = std::chrono::steady_clock::now();
 
         ExperimentConfig cfg = make_base_config(SWITCH_PROB, RARE_PROB);
-        cfg.method_name = var.name;
-        cfg.enable_dro = var.enable_dro;
-        cfg.injection_mode = var.enable_dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
-        cfg.ground_cost = var.ground_cost;
+        cfg.rollout.method_name = var.name;
+        cfg.dro.enabled = (var.enable_dro);
+        cfg.dro.injection_mode = var.enable_dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
+        cfg.dro.solver.ground_cost_type = var.ground_cost;
 
         Metrics met;
         met.method = var.name;
@@ -603,7 +602,7 @@ static void run_fig44_rho_sweep() {
         auto t1 = std::chrono::steady_clock::now();
 
         ExperimentConfig cfg = make_base_config(SWITCH_PROB, RARE_PROB);
-        cfg.method_name = "Base";
+        cfg.rollout.method_name = "Base";
         Metrics met;
         met.method = "Base";
 
@@ -632,10 +631,10 @@ static void run_fig44_rho_sweep() {
         auto t1 = std::chrono::steady_clock::now();
 
         ExperimentConfig cfg = make_base_config(SWITCH_PROB, RARE_PROB);
-        cfg.method_name = "WDRO-sampling";
-        cfg.enable_dro = true;
-        cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
-        cfg.eps_wass = rho;
+        cfg.rollout.method_name = "WDRO-sampling";
+        cfg.dro.enabled = true;
+        cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+        cfg.dro.solver.base_radius = rho;
 
         Metrics met;
         met.method = "WDRO-sampling";
@@ -696,10 +695,10 @@ static void run_fig45_feasibility() {
     std::uniform_real_distribution<double> u01(0.0, 1.0);
 
     DROConfig dro_cfg;
-    dro_cfg.rho_base = RHO_BASE;
-    dro_cfg.rho_min = 0.01;
-    dro_cfg.rho_max = 0.5;
-    dro_cfg.adaptive_rho = true;
+    dro_cfg.base_radius = RHO_BASE;
+    dro_cfg.min_radius = 0.01;
+    dro_cfg.max_radius = 0.5;
+    dro_cfg.adaptive_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
     WassersteinDRO dro_probe(dro_cfg);
 
@@ -794,20 +793,6 @@ static void run_fig46_env_robustness() {
             std::cout.flush();
             auto t1 = std::chrono::steady_clock::now();
 
-            // Use PaperVariant to map method to the env rollout runner
-            PaperVariant pv;
-            switch (method) {
-                case MethodType::BASE:
-                    pv = PaperVariant::BASE_SH;
-                    break;
-                case MethodType::WDRO_SAMPLING:
-                    pv = PaperVariant::DRO_SH;
-                    break;
-                case MethodType::WDRO_INJECTION:
-                    pv = PaperVariant::DRO_SH;
-                    break;
-            }
-
             Metrics met;
             met.method = method_name(method);
 
@@ -819,11 +804,11 @@ static void run_fig46_env_robustness() {
 
                 // Build config via ExperimentConfig for more control
                 ExperimentConfig cfg = make_method_config(method, SWITCH_PROB, RARE_PROB);
-                cfg.method_name = method_name(method);
-                cfg.initial_obstacle_states = {env_setup.initial_obs};
-                cfg.obs_modes = env_setup.obs_modes;
-                cfg.rare_mode = RARE_MODE;
-                cfg.rare_switch_prob = RARE_PROB;
+                cfg.rollout.method_name = method_name(method);
+                cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+                cfg.obstacles.obs_modes = env_setup.obs_modes;
+                cfg.obstacles.rare_mode = RARE_MODE;
+                cfg.obstacles.rare_switch_prob = RARE_PROB;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);

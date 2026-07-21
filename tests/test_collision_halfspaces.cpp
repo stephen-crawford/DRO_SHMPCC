@@ -9,7 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 namespace {
 

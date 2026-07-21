@@ -17,7 +17,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 /**
  * @brief QP problem data.
@@ -90,6 +90,6 @@ private:
     bool has_warm_start_ = false;
 };
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_QP_SOLVER_HPP

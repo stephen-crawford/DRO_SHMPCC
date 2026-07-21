@@ -33,7 +33,7 @@
 #include <vector>
 #include <algorithm>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static double expected_risk(const std::map<std::string, double>& q,
                             const std::map<std::string, double>& r) {
@@ -73,7 +73,7 @@ int main() {
     std::cout << "=== SECTION 1: four risk measures ===\n";
     {
         auto risk_of = [&](DRORiskMeasure m) {
-            DROConfig cfg; cfg.risk_measure = m;
+            DROConfig cfg; cfg.radius_calibration.risk_measure = m;
             WassersteinDRO d(cfg);
             return d.compute_worst_case_weights(
                 nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
@@ -168,8 +168,8 @@ int main() {
         const double R = 0.5 + 0.35 + 0.2;   // ego_r + obs_r + margin
         const int H = 15;
 
-        DROConfig jv_cfg; jv_cfg.risk_measure = DRORiskMeasure::JOINT_VAR;
-        DROConfig jc_cfg; jc_cfg.risk_measure = DRORiskMeasure::JOINT_CVAR;
+        DROConfig jv_cfg; jv_cfg.radius_calibration.risk_measure = DRORiskMeasure::JOINT_VAR;
+        DROConfig jc_cfg; jc_cfg.radius_calibration.risk_measure = DRORiskMeasure::JOINT_CVAR;
         WassersteinDRO d_jv(jv_cfg), d_jc(jc_cfg);
         // compute_risk_vector is private; read r[m] off the public result instead.
         // (ego_r=0.5, obs_r=0.35, margin=0.2 => the same R used below.)
@@ -188,7 +188,7 @@ int main() {
             const int n_noise = static_cast<int>(mode.G.cols());
             const int M = 200000;
 
-            // FRESH stream: different seed from config.joint_risk_seed.
+            // FRESH stream: different seed from config.radius_calibration.joint_risk_seed.
             std::mt19937_64 rng(0xDEADBEEF12345ULL);
             std::normal_distribution<double> gauss(0.0, 1.0);
             std::vector<double> V; V.reserve(M);

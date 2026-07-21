@@ -9,10 +9,11 @@
 #define SCENARIO_MPC_DYNAMICS_HPP
 
 #include "types.hpp"
+#include "config.hpp"
 #include <cmath>
 #include <map>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 // Forward declaration
 class ReferencePath;
@@ -37,14 +38,27 @@ class ReferencePath;
  */
 class EgoDynamics {
 public:
+
+    /// Motion-model spec + kinematic limits this integrator realizes.
+    /// The limits are properties of the dynamics model (SLMPC-style), not the
+    /// vehicle geometry. Accessible as ego_dynamics_.model.max_velocity, etc.
+    EgoDynamicsConfig model;
+
     static constexpr int STATE_DIM = 4;  ///< [x, y, theta, v]
     static constexpr int INPUT_DIM = 2;  ///< [a, w]
 
     /**
-     * @brief Initialize dynamics model.
+     * @brief Initialize dynamics model with just a timestep (default limits).
      * @param dt Timestep for discrete integration [s]
      */
     explicit EgoDynamics(double dt = 0.1);
+
+    /**
+     * @brief Initialize from a dynamics-model spec (model kind + limits).
+     * @param model Dynamics model specification (limits enforced on this model)
+     * @param dt Timestep for discrete integration [s]
+     */
+    EgoDynamics(const EgoDynamicsConfig& model, double dt);
 
     /**
      * @brief Compute continuous-time state derivative.
@@ -147,6 +161,6 @@ private:
  */
 std::map<std::string, ModeModel> create_obstacle_mode_models(double dt = 0.1);
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc
 
 #endif  // SCENARIO_MPC_DYNAMICS_HPP

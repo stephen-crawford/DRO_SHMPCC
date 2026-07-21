@@ -132,7 +132,7 @@ Eigen::Vector2d safe_unit(const Eigen::Vector2d& v, double eps = 1e-12) {
 
 }  // anonymous namespace
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 namespace {
 
@@ -291,8 +291,16 @@ DROResult WassersteinDRO::compute_worst_case_weights(
         effective_risk_horizon, safety_threshold, num_discs, vehicle_length
     );
 
-    // Step 3: Get adaptive Wasserstein radius rho
-    double rho = get_adaptive_rho();
+    // Step 3: Get adaptive Wasserstein radius rho.
+    // Fold the ground-metric diameter diam(D) = max_{i,j} D[i][j] into the
+    // calibrated radius explicitly (true-W1 concentration bound).
+    double ground_metric_diameter = 0.0;
+    for (const auto& row : result.transport_cost_matrix) {
+        for (double d : row) {
+            ground_metric_diameter = std::max(ground_metric_diameter, d);
+        }
+    }
+    double rho = get_adaptive_rho(ground_metric_diameter);
     result.rho_used = rho;
 
     // Step 4: Solve Kantorovich dual
@@ -305,16 +313,16 @@ DROResult WassersteinDRO::compute_worst_case_weights(
 
     // Step 5: Recover Q*.
     //
-    // ENTROPIC path (config_.use_entropic_allocator): the row softmax is strictly
+    // ENTROPIC path (config_.radius_calibration.use_entropic_allocator): the row softmax is strictly
     // positive, so min_m q_m > 0 and the sampling certificate L <= 1/q_min is
     // FINITE for every tau > 0. Both LP paths below lack that guarantee -- by
     // Theorem 2(i) the LP optimum is exactly e_{argmax r} whenever the transport
     // budget is slack (support 1, L = inf), and its support is deficient ~86% of
     // the time when the budget binds. Checked first because it supersedes both.
-    if (config_.use_entropic_allocator) {
+    if (config_.radius_calibration.use_entropic_allocator) {
         EntropicOTResult ent = solve_entropic_ot(
             nominal_weights, result.risk_per_mode,
-            result.transport_cost_matrix, mode_ids, rho, config_.entropic_tau
+            result.transport_cost_matrix, mode_ids, rho, config_.radius_calibration.entropic_tau
         );
         if (ent.solved) {
             result.worst_case_weights = ent.q;
@@ -338,11 +346,11 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     }
     //
     // TRUE Wasserstein-metric reweighting: solve the primal OT LP exactly, allowing
-    // fractional source-splits (src/primal_ot.cpp). This is the DEFAULT (config_.use_primal_ot);
+    // fractional source-splits (src/primal_ot.cpp). This is the DEFAULT (config_.radius_calibration.use_primal_ot);
     // the env var USE_PRIMAL_OT can force it (=1) or disable it (=0) for the heuristic baseline.
     // The remaining fallback is the dual-guided bracketing + plan-mixing heuristic (a primal
     // recovery restricted to convex mixtures of two deterministic transport plans).
-    bool want_primal_ot = config_.use_primal_ot;
+    bool want_primal_ot = config_.radius_calibration.use_primal_ot;
     if (const char* env_ot = std::getenv("USE_PRIMAL_OT")) {
         want_primal_ot = (env_ot[0] == '1');
     }
@@ -731,33 +739,39 @@ void WassersteinDRO::clear_rho_override() {
     rho_override_.reset();
 }
 
-double WassersteinDRO::get_adaptive_rho() const {
+double WassersteinDRO::get_adaptive_rho(double ground_metric_diameter) const {
     if (rho_override_.has_value()) {
-        return std::clamp(*rho_override_, config_.rho_min, config_.rho_max);
+        return std::clamp(*rho_override_, config_.min_radius, config_.max_radius);
     }
-    double rho = config_.rho_base;
+    double rho = config_.base_radius;
 
-    if (config_.use_calibrated_radius) {
-        // Confidence-calibrated simplex-concentration radius.
+    if (config_.radius_calibration.use_calibrated_radius) {
+        // TRUE W1 concentration radius, with the ground-metric diameter folded in
+        // EXPLICITLY (no longer hidden inside base_radius).
         //
-        // The nominal belief p_hat is an empirical categorical distribution over
-        // N behaviour modes estimated from n observed interactions. It concentrates
-        // in L1 as  P(||p_hat - p*||_1 >= eps) <= 2^N exp(-n eps^2 / 2)  (Devroye),
+        // The nominal belief p_hat is an empirical categorical over M behaviour
+        // modes from n observed interactions. In total variation it concentrates as
+        //   P(||p_hat - p*||_1 >= eps) <= 2^M exp(-n eps^2 / 2)   (Devroye),
         // so at target miscoverage beta the L1 half-width is
-        //   eps_n(beta) = sqrt( 2 (N ln2 + ln(1/beta)) / n ).
-        // With a metric ground cost, W1(p_hat, p*) <= (ground-metric diameter) * eps,
-        // the diameter folded into rho_base as the calibration scale. Then p* lies
-        // in the ball of radius rho_n(beta) with probability >= 1 - beta, so the
-        // reweighted worst-case risk upper-bounds the true risk at confidence 1-beta.
-        // Unlike the heuristic rho_base*(1+alpha/sqrt(n))*h_term (which plateaus at
-        // ~rho_base), this SHRINKS to rho_min as n -> inf (statistical consistency)
-        // and GROWS with the mode count N and the confidence level.
-        double N = (max_entropy_ > 1e-12) ? std::exp(max_entropy_) : 1.0;  // modes = exp(log N)
+        //   eps_n(beta) = sqrt( 2 (M ln2 + ln(1/beta)) / n ).
+        // For ANY metric ground cost D, the W1 distance is dominated by the
+        // transport diameter:
+        //   W1(p_hat, p*) <= (1/2) diam(D) ||p_hat - p*||_1
+        //                 <= (1/2) diam(D) eps_n(beta),
+        // with diam(D) = max_{i,j} D[i][j]. Hence
+        //   rho_n(beta) = min_radius + scale * (1/2) diam(D) eps.
+        // p* then lies in B_rho(p_hat) w.p. >= 1 - beta, so the reweighted
+        // worst-case risk upper-bounds the true risk at confidence 1 - beta.
+        // This SHRINKS to min_radius as n -> inf (consistency) and GROWS with the
+        // mode count M, the confidence level, and the ground-cost scale diam(D).
+        double M = (max_entropy_ > 1e-12) ? std::exp(max_entropy_) : 1.0;  // modes = exp(log M)
         double n = std::max(1.0, static_cast<double>(observation_count_));
-        double beta = std::clamp(config_.confidence_beta, 1e-6, 0.5);
-        double eps = std::sqrt(2.0 * (N * std::log(2.0) + std::log(1.0 / beta)) / n);
-        rho = config_.rho_min + config_.rho_base * eps;
-    } else if (config_.adaptive_rho) {
+        double beta = std::clamp(config_.radius_calibration.confidence_beta, 1e-6, 0.5);
+        double eps = std::sqrt(2.0 * (M * std::log(2.0) + std::log(1.0 / beta)) / n);
+        double diam = std::max(0.0, ground_metric_diameter);
+        rho = config_.min_radius
+            + config_.radius_calibration.calibration_scale * 0.5 * diam * eps;
+    } else if (config_.adaptive_radius) {
         // Legacy heuristic: scale up with fewer observations (more uncertainty)
         double n_term = 1.0;
         if (observation_count_ > 0) {
@@ -771,10 +785,10 @@ double WassersteinDRO::get_adaptive_rho() const {
         double h_ratio = (max_entropy_ > 1e-12) ? entropy_ / max_entropy_ : 0.0;
         double h_term = 1.0 + config_.entropy_gamma * h_ratio;
 
-        rho = config_.rho_base * n_term * h_term;
+        rho = config_.base_radius * n_term * h_term;
     }
 
-    return std::clamp(rho, config_.rho_min, config_.rho_max);
+    return std::clamp(rho, config_.min_radius, config_.max_radius);
 }
 
 void WassersteinDRO::update_prediction_error(double error) {
@@ -881,13 +895,13 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
 ) {
     std::map<std::string, double> risk;
 
-    const double alpha = config_.alpha_one_sided;
+    const double alpha = config_.radius_calibration.alpha_one_sided;
 
     // JOINT_VAR / JOINT_CVAR: true risk measure of the joint-horizon Euclidean
     // violation. Dispatch out to the Monte Carlo estimator; the surrogate path
     // below is not used at all.
-    if (config_.risk_measure == DRORiskMeasure::JOINT_VAR ||
-        config_.risk_measure == DRORiskMeasure::JOINT_CVAR) {
+    if (config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_VAR ||
+        config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_CVAR) {
         return compute_risk_vector_joint(obs_state, mode_models, mode_ids,
                                          ego_linearization_traj, horizon, safety_radius,
                                          num_discs, vehicle_length);
@@ -900,7 +914,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     // the union over the N_s*D (step, disc) violation events is controlled at alpha.
     // The number of union terms must match the loops below exactly -- k runs 1..N_s
     // and d runs over the discs -- or the guarantee is void.
-    const bool bonferroni = (config_.risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
+    const bool bonferroni = (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
     double alpha_eff = alpha;
     if (bonferroni) {
         const double n_events = std::max(1.0, static_cast<double>(horizon) *
@@ -911,7 +925,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     // z_alpha is only the VaR coefficient; the CVaR branch cannot be expressed as
     // a coefficient swap (see cvar_clamped_gaussian) and is handled at the use site.
     const double z_alpha = normal_quantile(alpha_eff);
-    const double sigma_floor = config_.sigma_floor;
+    const double sigma_floor = config_.radius_calibration.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {
         auto it = mode_models.find(mode_id);
@@ -959,21 +973,20 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
                 // Direction from ego disc to obstacle mean
                 const Eigen::Vector2d n = safe_unit(diff);
 
-                // Compute directional sigma based on risk mode
+                // Directional std: sqrt(n^T Sigma n). Surrogate risk is always
+                // computed from the chosen DRORiskMeasure with this sigma.
                 double sigma_dir = 0.0;
-                if (config_.risk_mode == DRORiskMode::FULL) {
-                    // Directional std dev: sqrt(n^T Sigma n)
+                {
                     double var_dir = n.transpose() * Sigma * n;
                     if (!std::isfinite(var_dir) || var_dir < 0.0) var_dir = 0.0;
                     sigma_dir = std::max(std::sqrt(var_dir), sigma_floor);
                 }
-                // NO_COV and DISTANCE_ONLY: sigma_dir stays 0
 
                 // Linearised violation Vtil ~ N(mu_V, sigma_dir^2), mu_V = R - dist.
                 const double mu_V = safety_radius - dist;
 
                 double r_kd;
-                if (config_.risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
+                if (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
                     // Correct clamp order: CVaR_a([Vtil]_+), NOT [CVaR_a(Vtil)]_+.
                     r_kd = cvar_clamped_gaussian(mu_V, sigma_dir, alpha);
                 } else {
@@ -1005,9 +1018,9 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
 ) {
     std::map<std::string, double> risk;
 
-    const double alpha = config_.alpha_one_sided;
-    const int n_samples = std::max(1, config_.joint_risk_samples);
-    const bool want_cvar = (config_.risk_measure == DRORiskMeasure::JOINT_CVAR);
+    const double alpha = config_.radius_calibration.alpha_one_sided;
+    const int n_samples = std::max(1, config_.radius_calibration.joint_risk_samples);
+    const bool want_cvar = (config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_CVAR);
 
     // Precompute ego disc centres per step once -- they are deterministic (the ego
     // linearization trajectory), so they are shared across modes and samples.
@@ -1037,7 +1050,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
         // mode sees an identical noise stream. This makes r[m] deterministic across
         // calls (no jitter in the reweighting) and removes MC noise from BETWEEN-mode
         // comparisons, which is all the W1 LP actually consumes.
-        std::mt19937_64 rng(config_.joint_risk_seed);
+        std::mt19937_64 rng(config_.radius_calibration.joint_risk_seed);
         std::normal_distribution<double> gauss(0.0, 1.0);
 
         std::vector<double> samples;
@@ -1515,4 +1528,4 @@ WorstCaseRecoveryResult WassersteinDRO::recover_feasible_qstar(
     return mix_plans_to_radius(plan_lo, plan_hi, mode_ids, rho);
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

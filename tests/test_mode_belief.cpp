@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 
 static int g_failures = 0;
 static void check(bool ok, const std::string& what) {

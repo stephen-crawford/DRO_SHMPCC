@@ -8,7 +8,7 @@
 #include <cmath>
 #include <limits>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 void ADMMSolver::warm_start(const Eigen::VectorXd& x0) {
     x_warm_ = x0;
@@ -148,4 +148,4 @@ QPResult ADMMSolver::solve(const QPProblem& prob, const QPSettings& settings) {
     return result;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

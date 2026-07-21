@@ -7,7 +7,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace scenario_mpc {
+namespace dro_mpc {
 
 namespace {
 
@@ -335,4 +335,4 @@ ModeDistribution update_mode_belief(
     return post;
 }
 
-}  // namespace scenario_mpc
+}  // namespace dro_mpc

@@ -15,14 +15,14 @@
  *     ExperimentConfig::step_callback mechanism.
  *
  * Shared rollout wrappers:
- *   run_single_rollout()      — standard rollout (PaperVariant -> ExperimentConfig)
+ *   run_single_rollout()      — standard rollout (DRO/MPC arm -> ExperimentConfig)
  *   run_multi_obstacle_rollout() — multi-obstacle with class sharing
  *   run_single_rollout_env()  — custom environment (intersection, oncoming, etc.)
  *
  * Helper mappings:
- *   make_experiment_config()  — PaperVariant -> ExperimentConfig
+ *   make_experiment_config()  — DRO/MPC arm -> ExperimentConfig
  *   baseline_to_weight()      — SamplingBaseline -> WeightType
- *   uses_dro/uses_sh  — PaperVariant -> feature flags
+ *   arm_uses_dro/arm_uses_sh — DRO/MPC flags
  *
  * Paper variants:
  *   Base      – WeightType::FREQUENCY, no DRO
@@ -58,7 +58,7 @@
 // optimal_transport_predictor.hpp removed (OT types deleted)
 #include "reference_path.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
@@ -78,10 +78,118 @@ static constexpr double DT             = DEFAULT_DT;
 static constexpr int    HORIZON        = DEFAULT_HORIZON;
 static constexpr int    BASE_SCENARIOS = DEFAULT_BASE_SCENARIOS;
 
-// All shared types (PaperVariant, RolloutResult, EnvironmentType, SamplingBaseline,
-// etc.) and helper functions (make_experiment_config, run_single_rollout,
-// run_multi_obstacle_rollout, run_single_rollout_env, create_environment,
-// setup_mpcc_path) are provided by experiment_harness.hpp.
+// Shared types (RolloutResult, EnvironmentType, SamplingBaseline,
+// run_arm_rollout helpers below wrap make_arm_config + run_configured_rollout.
+// ============================================================================
+// Paper arm helpers (replaces removed PaperVariant)
+// ============================================================================
+
+struct ArmSpec {
+    DROConfiguration dro;
+    MPCConfiguration mpc;
+};
+
+static constexpr ArmSpec ARM_BASE{DROConfiguration::BASE, MPCConfiguration::MPCC};
+static constexpr ArmSpec ARM_BASE_SH{DROConfiguration::BASE, MPCConfiguration::SH_MPCC};
+static constexpr ArmSpec ARM_DRO{DROConfiguration::DRO, MPCConfiguration::MPCC};
+static constexpr ArmSpec ARM_DRO_SH{DROConfiguration::DRO, MPCConfiguration::SH_MPCC};
+
+static const std::vector<ArmSpec> ALL_ARMS = {
+    ARM_BASE, ARM_BASE_SH, ARM_DRO, ARM_DRO_SH
+};
+
+static bool arm_uses_dro(DROConfiguration dro) {
+    return dro == DROConfiguration::DRO;
+}
+
+static bool arm_uses_sh(MPCConfiguration mpc) {
+    return mpc == MPCConfiguration::SH_MPCC;
+}
+
+static std::string arm_label(DROConfiguration dro, MPCConfiguration mpc) {
+    ExperimentConfig tmp;
+    tmp.dro.enabled = arm_uses_dro(dro);
+    tmp.mpc.type = mpc;
+    tmp.mpc.sync_from_type();
+    return arm_name(tmp);
+}
+
+static ExperimentConfig make_rollout_config(
+    DROConfiguration dro_kind,
+    MPCConfiguration mpc_kind,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    const std::vector<std::string>& obs_modes,
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0
+) {
+    return make_arm_config(
+        dro_kind, mpc_kind, switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob);
+}
+
+static RolloutResult run_arm_rollout(
+    DROConfiguration dro_kind,
+    MPCConfiguration mpc_kind,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    unsigned seed,
+    const std::vector<std::string>& obs_modes,
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0
+) {
+    auto cfg = make_rollout_config(
+        dro_kind, mpc_kind, switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob);
+    return run_configured_rollout(std::move(cfg), seed);
+}
+
+static RolloutResult run_arm_rollout_env(
+    DROConfiguration dro_kind,
+    MPCConfiguration mpc_kind,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    unsigned seed,
+    const EnvironmentSetup& env_setup,
+    SamplingBaseline baseline = SamplingBaseline::STANDARD,
+    int forced_safe_horizon = -1,
+    const std::vector<std::string>& obs_modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"},
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0
+) {
+    auto cfg = make_rollout_config(
+        dro_kind, mpc_kind, switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob);
+    return run_single_rollout_env(
+        std::move(cfg), seed, env_setup, baseline, forced_safe_horizon);
+}
+
+static RolloutResult run_arm_multi_obstacle_rollout(
+    DROConfiguration dro_kind,
+    MPCConfiguration mpc_kind,
+    double switch_prob,
+    int num_scenarios,
+    int rollout_steps,
+    unsigned seed,
+    int num_obstacles,
+    int num_classes,
+    const std::vector<std::string>& obs_modes,
+    const std::string& rare_mode = "",
+    double rare_prob = 0.0,
+    const std::vector<double>& arc_fracs = OBS_ARC_FRACS_4
+) {
+    auto cfg = make_rollout_config(
+        dro_kind, mpc_kind, switch_prob, num_scenarios, rollout_steps,
+        obs_modes, rare_mode, rare_prob);
+    return run_multi_obstacle_rollout(
+        std::move(cfg), seed, num_obstacles, num_classes, arc_fracs);
+}
+
+
 
 // ============================================================================
 // Experiment A: Mode-Switch Stress Test
@@ -110,8 +218,8 @@ static void run_experiment_a() {
                << "collision_rate,ci_lo,ci_hi,"
                << "missed_mode_rate,avg_progress,avg_clearance,avg_solve_ms\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(v) << std::endl;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc) << std::endl;
 
         for (double sp : switch_probs) {
             std::cout << "    switch_prob=" << sp << " ... " << std::flush;
@@ -122,7 +230,7 @@ static void run_experiment_a() {
 
             for (int r = 0; r < EXP_A_ROLLOUTS; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 1000 + static_cast<int>(sp * 100));
-                auto res = run_single_rollout(v, sp, BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
+                auto res = run_arm_rollout(arm.dro, arm.mpc, sp, BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
                 if (res.collision) collisions++;
                 total_missed += res.missed_mode_steps;
                 total_steps_all += res.total_steps;
@@ -138,17 +246,17 @@ static void run_experiment_a() {
             double avg_clearance = sum_clearance / EXP_A_ROLLOUTS;
             double avg_solve = sum_solve / EXP_A_ROLLOUTS * 1000;
 
-            f_coll << variant_name(v) << "," << sp << "," << std::fixed << std::setprecision(4)
+            f_coll << arm_label(arm.dro, arm.mpc) << "," << sp << "," << std::fixed << std::setprecision(4)
                    << coll_rate << "," << ci_lo << "," << ci_hi << "," << EXP_A_ROLLOUTS << "\n";
 
-            f_miss << variant_name(v) << "," << sp << "," << std::setprecision(4)
+            f_miss << arm_label(arm.dro, arm.mpc) << "," << sp << "," << std::setprecision(4)
                    << missed_rate << "," << avg_progress << "," << avg_clearance << "\n";
 
             // Ablation table at sp=0.2
             if (std::abs(sp - 0.2) < 0.01) {
-                f_ablation << variant_name(v) << ","
-                           << (uses_dro(v) ? "yes" : "no") << ","
-                           << (uses_sh(v) ? "yes" : "no") << ","
+                f_ablation << arm_label(arm.dro, arm.mpc) << ","
+                           << (arm_uses_dro(arm.dro) ? "yes" : "no") << ","
+                           << (arm_uses_sh(arm.mpc) ? "yes" : "no") << ","
                            << std::setprecision(4) << coll_rate << "," << ci_lo << "," << ci_hi << ","
                            << missed_rate << "," << avg_progress << "," << avg_clearance << ","
                            << std::setprecision(2) << avg_solve << "\n";
@@ -170,15 +278,15 @@ static void run_experiment_a() {
                 std::mt19937 rng2(seed);
                 auto mode_mdls = create_obstacle_mode_models(DT);
 
-                ScenarioMPCConfig cfg;
-                cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-                cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-                cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = WeightType::FREQUENCY;
-                cfg.enable_dro = uses_dro(v);
-                cfg.safe_horizon_enabled = false;
-                cfg.num_discs = 1;
-                cfg.vehicle_length = 1.5;
+                RuntimeConfig cfg;
+                cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+                cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+                cfg.dro.enabled = arm_uses_dro(arm.dro);
+                cfg.mpc.safe_horizon_enabled = false;
+                cfg.mpc.ego.num_discs = 1;
+                cfg.mpc.ego.length = 1.5;
                 AdaptiveScenarioMPC ctrl(cfg);
 
                 std::vector<std::string> modes_list = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
@@ -230,7 +338,7 @@ static void run_experiment_a() {
             for (int step = 0; step < ROLLOUT_STEPS; ++step) {
                 auto& v_step = per_step_missed[step];
                 double frac = v_step.empty() ? 0 : std::accumulate(v_step.begin(), v_step.end(), 0.0) / v_step.size();
-                f_w2 << variant_name(v) << "," << step << "," << std::setprecision(4) << frac << "\n";
+                f_w2 << arm_label(arm.dro, arm.mpc) << "," << step << "," << std::setprecision(4) << frac << "\n";
             }
         }
     }
@@ -260,8 +368,8 @@ static void run_experiment_b() {
     std::ofstream f_cons(OUTPUT_DIR + "exp_b_conservatism.csv");
     f_cons << "variant,rare_prob,avg_progress,avg_clearance,avg_solve_ms\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(v) << std::endl;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc) << std::endl;
 
         for (double rp : rare_probs) {
             std::cout << "    rare_prob=" << rp << " ... " << std::flush;
@@ -272,7 +380,7 @@ static void run_experiment_b() {
 
             for (int r = 0; r < EXP_B_ROLLOUTS; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 2000 + static_cast<int>(rp * 1000));
-                auto res = run_single_rollout(v, base_switch, BASE_SCENARIOS, ROLLOUT_STEPS,
+                auto res = run_arm_rollout(arm.dro, arm.mpc, base_switch, BASE_SCENARIOS, ROLLOUT_STEPS,
                                                seed, base_modes, rare_mode, rp);
 
                 if (res.collision) collisions++;
@@ -297,11 +405,11 @@ static void run_experiment_b() {
             double coll_given_rare = rollouts_with_rare > 0 ?
                 static_cast<double>(collisions_with_rare) / rollouts_with_rare : 0;
 
-            f_rare << variant_name(v) << "," << rp << "," << std::setprecision(4)
+            f_rare << arm_label(arm.dro, arm.mpc) << "," << rp << "," << std::setprecision(4)
                    << coll_rate << "," << ci_lo << "," << ci_hi << ","
                    << coll_given_rare << "," << rollouts_with_rare << "," << EXP_B_ROLLOUTS << "\n";
 
-            f_cons << variant_name(v) << "," << rp << ","
+            f_cons << arm_label(arm.dro, arm.mpc) << "," << rp << ","
                    << std::setprecision(4) << sum_progress / EXP_B_ROLLOUTS << ","
                    << sum_clearance / EXP_B_ROLLOUTS << ","
                    << std::setprecision(2) << sum_solve / EXP_B_ROLLOUTS * 1000 << "\n";
@@ -335,8 +443,8 @@ static void run_experiment_c() {
     std::ofstream f_active(OUTPUT_DIR + "exp_c_active_constraints.csv");
     f_active << "variant,num_scenarios,avg_active_constraints,avg_progress\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(v) << std::endl;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc) << std::endl;
 
         for (int S : scenario_counts) {
             std::cout << "    S=" << S << " ... " << std::flush;
@@ -347,7 +455,7 @@ static void run_experiment_c() {
 
             for (int r = 0; r < EXP_C_ROLLOUTS; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 3000 + S);
-                auto res = run_single_rollout(v, switch_prob, S, ROLLOUT_STEPS, seed, modes);
+                auto res = run_arm_rollout(arm.dro, arm.mpc, switch_prob, S, ROLLOUT_STEPS, seed, modes);
                 if (res.collision) collisions++;
                 all_solve_times.insert(all_solve_times.end(),
                                         res.solve_times.begin(), res.solve_times.end());
@@ -368,12 +476,12 @@ static void run_experiment_c() {
             double avg_solve = all_solve_times.empty() ? 0 :
                 std::accumulate(all_solve_times.begin(), all_solve_times.end(), 0.0) / all_solve_times.size();
 
-            f_solve << variant_name(v) << "," << S << ","
+            f_solve << arm_label(arm.dro, arm.mpc) << "," << S << ","
                     << std::setprecision(2) << median << "," << p90 << "," << p99 << "," << max_t << "\n";
-            f_safety << variant_name(v) << "," << S << ","
+            f_safety << arm_label(arm.dro, arm.mpc) << "," << S << ","
                      << std::setprecision(4) << coll_rate << "," << ci_lo << "," << ci_hi << ","
                      << std::setprecision(2) << avg_solve << "\n";
-            f_active << variant_name(v) << "," << S << ","
+            f_active << arm_label(arm.dro, arm.mpc) << "," << S << ","
                      << std::setprecision(1) << sum_active / EXP_C_ROLLOUTS << ","
                      << std::setprecision(2) << sum_progress / EXP_C_ROLLOUTS << "\n";
 
@@ -401,8 +509,8 @@ static void run_experiment_d() {
     std::ofstream f_cal(OUTPUT_DIR + "exp_d_calibration.csv");
     f_cal << "variant,predicted_risk,observed_collision_rate,ci_lo,ci_hi,num_rollouts\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(v) << std::endl;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc) << std::endl;
 
         for (double eps : epsilon_targets) {
             int S = static_cast<int>(std::ceil(2.0 * (std::log(1.0 / 0.01) + 90) / eps));
@@ -411,14 +519,14 @@ static void run_experiment_d() {
             int collisions = 0;
             for (int r = 0; r < cal_rollouts; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 5000 + static_cast<int>(eps * 1000));
-                auto res = run_single_rollout(v, switch_prob, S, ROLLOUT_STEPS, seed, modes);
+                auto res = run_arm_rollout(arm.dro, arm.mpc, switch_prob, S, ROLLOUT_STEPS, seed, modes);
                 if (res.collision) collisions++;
             }
 
             double coll_rate = static_cast<double>(collisions) / cal_rollouts;
             auto [ci_lo, ci_hi] = wilson_ci(collisions, cal_rollouts);
 
-            f_cal << variant_name(v) << "," << std::setprecision(4) << eps << ","
+            f_cal << arm_label(arm.dro, arm.mpc) << "," << std::setprecision(4) << eps << ","
                   << coll_rate << "," << ci_lo << "," << ci_hi << "," << cal_rollouts << "\n";
 
             std::cout << "    eps=" << eps << " S=" << S
@@ -454,7 +562,7 @@ static void run_experiment_e() {
 
         for (int r = 0; r < buf_rollouts; ++r) {
             unsigned seed = static_cast<unsigned>(r * 6000 + buf_sz);
-            auto res = run_single_rollout(PaperVariant::DRO, switch_prob,
+            auto res = run_arm_rollout(ARM_DRO.dro, ARM_DRO.mpc, switch_prob,
                                            BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
             if (res.collision) collisions++;
             total_missed += res.missed_mode_steps;
@@ -507,13 +615,13 @@ static void run_experiment_f() {
     for (int r = 0; r < paired_rollouts_actual; ++r) {
         unsigned seed = static_cast<unsigned>(r * 8000);
 
-        auto res_base = run_single_rollout(PaperVariant::BASE, switch_prob,
+        auto res_base = run_arm_rollout(ARM_BASE.dro, ARM_BASE.mpc, switch_prob,
                                             BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_base_sh = run_single_rollout(PaperVariant::BASE_SH, switch_prob,
+        auto res_base_sh = run_arm_rollout(ARM_BASE_SH.dro, ARM_BASE_SH.mpc, switch_prob,
                                           BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_dro = run_single_rollout(PaperVariant::DRO, switch_prob,
+        auto res_dro = run_arm_rollout(ARM_DRO.dro, ARM_DRO.mpc, switch_prob,
                                            BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
-        auto res_dro_sh = run_single_rollout(PaperVariant::DRO_SH, switch_prob,
+        auto res_dro_sh = run_arm_rollout(ARM_DRO_SH.dro, ARM_DRO_SH.mpc, switch_prob,
                                               BASE_SCENARIOS, ROLLOUT_STEPS, seed, modes);
 
         f_mcnemar << seed << ","
@@ -693,8 +801,8 @@ static void run_experiment_g() {
     auto mode_mdls = create_obstacle_mode_models(DT);
     EgoDynamics dynamics(DT);
 
-    for (PaperVariant v : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(v) << " ... " << std::flush;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc) << " ... " << std::flush;
 
         std::vector<double> all_speeds, all_clearances, all_efforts, all_steer_var;
         double sum_progress = 0, sum_solve = 0;
@@ -703,17 +811,17 @@ static void run_experiment_g() {
             unsigned seed = static_cast<unsigned>(r * 9000);
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT;
-            cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35;
-            cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.enable_dro = uses_dro(v);
-            cfg.safe_horizon_enabled = false;
-            cfg.num_discs = 1;
-            cfg.vehicle_length = 1.5;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT;
+            cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
+            cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.dro.enabled = arm_uses_dro(arm.dro);
+            cfg.mpc.safe_horizon_enabled = false;
+            cfg.mpc.ego.num_discs = 1;
+            cfg.mpc.ego.length = 1.5;
 
             AdaptiveScenarioMPC ctrl(cfg);
 
@@ -787,7 +895,7 @@ static void run_experiment_g() {
             return std::sqrt(ss / (vec.size() - 1));
         };
 
-        f_cons << variant_name(v) << ","
+        f_cons << arm_label(arm.dro, arm.mpc) << ","
                << std::setprecision(4) << mean_of(all_speeds) << ","
                << sum_progress / g_rollouts << ","
                << mean_of(all_clearances) << ","
@@ -820,10 +928,10 @@ static void run_experiment_h() {
           << "collision_rate,ci_lo,ci_hi,missed_mode_rate,"
           << "avg_progress,avg_clearance,avg_solve_ms\n";
 
-    for (PaperVariant pv : ALL_VARIANTS) {
-        std::cout << "  Variant: " << variant_name(pv)
-                  << " (SH=" << uses_sh(pv)
-                  << " DRO=" << uses_dro(pv) << ") ... " << std::flush;
+    for (const ArmSpec& arm : ALL_ARMS) {
+        std::cout << "  Variant: " << arm_label(arm.dro, arm.mpc)
+                  << " (SH=" << arm_uses_sh(arm.mpc)
+                  << " DRO=" << arm_uses_dro(arm.dro) << ") ... " << std::flush;
 
         int collisions = 0;
         int total_missed = 0, total_steps_all = 0;
@@ -831,7 +939,7 @@ static void run_experiment_h() {
 
         for (int r = 0; r < h_rollouts; ++r) {
             unsigned seed = static_cast<unsigned>(r * 11000);
-            auto res = run_single_rollout(pv, switch_prob, BASE_SCENARIOS,
+            auto res = run_arm_rollout(arm.dro, arm.mpc, switch_prob, BASE_SCENARIOS,
                                            ROLLOUT_STEPS, seed, modes);
             if (res.collision) collisions++;
             total_missed += res.missed_mode_steps;
@@ -849,9 +957,9 @@ static void run_experiment_h() {
         double avg_clearance = sum_clearance / h_rollouts;
         double avg_solve = sum_solve / h_rollouts * 1000;
 
-        f_out << variant_name(pv) << ","
-              << (uses_sh(pv) ? "true" : "false") << ","
-              << (uses_dro(pv) ? "yes" : "no") << ","
+        f_out << arm_label(arm.dro, arm.mpc) << ","
+              << (arm_uses_sh(arm.mpc) ? "true" : "false") << ","
+              << (arm_uses_dro(arm.dro) ? "yes" : "no") << ","
               << std::fixed << std::setprecision(4)
               << coll_rate << "," << ci_lo << "," << ci_hi << ","
               << missed_rate << ","
@@ -882,10 +990,7 @@ static void run_experiment_i() {
     std::vector<int> scenario_counts = {40, 100, 200, 500};
 
     // Variants to test: Base and DRO, each with/without SH
-    std::vector<PaperVariant> i_variants = {
-        PaperVariant::BASE, PaperVariant::BASE_SH,
-        PaperVariant::DRO, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> i_variants = ALL_ARMS;
 
     std::ofstream f_out(OUTPUT_DIR + "exp_i_sh_scaling.csv");
     f_out << "variant,num_scenarios,sh_enabled,collision_rate,ci_lo,ci_hi,"
@@ -893,9 +998,9 @@ static void run_experiment_i() {
           << "predicted_n_safe\n";
 
     for (int S : scenario_counts) {
-        for (PaperVariant pv : i_variants) {
-            bool sh = uses_sh(pv);
-            std::cout << "  S=" << S << " " << variant_name(pv) << " ... " << std::flush;
+        for (const ArmSpec& arm : i_variants) {
+            bool sh = arm_uses_sh(arm.mpc);
+            std::cout << "  S=" << S << " " << arm_label(arm.dro, arm.mpc) << " ... " << std::flush;
 
             int collisions = 0;
             int total_missed = 0, total_steps_all = 0;
@@ -903,7 +1008,7 @@ static void run_experiment_i() {
 
             for (int r = 0; r < i_rollouts; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 12000 + S);
-                auto res = run_single_rollout(pv, switch_prob, S,
+                auto res = run_arm_rollout(arm.dro, arm.mpc, switch_prob, S,
                                                ROLLOUT_STEPS, seed, modes);
                 if (res.collision) collisions++;
                 total_missed += res.missed_mode_steps;
@@ -919,13 +1024,13 @@ static void run_experiment_i() {
                 ? static_cast<double>(total_missed) / total_steps_all : 0;
 
             // Predict effective N_safe using the same PRACTICAL mode as the controller
-            ScenarioMPCConfig tmp_cfg;
-            tmp_cfg.horizon = HORIZON;
-            tmp_cfg.safe_horizon_enabled = sh;
-            tmp_cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            RuntimeConfig tmp_cfg;
+            tmp_cfg.mpc.horizon = HORIZON;
+            tmp_cfg.mpc.safe_horizon_enabled = sh;
+            tmp_cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
             int predicted_ns = tmp_cfg.compute_safe_horizon(S);
 
-            f_out << variant_name(pv) << "," << S << ","
+            f_out << arm_label(arm.dro, arm.mpc) << "," << S << ","
                   << (sh ? "true" : "false") << ","
                   << std::fixed << std::setprecision(4)
                   << coll_rate << "," << ci_lo << "," << ci_hi << ","
@@ -982,8 +1087,8 @@ static void run_experiment_j() {
             unsigned seed = static_cast<unsigned>(r * 13000 + static_cast<int>(bl));
 
             // Use BASE variant (no SH, no DRO) to isolate sampling effect
-            auto res = run_single_rollout_env(
-                PaperVariant::BASE, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
+            auto res = run_arm_rollout_env(
+                ARM_BASE.dro, ARM_BASE.mpc, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
                 seed, default_env, bl);
             if (res.collision) collisions++;
             total_missed += res.missed_mode_steps;
@@ -1027,19 +1132,16 @@ static void run_experiment_k() {
         EnvironmentType::OVERTAKE_SLOW_LEAD, EnvironmentType::NARROW_CORRIDOR,
         EnvironmentType::INTERSECTION, EnvironmentType::ONCOMING
     };
-    std::vector<PaperVariant> k_variants = {
-        PaperVariant::BASE, PaperVariant::DRO,
-        PaperVariant::BASE_SH, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> k_variants = ALL_ARMS;
 
     std::ofstream f_out(OUTPUT_DIR + "exp_k_environment_generalization.csv");
     f_out << "environment,variant,collision_rate,ci_lo,ci_hi,"
           << "missed_mode_rate,avg_progress,avg_clearance,avg_solve_ms\n";
 
     for (EnvironmentType env_type : envs) {
-        for (PaperVariant v : k_variants) {
+        for (const ArmSpec& arm : k_variants) {
             std::cout << "  " << environment_name(env_type) << " / "
-                      << variant_name(v) << " ... " << std::flush;
+                      << arm_label(arm.dro, arm.mpc) << " ... " << std::flush;
 
             int collisions = 0;
             int total_missed = 0, total_steps_all = 0;
@@ -1050,8 +1152,8 @@ static void run_experiment_k() {
                 std::mt19937 env_rng(seed);
                 auto env_setup = create_environment(env_type, env_rng);
 
-                auto res = run_single_rollout_env(
-                    v, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
+                auto res = run_arm_rollout_env(
+                    arm.dro, arm.mpc, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
                     seed + 1, env_setup);
                 if (res.collision) collisions++;
                 total_missed += res.missed_mode_steps;
@@ -1065,7 +1167,7 @@ static void run_experiment_k() {
             auto [ci_lo, ci_hi] = wilson_ci(collisions, k_rollouts);
             double missed_rate = total_steps_all > 0 ? static_cast<double>(total_missed) / total_steps_all : 0;
 
-            f_out << environment_name(env_type) << "," << variant_name(v) << ","
+            f_out << environment_name(env_type) << "," << arm_label(arm.dro, arm.mpc) << ","
                   << std::fixed << std::setprecision(4)
                   << coll_rate << "," << ci_lo << "," << ci_hi << ","
                   << missed_rate << ","
@@ -1089,9 +1191,7 @@ static void run_experiment_l() {
               << "  Experiment L: Empirical Joint Violation Rate\n"
               << "========================================\n";
 
-    std::vector<PaperVariant> l_variants = {
-        PaperVariant::BASE, PaperVariant::BASE_SH, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> l_variants = {ARM_BASE, ARM_BASE_SH, ARM_DRO_SH};
     std::vector<int> scenario_counts = {40, 100, 200};
     int l_rollouts = 300;
     int fresh_samples = 1000;
@@ -1103,9 +1203,9 @@ static void run_experiment_l() {
 
     auto mode_mdls = create_obstacle_mode_models(DT);
 
-    for (PaperVariant v : l_variants) {
+    for (const ArmSpec& arm : l_variants) {
         for (int S : scenario_counts) {
-            std::cout << "  " << variant_name(v) << " S=" << S << " ... " << std::flush;
+            std::cout << "  " << arm_label(arm.dro, arm.mpc) << " S=" << S << " ... " << std::flush;
 
             int total_violations = 0;
             int total_checks = 0;
@@ -1114,17 +1214,17 @@ static void run_experiment_l() {
                 unsigned seed = static_cast<unsigned>(r * 15000 + S);
                 std::mt19937 rng(seed);
 
-                ScenarioMPCConfig cfg;
-                cfg.horizon = HORIZON; cfg.dt = DT;
-                cfg.num_scenarios = S;
-                cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35;
-                cfg.safety_margin = 0.2;
-                cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = WeightType::FREQUENCY;
-                cfg.enable_dro = uses_dro(v);
-                cfg.safe_horizon_enabled = uses_sh(v);
-                cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-                cfg.num_discs = 1;
+                RuntimeConfig cfg;
+                cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT;
+                cfg.mpc.sampling.num_scenarios = S;
+                cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
+                cfg.mpc.constraints.safety_margin = 0.2;
+                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+                cfg.dro.enabled = arm_uses_dro(arm.dro);
+                cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
+                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+                cfg.mpc.ego.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
 
@@ -1170,7 +1270,7 @@ static void run_experiment_l() {
                 }
                 auto weights = compute_mode_weights(mh, WeightType::FREQUENCY);
 
-                double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+                double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
                 // Check each fresh sample for constraint violation
                 for (int fs = 0; fs < fresh_samples; ++fs) {
@@ -1211,7 +1311,7 @@ static void run_experiment_l() {
             auto [ci_lo, ci_hi] = wilson_ci(total_violations, total_checks);
             double eps_target = 0.05;
 
-            f_out << variant_name(v) << "," << S << ","
+            f_out << arm_label(arm.dro, arm.mpc) << "," << S << ","
                   << std::fixed << std::setprecision(4)
                   << eps_target << "," << eps_hat << ","
                   << ci_lo << "," << ci_hi << "," << l_rollouts << "\n";
@@ -1233,9 +1333,7 @@ static void run_experiment_m() {
               << "========================================\n";
 
     std::vector<int> n_safe_values = {3, 5, 8, 10, 12, 15};
-    std::vector<PaperVariant> m_variants = {
-        PaperVariant::BASE_SH, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> m_variants = {ARM_BASE_SH, ARM_DRO_SH};
     int m_rollouts = 600;
     double switch_prob = 0.2;
 
@@ -1249,17 +1347,17 @@ static void run_experiment_m() {
     f_out << "variant,forced_n_safe,collision_rate,ci_lo,ci_hi,"
           << "avg_progress,avg_clearance,avg_solve_ms\n";
 
-    for (PaperVariant v : m_variants) {
+    for (const ArmSpec& arm : m_variants) {
         for (int n_safe : n_safe_values) {
-            std::cout << "  " << variant_name(v) << " N_safe=" << n_safe << " ... " << std::flush;
+            std::cout << "  " << arm_label(arm.dro, arm.mpc) << " N_safe=" << n_safe << " ... " << std::flush;
 
             int collisions = 0;
             double sum_progress = 0, sum_clearance = 0, sum_solve = 0;
 
             for (int r = 0; r < m_rollouts; ++r) {
                 unsigned seed = static_cast<unsigned>(r * 16000 + n_safe);
-                auto res = run_single_rollout_env(
-                    v, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
+                auto res = run_arm_rollout_env(
+                    arm.dro, arm.mpc, switch_prob, BASE_SCENARIOS, ROLLOUT_STEPS,
                     seed, default_env, SamplingBaseline::STANDARD, n_safe);
                 if (res.collision) collisions++;
                 sum_progress += res.total_progress;
@@ -1270,7 +1368,7 @@ static void run_experiment_m() {
             double coll_rate = static_cast<double>(collisions) / m_rollouts;
             auto [ci_lo, ci_hi] = wilson_ci(collisions, m_rollouts);
 
-            f_out << variant_name(v) << "," << n_safe << ","
+            f_out << arm_label(arm.dro, arm.mpc) << "," << n_safe << ","
                   << std::fixed << std::setprecision(4)
                   << coll_rate << "," << ci_lo << "," << ci_hi << ","
                   << sum_progress / m_rollouts << ","
@@ -1314,14 +1412,14 @@ static void run_experiment_n() {
             unsigned seed = static_cast<unsigned>(r * 17000 + S);
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = S;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.safe_horizon_enabled = true;
-            cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-            cfg.num_discs = 3; cfg.vehicle_length = 4.0;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = S;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.mpc.safe_horizon_enabled = true;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
             AdaptiveScenarioMPC ctrl(cfg);
             std::map<std::string, ModeModel> omm;
@@ -1337,7 +1435,7 @@ static void run_experiment_n() {
             EgoState ego(0, 0, 0, 1.2);
             Eigen::Vector2d goal(20, 0);
             EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+            double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
             for (int i = 0; i < 5; ++i)
                 ctrl.update_mode_observation(0, 0, osim.current_mode, i);
@@ -1387,14 +1485,14 @@ static void run_experiment_n() {
             unsigned seed = static_cast<unsigned>(r * 17500 + D);
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.safe_horizon_enabled = true;
-            cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-            cfg.num_discs = D; cfg.vehicle_length = 4.0;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.mpc.safe_horizon_enabled = true;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.ego.num_discs = D; cfg.mpc.ego.length = 4.0;
 
             AdaptiveScenarioMPC ctrl(cfg);
             std::map<std::string, ModeModel> omm;
@@ -1410,7 +1508,7 @@ static void run_experiment_n() {
             EgoState ego(0, 0, 0, 1.2);
             Eigen::Vector2d goal(20, 0);
             EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+            double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
             for (int i = 0; i < 5; ++i)
                 ctrl.update_mode_observation(0, 0, osim.current_mode, i);
@@ -1460,15 +1558,15 @@ static void run_experiment_n() {
             unsigned seed = static_cast<unsigned>(r * 18000 + ns);
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.safe_horizon_enabled = true;
-            cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-            cfg.forced_safe_horizon = ns;
-            cfg.num_discs = 3; cfg.vehicle_length = 4.0;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.mpc.safe_horizon_enabled = true;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.constraints.forced_safe_horizon = ns;
+            cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
             AdaptiveScenarioMPC ctrl(cfg);
             std::map<std::string, ModeModel> omm;
@@ -1484,7 +1582,7 @@ static void run_experiment_n() {
             EgoState ego(0, 0, 0, 1.2);
             Eigen::Vector2d goal(20, 0);
             EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+            double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
             for (int i = 0; i < 5; ++i)
                 ctrl.update_mode_observation(0, 0, osim.current_mode, i);
@@ -1534,9 +1632,7 @@ static void run_experiment_o() {
               << "  Experiment O: Distribution Shift / Mismatch\n"
               << "========================================\n";
 
-    std::vector<PaperVariant> o_variants = {
-        PaperVariant::BASE, PaperVariant::DRO, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> o_variants = {ARM_BASE, ARM_DRO, ARM_DRO_SH};
     int o_rollouts = 600;
     std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
 
@@ -1562,8 +1658,8 @@ static void run_experiment_o() {
     auto mode_mdls = create_obstacle_mode_models(DT);
 
     for (const auto& cond : conditions) {
-        for (PaperVariant v : o_variants) {
-            std::cout << "  " << cond.name << " / " << variant_name(v) << " ... " << std::flush;
+        for (const ArmSpec& arm : o_variants) {
+            std::cout << "  " << cond.name << " / " << arm_label(arm.dro, arm.mpc) << " ... " << std::flush;
 
             int collisions = 0;
             int total_missed = 0, total_steps_all = 0;
@@ -1573,15 +1669,15 @@ static void run_experiment_o() {
                 unsigned seed = static_cast<unsigned>(r * 19000);
                 std::mt19937 rng(seed);
 
-                ScenarioMPCConfig cfg;
-                cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-                cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-                cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-                cfg.weight_type = WeightType::FREQUENCY;
-                cfg.enable_dro = uses_dro(v);
-                cfg.safe_horizon_enabled = uses_sh(v);
-                cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-                cfg.num_discs = 1;
+                RuntimeConfig cfg;
+                cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+                cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+                cfg.dro.enabled = arm_uses_dro(arm.dro);
+                cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
+                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+                cfg.mpc.ego.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
 
@@ -1600,7 +1696,7 @@ static void run_experiment_o() {
                 EgoState ego(0, 0, 0, 1.5);
                 Eigen::Vector2d goal(20, 0);
                 EgoDynamics dyn(DT);
-                double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+                double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
                 // Warmup phase: use train_sp
                 for (int i = 0; i < 20; ++i) {
@@ -1653,7 +1749,7 @@ static void run_experiment_o() {
             auto [ci_lo, ci_hi] = wilson_ci(collisions, o_rollouts);
             double missed_rate = total_steps_all > 0 ? static_cast<double>(total_missed) / total_steps_all : 0;
 
-            f_out << cond.name << "," << variant_name(v) << ","
+            f_out << cond.name << "," << arm_label(arm.dro, arm.mpc) << ","
                   << std::fixed << std::setprecision(4)
                   << coll_rate << "," << ci_lo << "," << ci_hi << ","
                   << missed_rate << ","
@@ -1683,13 +1779,13 @@ static void run_experiment_p() {
     struct CoverageStrategy {
         std::string name;
         SamplingBaseline baseline;
-        PaperVariant variant;
+        ArmSpec variant;
     };
     std::vector<CoverageStrategy> strategies = {
-        {"Standard",  SamplingBaseline::STANDARD,       PaperVariant::BASE},
-        {"Uniform",   SamplingBaseline::UNIFORM_WEIGHT,  PaperVariant::BASE},
-        {"Recency",   SamplingBaseline::RECENCY_WEIGHT,  PaperVariant::BASE},
-        {"Oracle",    SamplingBaseline::ORACLE_FLOOD,    PaperVariant::BASE},
+        {"Standard",  SamplingBaseline::STANDARD,       ARM_BASE},
+        {"Uniform",   SamplingBaseline::UNIFORM_WEIGHT,  ARM_BASE},
+        {"Recency",   SamplingBaseline::RECENCY_WEIGHT,  ARM_BASE},
+        {"Oracle",    SamplingBaseline::ORACLE_FLOOD,    ARM_BASE},
     };
 
     std::ofstream csv(OUTPUT_DIR + "exp_p_coverage_baselines.csv");
@@ -1707,8 +1803,8 @@ static void run_experiment_p() {
             std::mt19937 env_rng(seed);
             EnvironmentSetup env = create_environment(EnvironmentType::OVERTAKE_SLOW_LEAD, env_rng);
 
-            auto res = run_single_rollout_env(
-                strat.variant, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
+            auto res = run_arm_rollout_env(
+                strat.variant.dro, strat.variant.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
                 env, strat.baseline);
 
             if (res.collision) collisions++;
@@ -1751,15 +1847,15 @@ static void run_experiment_r() {
     const double SWITCH_PROB = 0.2;
     std::vector<std::string> modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
 
-    std::vector<PaperVariant> r_variants = {PaperVariant::BASE, PaperVariant::DRO};
+    const std::vector<ArmSpec> r_variants = {ARM_BASE, ARM_DRO};
 
     auto mode_mdls = create_obstacle_mode_models(DT);
 
     std::ofstream csv(OUTPUT_DIR + "exp_r_mode_coverage.csv");
     csv << "variant,mode_name,true_fraction,sampled_fraction,coverage_ratio\n";
 
-    for (PaperVariant v : r_variants) {
-        std::cout << "  " << variant_name(v) << " ... " << std::flush;
+    for (const ArmSpec& arm : r_variants) {
+        std::cout << "  " << arm_label(arm.dro, arm.mpc) << " ... " << std::flush;
 
         // Accumulate per-mode counts across all rollouts and steps
         std::map<std::string, int> true_mode_counts;
@@ -1776,14 +1872,14 @@ static void run_experiment_r() {
             unsigned seed = 95000 + r;
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.enable_dro = uses_dro(v);
-            cfg.safe_horizon_enabled = false;
-            cfg.num_discs = 1;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.dro.enabled = arm_uses_dro(arm.dro);
+            cfg.mpc.safe_horizon_enabled = false;
+            cfg.mpc.ego.num_discs = 1;
 
             AdaptiveScenarioMPC ctrl(cfg);
 
@@ -1843,7 +1939,7 @@ static void run_experiment_r() {
                 static_cast<double>(sampled_mode_counts[m]) / total_scenario_slots : 0;
             double coverage_ratio = true_frac > 0 ? sampled_frac / true_frac : 0;
 
-            csv << variant_name(v) << "," << m << ","
+            csv << arm_label(arm.dro, arm.mpc) << "," << m << ","
                 << std::fixed << std::setprecision(4)
                 << true_frac << "," << sampled_frac << "," << coverage_ratio << "\n";
         }
@@ -1866,13 +1962,15 @@ static void run_experiment_t() {
     const int NUM_ROLLOUTS = 200;
     const double SWITCH_PROB = 0.2;
     std::vector<int> scenario_counts = {10, 20, 40, 80};
+    std::vector<std::string> modes = {
+        "constant_velocity", "turn_left", "turn_right", "decelerating"};
 
     std::ofstream csv(OUTPUT_DIR + "exp_t_missed_mode_vs_s.csv");
     csv << "variant,num_scenarios,collision_rate,ci_lo,ci_hi,missed_mode_rate,avg_progress\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
+    for (const ArmSpec& arm : ALL_ARMS) {
         for (int S : scenario_counts) {
-            std::cout << "  " << variant_name(v) << " S=" << S << " ... " << std::flush;
+            std::cout << "  " << arm_label(arm.dro, arm.mpc) << " S=" << S << " ... " << std::flush;
 
             int collisions = 0;
             int total_missed = 0, total_checks = 0;
@@ -1880,9 +1978,9 @@ static void run_experiment_t() {
 
             for (int r = 0; r < NUM_ROLLOUTS; ++r) {
                 unsigned seed = 100000 + r;
-                auto res = run_multi_obstacle_rollout(
-                    v, SWITCH_PROB, S, ROLLOUT_STEPS, seed,
-                    4, 4);  // 4 obstacles, 4 classes
+                auto res = run_arm_multi_obstacle_rollout(
+                    arm.dro, arm.mpc, SWITCH_PROB, S, ROLLOUT_STEPS, seed,
+                    4, 4, modes);  // 4 obstacles, 4 classes
 
                 if (res.collision) collisions++;
                 total_missed += res.missed_mode_steps;
@@ -1895,7 +1993,7 @@ static void run_experiment_t() {
             double mmr = total_checks > 0 ?
                 static_cast<double>(total_missed) / total_checks : 0;
 
-            csv << variant_name(v) << "," << S << ","
+            csv << arm_label(arm.dro, arm.mpc) << "," << S << ","
                 << std::fixed << std::setprecision(4)
                 << cr << "," << ci_lo << "," << ci_hi << ","
                 << mmr << "," << sum_progress / NUM_ROLLOUTS << "\n";
@@ -1936,9 +2034,9 @@ static void run_experiment_v() {
         << "missed_mode_rate,rare_mode_missed_frac,avg_progress,avg_clearance\n";
 
     for (const auto& cc : configs) {
-        for (PaperVariant v : ALL_VARIANTS) {
+        for (const ArmSpec& arm : ALL_ARMS) {
             for (double rp : rare_probs) {
-                std::cout << "  " << cc.label << " " << variant_name(v)
+                std::cout << "  " << cc.label << " " << arm_label(arm.dro, arm.mpc)
                           << " rare_p=" << rp << " ... " << std::flush;
 
                 int collisions = 0;
@@ -1948,8 +2046,8 @@ static void run_experiment_v() {
 
                 for (int r = 0; r < NUM_ROLLOUTS; ++r) {
                     unsigned seed = 120000 + r;
-                    auto res = run_multi_obstacle_rollout(
-                        v, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
+                    auto res = run_arm_multi_obstacle_rollout(
+                        arm.dro, arm.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
                         cc.num_obs, cc.num_cls, base_modes, rare_mode, rp);
 
                     if (res.collision) collisions++;
@@ -1966,7 +2064,7 @@ static void run_experiment_v() {
                 double mmr = total_checks > 0 ? static_cast<double>(total_missed) / total_checks : 0;
                 double rare_miss_frac = rare_total > 0 ? static_cast<double>(rare_missed) / rare_total : 0;
 
-                csv << variant_name(v) << "," << cc.label << "," << rp << ","
+                csv << arm_label(arm.dro, arm.mpc) << "," << cc.label << "," << rp << ","
                     << std::fixed << std::setprecision(4)
                     << cr << "," << ci_lo << "," << ci_hi << ","
                     << mmr << "," << rare_miss_frac << ","
@@ -2009,9 +2107,9 @@ static void run_experiment_w() {
     csv << "variant,num_modes,collision_rate,ci_lo,ci_hi,"
         << "missed_mode_rate,avg_progress,avg_solve_ms\n";
 
-    for (PaperVariant v : ALL_VARIANTS) {
+    for (const ArmSpec& arm : ALL_ARMS) {
         for (const auto& mc : m_configs) {
-            std::cout << "  " << variant_name(v) << " M=" << mc.M << " ... " << std::flush;
+            std::cout << "  " << arm_label(arm.dro, arm.mpc) << " M=" << mc.M << " ... " << std::flush;
 
             int collisions = 0;
             int total_missed = 0, total_checks = 0;
@@ -2019,8 +2117,8 @@ static void run_experiment_w() {
 
             for (int r = 0; r < NUM_ROLLOUTS; ++r) {
                 unsigned seed = 130000 + r;
-                auto res = run_multi_obstacle_rollout(
-                    v, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
+                auto res = run_arm_multi_obstacle_rollout(
+                    arm.dro, arm.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
                     4, 4, mc.modes);
 
                 if (res.collision) collisions++;
@@ -2034,7 +2132,7 @@ static void run_experiment_w() {
             auto [ci_lo, ci_hi] = wilson_ci(collisions, NUM_ROLLOUTS);
             double mmr = total_checks > 0 ? static_cast<double>(total_missed) / total_checks : 0;
 
-            csv << variant_name(v) << "," << mc.M << ","
+            csv << arm_label(arm.dro, arm.mpc) << "," << mc.M << ","
                 << std::fixed << std::setprecision(4)
                 << cr << "," << ci_lo << "," << ci_hi << ","
                 << mmr << "," << sum_progress / NUM_ROLLOUTS << ","
@@ -2065,10 +2163,10 @@ static void run_experiment_x() {
     std::vector<std::string> base_modes = {"constant_velocity", "turn_left", "turn_right"};
 
     // All 8 paper variants as baselines, plus naive heuristics
-    struct BaselineConfig { std::string name; PaperVariant variant; };
+    struct BaselineConfig { std::string name; ArmSpec variant; };
     std::vector<BaselineConfig> configs;
-    for (PaperVariant v : ALL_VARIANTS) {
-        configs.push_back({variant_name(v), v});
+    for (const ArmSpec& arm : ALL_ARMS) {
+        configs.push_back({arm_label(arm.dro, arm.mpc), arm});
     }
 
     std::ofstream csv(OUTPUT_DIR + "exp_x_baselines_rare_mode.csv");
@@ -2086,8 +2184,8 @@ static void run_experiment_x() {
 
             for (int r = 0; r < NUM_ROLLOUTS; ++r) {
                 unsigned seed = 140000 + r;
-                auto res = run_multi_obstacle_rollout(
-                    bc.variant, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
+                auto res = run_arm_multi_obstacle_rollout(
+                    bc.variant.dro, bc.variant.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS, seed,
                     4, 4, base_modes, rare_mode, rp);
 
                 if (res.collision) collisions++;
@@ -2148,22 +2246,22 @@ static void run_experiment_z() {
     const int NUM_CLASSES = 4;
 
     for (unsigned seed : showcase_seeds) {
-        for (PaperVariant v : ALL_VARIANTS) {
-            std::string vname = variant_name(v);
+        for (const ArmSpec& arm : ALL_ARMS) {
+            std::string vname = arm_label(arm.dro, arm.mpc);
             std::cout << "  seed=" << seed << " " << vname << " ... " << std::flush;
 
             std::mt19937 rng(seed);
 
-            ScenarioMPCConfig cfg;
-            cfg.horizon = HORIZON; cfg.dt = DT; cfg.num_scenarios = BASE_SCENARIOS;
-            cfg.ego_radius = 0.5; cfg.obstacle_radius = 0.35; cfg.safety_margin = 0.2;
-            cfg.use_sqp_solver = true; cfg.ensure_mode_coverage = true;
-            cfg.weight_type = WeightType::FREQUENCY;
-            cfg.enable_dro = uses_dro(v);
-            cfg.injection_mode = InjectionMode::QSTAR_SAMPLE;
-            cfg.safe_horizon_enabled = uses_sh(v);
-            cfg.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
-            cfg.num_discs = 1;
+            RuntimeConfig cfg;
+            cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
+            cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
+            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+            cfg.dro.enabled = arm_uses_dro(arm.dro);
+            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+            cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.ego.num_discs = 1;
 
             AdaptiveScenarioMPC ctrl(cfg);
 
@@ -2185,7 +2283,7 @@ static void run_experiment_z() {
 
             EgoState ego(0, 0, 0, 1.5);
             EgoDynamics dyn(DT);
-            double collision_radius = cfg.ego_radius + cfg.obstacle_radius;
+            double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
             double pp_z = 0.0;
 
             for (int t = 0; t < 5; ++t) {
@@ -2278,9 +2376,9 @@ static void run_experiment_aa() {
         << "progress,min_clearance,mean_solve_ms,p99_solve_ms\n";
 
     for (EnvironmentType env_type : envs) {
-        for (PaperVariant v : ALL_VARIANTS) {
+        for (const ArmSpec& arm : ALL_ARMS) {
             std::string env_name = environment_name(env_type);
-            std::cout << "  " << env_name << " " << variant_name(v)
+            std::cout << "  " << env_name << " " << arm_label(arm.dro, arm.mpc)
                       << " ... " << std::flush;
 
             int total_collisions = 0;
@@ -2290,8 +2388,8 @@ static void run_experiment_aa() {
                 std::mt19937 rng_env(seed);
                 EnvironmentSetup env_setup = create_environment(env_type, rng_env);
 
-                auto res = run_single_rollout_env(
-                    v, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS,
+                auto res = run_arm_rollout_env(
+                    arm.dro, arm.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS,
                     seed, env_setup, SamplingBaseline::STANDARD);
 
                 double mmr = res.total_steps > 0 ?
@@ -2307,7 +2405,7 @@ static void run_experiment_aa() {
 
                 if (res.collision) total_collisions++;
 
-                csv << env_name << "," << variant_name(v) << "," << seed << ","
+                csv << env_name << "," << arm_label(arm.dro, arm.mpc) << "," << seed << ","
                     << (res.collision ? 1 : 0) << ","
                     << std::fixed << std::setprecision(4)
                     << mmr << "," << res.total_progress << ","
@@ -2344,9 +2442,7 @@ static void run_experiment_ab() {
     std::vector<double> scales = {0.5, 1.0, 2.0};
 
     // Sweep SH variants (Base+SH and DRO+SH)
-    std::vector<PaperVariant> sweep_variants = {
-        PaperVariant::BASE_SH, PaperVariant::DRO_SH
-    };
+    const std::vector<ArmSpec> sweep_variants = {ARM_BASE_SH, ARM_DRO_SH};
 
     std::ofstream csv(OUTPUT_DIR + "exp_ab_pareto_frontier.csv");
     csv << "variant,epsilon,uncertainty_scale,"
@@ -2356,11 +2452,11 @@ static void run_experiment_ab() {
     int total_configs = static_cast<int>(sweep_variants.size() * epsilons.size() * scales.size());
     int config_idx = 0;
 
-    for (PaperVariant v : sweep_variants) {
+    for (const ArmSpec& arm : sweep_variants) {
         for (double eps : epsilons) {
             for (double sc : scales) {
                 config_idx++;
-                std::string vname = variant_name(v);
+                std::string vname = arm_label(arm.dro, arm.mpc);
                 std::cout << "  [" << config_idx << "/" << total_configs << "] "
                           << vname << " eps=" << eps << " sc=" << sc
                           << " ... " << std::flush;
@@ -2372,8 +2468,8 @@ static void run_experiment_ab() {
                 std::vector<double> all_solve_times;
 
                 for (int r = 0; r < NUM_ROLLOUTS; ++r) {
-                    auto res = run_multi_obstacle_rollout(
-                        v, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS,
+                    auto res = run_arm_multi_obstacle_rollout(
+                        arm.dro, arm.mpc, SWITCH_PROB, BASE_SCENARIOS, ROLLOUT_STEPS,
                         170000 + r, 4, 4, base_modes,
                         rare_mode, rare_prob);
 

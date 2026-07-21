@@ -32,7 +32,7 @@
 #include "reference_path.hpp"
 #include "dynamics.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -146,35 +146,34 @@ static const std::vector<MethodDef> CORE_METHODS = {
 static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_prob = 0.1,
                                           int num_obs = 1) {
     ExperimentConfig cfg;
-    cfg.horizon = HORIZON;
-    cfg.num_scenarios = NUM_SCENARIOS;
-    cfg.switch_prob = switch_prob;
-    cfg.rollout_steps = ROLLOUT_STEPS;
-    cfg.obs_modes = BASE_MODES;
-    cfg.rare_mode = RARE_MODE;
-    cfg.rare_switch_prob = rare_prob;
-    cfg.num_discs = NUM_DISCS;
-    cfg.vehicle_length = VEHICLE_LENGTH;
-    cfg.safe_horizon_enabled = true;
-    cfg.safe_horizon_min = SAFE_HORIZON_MIN;
-    cfg.path_completion_termination = true;
-    cfg.path_completion_fraction = 0.95;
-    cfg.weight_type = WeightType::FREQUENCY;
-    cfg.enable_dro = false;
-    cfg.injection_mode = InjectionMode::NONE;
-    cfg.ablation = AblationVariant::NO_INJECTION;
-    cfg.num_obstacles = num_obs;
-    cfg.obstacles_per_class = 1;
+    cfg.mpc.horizon = HORIZON;
+    cfg.mpc.sampling.num_scenarios = NUM_SCENARIOS;
+    cfg.obstacles.switch_prob = switch_prob;
+    cfg.rollout.rollout_steps = ROLLOUT_STEPS;
+    cfg.obstacles.obs_modes = BASE_MODES;
+    cfg.obstacles.rare_mode = RARE_MODE;
+    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.mpc.ego.num_discs = NUM_DISCS;
+    cfg.mpc.ego.length = VEHICLE_LENGTH;
+    cfg.mpc.safe_horizon_enabled = true;
+    cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
+    cfg.environment.path_completion_termination = true;
+    cfg.environment.path_completion_fraction = 0.95;
+    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
+    cfg.dro.enabled = false;
+    cfg.dro.injection_mode = InjectionMode::NONE;
+    cfg.obstacles.num_obstacles = num_obs;
+    cfg.obstacles.obstacles_per_class = 1;
     return cfg;
 }
 
 static ExperimentConfig apply_method(ExperimentConfig cfg, const MethodDef& m) {
-    cfg.enable_dro = m.enable_dro;
-    cfg.injection_mode = m.injection_mode;
-    cfg.softmax_tau = m.softmax_tau;
-    cfg.eps_greedy_epsilon = m.eps_greedy_epsilon;
-    cfg.dro_injection_count = m.injection_count;
-    cfg.method_name = m.name;
+    cfg.dro.enabled = (m.enable_dro);
+    cfg.dro.injection_mode = m.injection_mode;
+    cfg.dro.softmax_tau = m.softmax_tau;
+    cfg.dro.eps_greedy_epsilon = m.eps_greedy_epsilon;
+    cfg.dro.injection_count = m.injection_count;
+    cfg.rollout.method_name = m.name;
     return cfg;
 }
 
@@ -302,9 +301,9 @@ static void run_g1() {
 
                 ExperimentConfig cfg = make_base_config();
                 cfg = apply_method(cfg, method);
-                cfg.custom_ref_path = ps.path;
-                cfg.custom_initial_ego = ps.initial_ego;
-                cfg.initial_obstacle_states = {
+                cfg.environment.custom_ref_path = ps.path;
+                cfg.environment.custom_initial_ego = ps.initial_ego;
+                cfg.obstacles.initial_obstacle_states = {
                     obstacle_on_path(ps.path, 0.55, env_rng, true)
                 };
 
@@ -378,7 +377,7 @@ static void run_g2() {
                 for (double frac : fracs) {
                     obs_states.push_back(obstacle_on_path(ref_path, frac, env_rng, true));
                 }
-                cfg.initial_obstacle_states = obs_states;
+                cfg.obstacles.initial_obstacle_states = obs_states;
 
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);
@@ -444,7 +443,7 @@ static void run_g3() {
 
                 ExperimentConfig cfg = make_base_config(sp, 0.1);
                 cfg = apply_method(cfg, method);
-                cfg.initial_obstacle_states = {
+                cfg.obstacles.initial_obstacle_states = {
                     obstacle_on_path(ref_path, 0.55, env_rng, true)
                 };
 
@@ -525,9 +524,9 @@ static void run_g4() {
 
                 ExperimentConfig cfg = make_base_config(0.2, ms.rare.empty() ? 0.0 : 0.1);
                 cfg = apply_method(cfg, method);
-                cfg.obs_modes = ms.modes;
-                cfg.rare_mode = ms.rare;
-                cfg.initial_obstacle_states = {
+                cfg.obstacles.obs_modes = ms.modes;
+                cfg.obstacles.rare_mode = ms.rare;
+                cfg.obstacles.initial_obstacle_states = {
                     obstacle_on_path(ref_path, 0.55, env_rng, true)
                 };
 
@@ -609,14 +608,14 @@ static void run_g5() {
 
                     ExperimentConfig cfg = make_base_config(0.2, 0.1, n_obs);
                     cfg = apply_method(cfg, method);
-                    cfg.custom_ref_path = ps.path;
-                    cfg.custom_initial_ego = ps.initial_ego;
+                    cfg.environment.custom_ref_path = ps.path;
+                    cfg.environment.custom_initial_ego = ps.initial_ego;
 
                     std::vector<ObstacleState> obs_states;
                     for (double frac : fracs) {
                         obs_states.push_back(obstacle_on_path(ps.path, frac, env_rng, true));
                     }
-                    cfg.initial_obstacle_states = obs_states;
+                    cfg.obstacles.initial_obstacle_states = obs_states;
 
                     RolloutRecord rec = run_experiment_rollout(cfg, seed);
                     met.add(rec);

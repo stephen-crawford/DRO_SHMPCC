@@ -26,7 +26,7 @@
 #include "mpc_controller.hpp"
 #include "wasserstein_dro.hpp"
 
-using namespace scenario_mpc;
+using namespace dro_mpc;
 namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
@@ -227,34 +227,32 @@ int main(int argc, char** argv) {
         auto t0 = std::chrono::high_resolution_clock::now();
 
         ExperimentConfig cfg;
-        cfg.horizon = DEFAULT_HORIZON;
-        cfg.num_scenarios = tc.num_scenarios;
-        cfg.switch_prob = 0.1;
-        cfg.rollout_steps = DEFAULT_ROLLOUT_STEPS;
-        cfg.obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
-        cfg.rare_mode = "lane_change_left";
-        cfg.rare_switch_prob = 0.05;
-        cfg.num_discs = 1;
-        cfg.vehicle_length = 1.5;
-        cfg.path_completion_termination = true;
-        cfg.path_completion_fraction = PATH_COMPLETE_FRAC;
-        cfg.method_name = tc.name;
-        cfg.ablation = AblationVariant::NO_INJECTION;
+        cfg.mpc.horizon = DEFAULT_HORIZON;
+        cfg.mpc.sampling.num_scenarios = tc.num_scenarios;
+        cfg.obstacles.switch_prob = 0.1;
+        cfg.rollout.rollout_steps = DEFAULT_ROLLOUT_STEPS;
+        cfg.obstacles.obs_modes = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
+        cfg.obstacles.rare_mode = "lane_change_left";
+        cfg.obstacles.rare_switch_prob = 0.05;
+        cfg.mpc.ego.num_discs = 1;
+        cfg.mpc.ego.length = 1.5;
+        cfg.environment.path_completion_termination = true;
+        cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
+        cfg.rollout.method_name = tc.name;
+        cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
-        cfg.weight_type = WeightType::FREQUENCY;
+        cfg.dro.enabled = (tc.enable_dro);
+        cfg.dro.injection_mode = tc.injection_mode;
+        cfg.dro.solver.base_radius = tc.rho;
 
-        cfg.enable_dro = tc.enable_dro;
-        cfg.injection_mode = tc.injection_mode;
-        cfg.eps_wass = tc.rho;
+        cfg.mpc.safe_horizon_enabled = tc.safe_horizon;
+        cfg.mpc.constraints.forced_safe_horizon = tc.forced_safe_horizon;
+        cfg.mpc.constraints.safe_horizon_min = tc.safe_horizon_min;
 
-        cfg.safe_horizon_enabled = tc.safe_horizon;
-        cfg.forced_safe_horizon = tc.forced_safe_horizon;
-        cfg.safe_horizon_min = tc.safe_horizon_min;
-
-        cfg.num_obstacles = num_obstacles;
-        cfg.obstacles_per_class = obstacles_per_class;
+        cfg.obstacles.num_obstacles = num_obstacles;
+        cfg.obstacles.obstacles_per_class = obstacles_per_class;
         if (num_obstacles == 4) {
-            cfg.obs_arc_fractions = OBS_ARC_FRACS_4;
+            cfg.obstacles.obs_arc_fractions = OBS_ARC_FRACS_4;
         }
 
         for (int r = 0; r < max_rollouts; r++) {
