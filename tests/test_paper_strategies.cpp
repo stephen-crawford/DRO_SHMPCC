@@ -61,10 +61,10 @@ struct StrategyDef {
 static const std::vector<StrategyDef> STRATEGIES = {
     // Non-SH baselines (expect higher collision rates)
     {"Base",            false, InjectionMode::NONE,         false},
-    {"DRO(inj)",        true,  InjectionMode::DRO,          false},
+    {"DRO(inj)",        true,  InjectionMode::TOP_RISK_INJECT,          false},
     // SH variants
     {"SH",              false, InjectionMode::NONE,         true},
-    {"DRO(inj)+SH",     true,  InjectionMode::DRO,          true},
+    {"DRO(inj)+SH",     true,  InjectionMode::TOP_RISK_INJECT,          true},
     {"DRO(q*)+SH",      true,  InjectionMode::QSTAR_SAMPLE, true},
 };
 
@@ -232,7 +232,6 @@ static ExperimentConfig make_strategy_config(const StrategyDef& strat) {
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
     cfg.rollout.method_name = strat.name;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
     cfg.dro.enabled = (strat.enable_dro);
     cfg.dro.injection_mode = strat.injection_mode;
@@ -311,11 +310,9 @@ static void write_config_file(const std::string& filepath, int total_rollouts,
         ofs << "   injection_mode = ";
         switch (s.injection_mode) {
             case InjectionMode::NONE: ofs << "NONE"; break;
-            case InjectionMode::DRO: ofs << "DRO (worst-case injection)"; break;
+            case InjectionMode::TOP_RISK_INJECT: ofs << "TOP_RISK_INJECT (worst-case injection)"; break;
             case InjectionMode::QSTAR_SAMPLE: ofs << "QSTAR_SAMPLE (resample from q*)"; break;
-            case InjectionMode::ADVERSARIAL: ofs << "ADVERSARIAL"; break;
-            case InjectionMode::RANDOM: ofs << "RANDOM"; break;
-            case InjectionMode::ALL_MODES: ofs << "ALL_MODES"; break;
+            default: ofs << "other"; break;
         }
         ofs << "\n";
         ofs << "   safe_horizon = " << (s.safe_horizon ? "true" : "false") << "\n\n";

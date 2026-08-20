@@ -136,8 +136,8 @@ struct MethodDef {
 static const std::vector<MethodDef> CORE_METHODS = {
     {"Base",              false, InjectionMode::NONE,               0.0, 0.0, 1},
     {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,      0.0, 0.0, 1},
-    {"WDRO-inject-K1",    true,  InjectionMode::DRO,               0.0, 0.0, 1},
-    {"WDRO-inject-K2",    true,  InjectionMode::DRO,               0.0, 0.0, 2},
+    {"WDRO-inject-K1",    true,  InjectionMode::TOP_RISK_INJECT,               0.0, 0.0, 1},
+    {"WDRO-inject-K2",    true,  InjectionMode::TOP_RISK_INJECT,               0.0, 0.0, 2},
     {"TopRisk-K1",        true,  InjectionMode::TOP_RISK_INJECT,   0.0, 0.0, 1},
     {"DiverseRisk-K1",    true,  InjectionMode::DIVERSE_RISK_INJECT, 0.0, 0.0, 1},
     {"Softmax-tau5",      true,  InjectionMode::SOFTMAX_RISK,      5.0, 0.0, 1},
@@ -159,7 +159,6 @@ static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_p
     cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = false;
     cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.obstacles.num_obstacles = num_obs;
@@ -412,7 +411,7 @@ static void run_g3() {
     const std::vector<MethodDef> METHODS = {
         {"Base",              false, InjectionMode::NONE,               0.0, 0.0, 1},
         {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,      0.0, 0.0, 1},
-        {"WDRO-inject-K1",    true,  InjectionMode::DRO,               0.0, 0.0, 1},
+        {"WDRO-inject-K1",    true,  InjectionMode::TOP_RISK_INJECT,               0.0, 0.0, 1},
         {"TopRisk-K1",        true,  InjectionMode::TOP_RISK_INJECT,   0.0, 0.0, 1},
         {"Softmax-tau5",      true,  InjectionMode::SOFTMAX_RISK,      5.0, 0.0, 1},
     };
@@ -489,8 +488,8 @@ static void run_g4() {
     const std::vector<MethodDef> METHODS = {
         {"Base",              false, InjectionMode::NONE,               0.0, 0.0, 1},
         {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,      0.0, 0.0, 1},
-        {"WDRO-inject-K1",    true,  InjectionMode::DRO,               0.0, 0.0, 1},
-        {"WDRO-inject-K2",    true,  InjectionMode::DRO,               0.0, 0.0, 2},
+        {"WDRO-inject-K1",    true,  InjectionMode::TOP_RISK_INJECT,               0.0, 0.0, 1},
+        {"WDRO-inject-K2",    true,  InjectionMode::TOP_RISK_INJECT,               0.0, 0.0, 2},
         {"TopRisk-K1",        true,  InjectionMode::TOP_RISK_INJECT,   0.0, 0.0, 1},
         {"DiverseRisk-K1",    true,  InjectionMode::DIVERSE_RISK_INJECT, 0.0, 0.0, 1},
     };
@@ -574,7 +573,7 @@ static void run_g5() {
     const std::vector<MethodDef> METHODS = {
         {"Base",            false, InjectionMode::NONE,           0.0, 0.0, 1},
         {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE,  0.0, 0.0, 1},
-        {"WDRO-inject-K1",  true,  InjectionMode::DRO,           0.0, 0.0, 1},
+        {"WDRO-inject-K1",  true,  InjectionMode::TOP_RISK_INJECT,           0.0, 0.0, 1},
     };
 
     const int N = N_ROLLOUTS;

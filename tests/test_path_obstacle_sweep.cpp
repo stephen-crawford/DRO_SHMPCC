@@ -59,8 +59,8 @@ struct StrategyDef {
 static const std::vector<StrategyDef> STRATEGIES = {
     {"Base",         false, InjectionMode::NONE,         false},
     {"SH",           false, InjectionMode::NONE,         true},
-    {"DRO(inj)",     true,  InjectionMode::DRO,          false},
-    {"DRO(inj)+SH",  true,  InjectionMode::DRO,          true},
+    {"DRO(inj)",     true,  InjectionMode::TOP_RISK_INJECT,          false},
+    {"DRO(inj)+SH",  true,  InjectionMode::TOP_RISK_INJECT,          true},
     {"DRO(q*)+SH",   true,  InjectionMode::QSTAR_SAMPLE, true},
 };
 
@@ -190,7 +190,6 @@ ExperimentConfig make_sweep_config(
     cfg.mpc.ego.length = 1.5;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = (strat.enable_dro);
     cfg.dro.injection_mode = strat.injection_mode;
     cfg.dro.solver.base_radius = DRO_RHO;

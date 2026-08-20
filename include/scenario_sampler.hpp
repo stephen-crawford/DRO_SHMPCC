@@ -2,10 +2,26 @@
  * @file scenario_sampler.hpp
  * @brief Scenario sampling for adaptive scenario-based MPC.
  *
- * Implements Algorithm 1: SampleScenarios
+ * There are exactly TWO sampling paradigms, and only two:
  *
- * Generates scenarios by sampling mode sequences and noise realizations
- * for each obstacle, then combining into joint scenarios.
+ *   (1) i.i.d. scenario sampling (de Groot 2023, arXiv:2307.01070). Each of the S
+ *       scenarios is an INDEPENDENT draw: one mode per obstacle held over the horizon
+ *       (drawn from a per-obstacle categorical) plus an i.i.d. Gaussian noise path.
+ *       This is the sampling law the de Groot / Campi-Garatti scenario bound assumes;
+ *       the WDRO reweighting only changes WHICH categorical (nominal p_hat vs worst-case
+ *       q*) is drawn from — the draws stay i.i.d., so the bound still applies.
+ *       Entry points: sample_scenarios (internal nominal weights) and
+ *       sample_scenarios_with_weights (external weights, e.g. q* or a baseline).
+ *
+ *   (2) Markov-jump switching (Schuurmans & Patrinos DR-MJS, arXiv:2106.00561): the
+ *       mode SWITCHES within the horizon along a mode transition matrix. mode_0 is the
+ *       one-step predictive of the initial belief, then mode_k ~ T[mode_{k-1}, :].
+ *       Entry point: sample_scenarios_markov.
+ *
+ * Older overlapping variants (independent-per-step "mode sequences", "stratified"
+ * allocation, and a standalone coverage-forcing sampler) have been REMOVED — coverage
+ * forcing survives only as the ensure_mode_coverage flag on the single i.i.d. sampler,
+ * used for the ablation baselines that break i.i.d. on purpose.
  */
 
 #ifndef SCENARIO_MPC_SCENARIO_SAMPLER_HPP
@@ -46,40 +62,7 @@ std::vector<Scenario> sample_scenarios(
     const std::map<int, ModeHistory>& mode_histories,
     int horizon,
     int num_scenarios,
-    WeightType weight_type = WeightType::FREQUENCY,
-    double recency_decay = 0.9,
-    int current_timestep = 0,
-    std::mt19937* rng = nullptr
-);
-
-/**
- * @brief Sample scenarios with mode coverage guarantee.
- *
- * Two-phase algorithm:
- *   Phase 1 (Coverage): For each obstacle, collect all modes with nonzero weight.
- *     The first num_coverage scenarios deterministically cover each mode, ensuring
- *     at least one scenario per mode per obstacle.
- *   Phase 2 (Remaining): Fill remaining scenarios via normal weight-based sampling.
- *
- * This eliminates the probability of zero representation for rare modes.
- *
- * @param obstacles Dict mapping obstacle_id to current ObstacleState
- * @param mode_histories Dict mapping obstacle_id to ModeHistory
- * @param horizon Prediction horizon N
- * @param num_scenarios Number of scenarios to sample S
- * @param weight_type Strategy for computing mode weights
- * @param recency_decay Decay factor for recency weighting
- * @param current_timestep Current timestep for recency computation
- * @param rng Random number generator
- * @return List of Scenario objects with mode coverage guarantee
- */
-std::vector<Scenario> sample_scenarios_with_mode_coverage(
-    const std::map<int, ObstacleState>& obstacles,
-    const std::map<int, ModeHistory>& mode_histories,
-    int horizon,
-    int num_scenarios,
-    WeightType weight_type = WeightType::FREQUENCY,
-    double recency_decay = 0.9,
+    const ModeBeliefConfig& mode_belief = {},
     int current_timestep = 0,
     std::mt19937* rng = nullptr
 );
@@ -110,29 +93,6 @@ std::vector<Scenario> sample_scenarios_with_weights(
 );
 
 /**
- * @brief Sample scenarios with time-varying mode sequences.
- *
- * More sophisticated version that samples a different mode for each timestep,
- * allowing for mode switches during the prediction horizon.
- *
- * @param obstacles Dict mapping obstacle_id to current ObstacleState
- * @param mode_histories Dict mapping obstacle_id to ModeHistory
- * @param horizon Prediction horizon
- * @param num_scenarios Number of scenarios to sample
- * @param weight_type Strategy for computing mode weights
- * @param rng Random number generator
- * @return List of Scenario objects
- */
-std::vector<Scenario> sample_scenarios_with_mode_sequences(
-    const std::map<int, ObstacleState>& obstacles,
-    const std::map<int, ModeHistory>& mode_histories,
-    int horizon,
-    int num_scenarios,
-    WeightType weight_type = WeightType::FREQUENCY,
-    std::mt19937* rng = nullptr
-);
-
-/**
  * @brief Markov mode-sequence sampling with an explicit initial belief.
  *
  * The live entry point for use_markov_mode_sampling. Differs from
@@ -142,7 +102,7 @@ std::vector<Scenario> sample_scenarios_with_mode_sequences(
  *     Markov propagation starts from the reweighted distribution; pass nullptr
  *     and the belief is computed from weight_type + belief_cfg. Without this the
  *     DRO path could not use Markov sampling at all, since Q* is a weight map and
- *     sample_scenarios_with_mode_sequences only takes a WeightType.
+ *     sample_scenarios_with_mode_sequences takes only the belief config.
  *  2. The belief and transition matrix are built ONCE per obstacle rather than
  *     once per (scenario, obstacle) -- they do not depend on the scenario index,
  *     so recomputing them S times was pure waste.
@@ -158,53 +118,14 @@ std::vector<Scenario> sample_scenarios_markov(
     const std::map<int, std::map<std::string, double>>* per_obstacle_belief,
     int horizon,
     int num_scenarios,
-    WeightType weight_type,
     const ModeBeliefConfig& belief_cfg,
     std::mt19937* rng = nullptr
 );
 
-/**
- * @brief Sample scenarios with stratified allocation across modes.
- *
- * Allocates floor(S * w_m) scenarios per mode m, fills remainder proportionally.
- * Guarantees representation proportional to mode weights.
- *
- * @param obstacles Dict mapping obstacle_id to current ObstacleState
- * @param mode_histories Dict mapping obstacle_id to ModeHistory
- * @param horizon Prediction horizon N
- * @param num_scenarios Number of scenarios to sample S
- * @param weight_type Strategy for computing mode weights
- * @param recency_decay Decay factor for recency weighting
- * @param current_timestep Current timestep for recency computation
- * @param rng Random number generator
- * @return List of Scenario objects with stratified mode allocation
- */
-std::vector<Scenario> sample_scenarios_stratified(
-    const std::map<int, ObstacleState>& obstacles,
-    const std::map<int, ModeHistory>& mode_histories,
-    int horizon,
-    int num_scenarios,
-    WeightType weight_type = WeightType::FREQUENCY,
-    double recency_decay = 0.9,
-    int current_timestep = 0,
-    std::mt19937* rng = nullptr
-);
-
-/**
- * @brief Compute required number of scenarios using Theorem 1.
- *
- * Theorem 1: For epsilon-chance constraint satisfaction with confidence 1-beta,
- * the required number of scenarios is:
- *     S >= 2/epsilon * (ln(1/beta) + n_x)
- *
- * where n_x is the number of decision variables.
- *
- * @param epsilon Violation probability (1 - confidence_level)
- * @param beta Risk parameter
- * @param num_decision_vars Number of decision variables n_x
- * @return Minimum number of scenarios required
- */
-int compute_required_scenarios(double epsilon, double beta, int num_decision_vars);
+// NOTE: scenario sample-complexity now lives entirely in RuntimeConfig
+// (include/config.hpp): compute_required_scenarios (exact de Groot Eq. 8 NSO
+// bisection) and compute_required_scenarios_simple (convex Calafiore-Campi). The
+// old free-function convex bound that used to live here has been removed.
 
 }  // namespace dro_mpc
 

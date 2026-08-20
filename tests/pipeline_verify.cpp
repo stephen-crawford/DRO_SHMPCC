@@ -44,7 +44,7 @@ int main() {
     check(std::isfinite(s0), "reference-path spline position computed for ego");
     check(obs.position().x()==5.0, "obstacle position determined");
     // nominal belief
-    auto nominal = compute_mode_weights(hist, WeightType::FREQUENCY, 0.9, 30, 1.0);
+    auto nominal = compute_mode_weights(hist);
     double nsum=0; bool allpos=true; for(auto&kv:nominal){nsum+=kv.second; if(kv.second<=0)allpos=false;}
     check((int)nominal.size()==M && allpos, "nominal belief: every mode strictly positive (Dirichlet)");
     check(std::abs(nsum-1.0)<1e-9, "nominal belief normalized to 1");
@@ -91,9 +91,11 @@ int main() {
     bool proper=true; for(auto&c:cons){ if(std::abs(c.a.norm()-1.0)>1e-6 || !std::isfinite(c.b)) proper=false; }
     check(!cons.empty(), "constraints generated from scenarios");
     check(proper, "each constraint is a proper unit-normal affine halfspace");
-    auto merged = merge_redundant_constraints(cons);
-    std::printf("    constraints: %zu raw -> %zu after merge_redundant (per-step collapse)\n", cons.size(), merged.size());
-    check(true, "merge step ran (inspect the collapse ratio above)");
+    auto pruned = prune_dominated_scenarios(scen_q, ego_ref);
+    auto cons_pruned = compute_linearized_constraints(ego_ref, pruned, 0.5, 0.35, 0.1, 1, 1.5);
+    std::printf("    scenarios: %zu -> %zu after de Groot dominance pruning; constraints %zu -> %zu (non-distorting)\n",
+                scen_q.size(), pruned.size(), cons.size(), cons_pruned.size());
+    check(pruned.size() <= scen_q.size() && !pruned.empty(), "dominance pruning ran (inspect the reduction above)");
 
     std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
     RuntimeConfig cfg; cfg.dro.enabled=true; cfg.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;

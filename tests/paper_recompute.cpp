@@ -40,7 +40,6 @@ static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) 
     c.mpc.constraints.safe_horizon_min = 3;
     c.environment.path_completion_termination = true;
     c.environment.path_completion_fraction = 0.95;
-    c.mpc.sampling.weight_type = WeightType::FREQUENCY;
     c.obstacles.num_obstacles = 1;
     c.mpc.enable_contouring_constraints = true;
     c.mpc.constraints.road_width = 4.0;
@@ -52,11 +51,10 @@ static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) 
 
 struct Res { double coll, lo, hi, clear, contour, velerr, effort, ms; };
 
-static Res run(const ExperimentConfig& base, bool dro, WeightType wt, bool entropic, int N) {
+static Res run(const ExperimentConfig& base, bool dro, bool entropic, int N) {
     int c = 0; double cl=0, ct=0, ve=0, ef=0, ms=0;
     for (int i = 0; i < N; ++i) {
         ExperimentConfig cfg = base;
-        cfg.mpc.sampling.weight_type = wt;
         cfg.dro.enabled = (dro);
         cfg.dro.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
         cfg.dro.solver.radius_calibration.use_entropic_allocator = entropic;
@@ -80,8 +78,8 @@ int main() {
     const double offs[] = {0.0, 0.5, 1.0, 1.5, 2.0, 3.0};
     for (double d : offs) {
         ExperimentConfig base = mk(path, place_oncoming(path, d));
-        Res b = run(base, false, WeightType::FREQUENCY, false, N);
-        Res w = run(base, true,  WeightType::FREQUENCY, false, N);
+        Res b = run(base, false, false, N);
+        Res w = run(base, true,  false, N);
         std::printf("%-8.1f %10.3f %10.3f %+8.1fpp %9.3f %9.3f\n",
                     d, b.coll, w.coll, 100.0*(b.coll-w.coll), b.clear, w.clear);
         std::fflush(stdout);
@@ -91,16 +89,14 @@ int main() {
     std::printf("%-22s %7s %14s %8s %8s %8s %9s %6s\n",
                 "Method","Coll.","[95%% CI]","Clear.","Contour","Vel.err","Effort","ms");
     ExperimentConfig base0 = mk(path, place_oncoming(path, 0.0));
-    struct Arm { const char* name; bool dro; WeightType wt; bool ent; };
+    struct Arm { const char* name; bool dro; bool ent; };
     Arm arms[] = {
-        {"base (no DRO)",        false, WeightType::FREQUENCY,      false},
-        {"eps-greedy belief",    false, WeightType::EPSILON_GREEDY, false},
-        {"uniform belief",       false, WeightType::UNIFORM,        false},
-        {"WDRO-sampling (rawLP)",true,  WeightType::FREQUENCY,      false},
-        {"WDRO entropic t=0.05", true,  WeightType::FREQUENCY,      true },
+        {"base (no DRO)",        false, false},
+        {"WDRO-sampling (rawLP)",true,  false},
+        {"WDRO entropic t=0.05", true,  true },
     };
     for (const auto& a : arms) {
-        Res r = run(base0, a.dro, a.wt, a.ent, N);
+        Res r = run(base0, a.dro, a.ent, N);
         std::printf("%-22s %6.3f [%.3f,%.3f] %8.3f %8.3f %8.3f %9.3f %6.2f\n",
                     a.name, r.coll, r.lo, r.hi, r.clear, r.contour, r.velerr, r.effort, r.ms);
         std::fflush(stdout);

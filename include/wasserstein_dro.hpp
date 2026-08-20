@@ -36,8 +36,8 @@ namespace dro_mpc {
  * @brief Tie-breaking policy for deterministic transport plan construction.
  */
 enum class TiePolicy {
-    MIN_COST,   ///< Among tied destinations, pick the one with lowest D[i][j] (less movement)
-    MAX_COST    ///< Among tied destinations, pick the one with highest D[i][j] (more movement)
+    MIN_COST,   // Among tied destinations, pick the one with lowest D[i][j] (less movement)
+    MAX_COST    // Among tied destinations, pick the one with highest D[i][j] (more movement)
 };
 
 /**
@@ -45,33 +45,33 @@ enum class TiePolicy {
  */
 struct TransportPlan {
     double lambda = 0.0;
-    std::map<std::string, double> q;        ///< Resulting mode distribution
-    double transport_cost = 0.0;            ///< sum_i p_i D[i, j*(i)]
-    double expected_risk = 0.0;             ///< sum_j q_j r_j
+    std::map<std::string, double> q;        // Resulting mode distribution
+    double transport_cost = 0.0;            // sum_i p_i D[i, j*(i)]
+    double expected_risk = 0.0;             // sum_j q_j r_j
 };
 
 /**
  * @brief Result of worst-case distribution recovery with transport cost verification.
  */
 struct WorstCaseRecoveryResult {
-    std::map<std::string, double> q_star;   ///< Recovered worst-case distribution
-    double implied_transport_cost = 0.0;    ///< Actual transport cost of the plan
-    bool feasible = false;                  ///< implied_transport_cost <= rho (+tol)
-    double mix_alpha = 0.0;                 ///< Convex mixing coefficient (0=low-cost, 1=high-cost)
+    std::map<std::string, double> q_star;   // Recovered worst-case distribution
+    double implied_transport_cost = 0.0;    // Actual transport cost of the plan
+    bool feasible = false;                  // implied_transport_cost <= rho (+tol)
+    double mix_alpha = 0.0;                 // Convex mixing coefficient (0=low-cost, 1=high-cost)
 };
 
 /**
  * @brief Result from DRO worst-case weight computation.
  */
 struct DROResult {
-    std::map<std::string, double> worst_case_weights;  ///< Q* mode weights
-    double optimal_lambda = 0.0;                       ///< Optimal dual variable
-    double rho_used = 0.0;                              ///< Wasserstein radius rho used
-    double worst_case_risk = 0.0;                      ///< sup risk under Q*
-    std::map<std::string, double> risk_per_mode;       ///< r[m] for each mode
-    std::vector<std::vector<double>> transport_cost_matrix;  ///< D[i][j]
-    double implied_transport_cost = 0.0;               ///< Transport cost of induced plan
-    bool recovery_feasible = false;                    ///< Whether induced plan respects rho
+    std::map<std::string, double> worst_case_weights;  // Q* mode weights
+    double optimal_lambda = 0.0;                       // Optimal dual variable
+    double rho_used = 0.0;                              // Wasserstein radius rho used
+    double worst_case_risk = 0.0;                      // sup risk under Q*
+    std::map<std::string, double> risk_per_mode;       // r[m] for each mode
+    std::vector<std::vector<double>> transport_cost_matrix;  // D[i][j]
+    double implied_transport_cost = 0.0;               // Transport cost of induced plan
+    bool recovery_feasible = false;                    // Whether induced plan respects rho
 
     // --- Certificate diagnostics (paper Sec. IV-E) ---------------------------
     // Assumption 1 of Theorem 1 requires the SAMPLING distribution to have full
@@ -93,9 +93,9 @@ struct DROResult {
     // six-mode scenario it fails 9/9, and at rho=0.30 (slack) q* = (0,1,0,0,0,0).
     // Use the entropic allocator (DROConfig::use_entropic_allocator) to make
     // qstar_support_floor > 0 unconditionally.
-    double qstar_support_floor = 0.0;   ///< min_m Q*[m]. 0 => Assumption 1 FAILS (bang-bang).
-    int qstar_support_size = 0;         ///< #{m : Q*[m] > 0}. < M => Assumption 1 FAILS.
-    bool satisfies_full_support = false;///< qstar_support_floor > 0, i.e. Assumption 1 holds.
+    double qstar_support_floor = 0.0;   // min_m Q*[m]. 0 => Assumption 1 FAILS (bang-bang).
+    int qstar_support_size = 0;         // #{m : Q*[m] > 0}. < M => Assumption 1 FAILS.
+    bool satisfies_full_support = false;// qstar_support_floor > 0, i.e. Assumption 1 holds.
 
     /// Certified bound on the likelihood ratio L = max_m p*_m / Q*[m] of Lemma 1,
     /// using only p*_m <= 1: L <= 1 / min_m Q*[m]. Returns +inf when the support
@@ -142,12 +142,12 @@ struct DROResult {
  * certificate -> M, its tightest possible value).
  */
 struct EntropicOTResult {
-    std::map<std::string, double> q;    ///< Target marginal q_tau (STRICTLY positive)
-    double lambda = 0.0;                ///< Dual price on the transport budget
-    double transport_cost = 0.0;        ///< sum_ij Pi_ij D_ij
-    double expected_risk = 0.0;         ///< <q_tau, r>  ("protection")
-    double q_min = 0.0;                 ///< min_m q_tau[m] > 0 by construction
-    bool solved = false;                ///< lambda search converged and budget respected
+    std::map<std::string, double> q;    // Target marginal q_tau (STRICTLY positive)
+    double lambda = 0.0;                // Dual price on the transport budget
+    double transport_cost = 0.0;        // sum_ij Pi_ij D_ij
+    double expected_risk = 0.0;         // <q_tau, r>  ("protection")
+    double q_min = 0.0;                 // min_m q_tau[m] > 0 by construction
+    bool solved = false;                // lambda search converged and budget respected
 
     /// L <= 1/q_min. Finite for any tau > 0 -- this is the point.
     double likelihood_ratio_bound() const {
@@ -213,7 +213,12 @@ public:
         double margin,
         int risk_horizon = -1,
         int num_discs = 1,
-        double vehicle_length = 4.0
+        double vehicle_length = 4.0,
+        /// When non-null, the obstacle is treated as a Markov-jump system that may
+        /// switch modes during the horizon: per-mode risk is computed over the
+        /// transition chain (compute_risk_vector_switching) instead of held modes.
+        /// Rows/cols must be indexed consistently with the mode ordering.
+        const Eigen::MatrixXd* transition = nullptr
     );
 
     /**
@@ -423,6 +428,57 @@ private:
         double vehicle_length = 4.0
     );
 
+    /**
+     * @brief Switching-aware per-mode risk for Markov-jump obstacles.
+     *
+     * When the obstacle may change modes DURING the horizon, r[m] is the danger of
+     * STARTING in mode m and evolving under the estimated transition chain: we
+     * Monte-Carlo sample mode sequences from `transition` seeded at mode m,
+     * propagate the obstacle under the switching dynamics, evaluate the same
+     * surrogate violation per sequence, and average (expectation over the chain).
+     * `transition` must be row/col-indexed consistently with `mode_ids`.
+     */
+    std::map<std::string, double> compute_risk_vector_switching(
+        const ObstacleState& obs_state,
+        const std::map<std::string, ModeModel>& mode_models,
+        const std::vector<std::string>& mode_ids,
+        const std::vector<EgoState>& ego_linearization_traj,
+        int horizon,
+        double safety_threshold,
+        int num_discs,
+        double vehicle_length,
+        const Eigen::MatrixXd& transition
+    );
+
+    /// Max over (step,disc) of the surrogate clearance violation for one obstacle
+    /// mean/covariance trajectory. Shared by the held and switching risk paths.
+    double surrogate_traj_violation(
+        const std::vector<Eigen::Vector2d>& means,
+        const std::vector<Eigen::Matrix2d>& covs,
+        const std::vector<EgoState>& ego_traj,
+        int horizon, double safety_radius, int num_discs, double vehicle_length,
+        double z_alpha, double alpha) const;
+
+    /**
+     * @brief PROPER Bonferroni VaR (DRORiskMeasure::BONFERRONI_VAR).
+     *
+     * r[m] = max_{k,d} VaR_{a'}( [R - ||x_k - c_{d,k}||]_+ ),  x_k ~ N(mu_k, Sigma_k),
+     * with a' = 1 - (1-alpha)/(N_s*D) the Bonferroni union-corrected level. The
+     * per-step Euclidean VaR is estimated by Monte Carlo on each step's MARGINAL
+     * Gaussian (no directional projection), so this is the true-distance analogue of
+     * SURROGATE_VAR_BONFERRONI and a valid upper bound on the joint-horizon VaR.
+     */
+    std::map<std::string, double> compute_risk_vector_bonferroni(
+        const ObstacleState& obs_state,
+        const std::map<std::string, ModeModel>& mode_models,
+        const std::vector<std::string>& mode_ids,
+        const std::vector<EgoState>& ego_linearization_traj,
+        int horizon,
+        double safety_radius,
+        int num_discs = 1,
+        double vehicle_length = 4.0
+    );
+
     /// Propagate mode mean trajectory: x_{k+1} = A*x_k + b
     std::vector<Eigen::Vector2d> propagate_mode_mean(
         const ObstacleState& obs_state,
@@ -541,8 +597,8 @@ private:
     DROConfig config_;
     int observation_count_ = 0;
     std::optional<double> rho_override_;
-    double entropy_ = 0.0;      ///< Entropy of current nominal distribution
-    double max_entropy_ = 1.0;  ///< log(M) for M modes
+    double entropy_ = 0.0;      // Entropy of current nominal distribution
+    double max_entropy_ = 1.0;  // log(M) for M modes
 };
 
 }  // namespace dro_mpc

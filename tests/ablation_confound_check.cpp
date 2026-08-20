@@ -19,7 +19,7 @@ static ExperimentConfig mk(const ReferencePath& p, const ObstacleState& o){
     c.rollout.rollout_steps=DEFAULT_ROLLOUT_STEPS; c.obstacles.obs_modes={"constant_velocity","turn_left","turn_right","decelerating"};
     c.obstacles.rare_mode="lane_change_left"; c.obstacles.rare_switch_prob=0.1; c.mpc.ego.num_discs=1; c.mpc.ego.length=1.5;
     c.mpc.safe_horizon_enabled=true; c.mpc.constraints.safe_horizon_min=3; c.environment.path_completion_termination=true; c.environment.path_completion_fraction=0.95;
-    c.mpc.sampling.weight_type=WeightType::FREQUENCY; c.obstacles.num_obstacles=1; c.mpc.enable_contouring_constraints=true; c.mpc.constraints.road_width=4.0;
+    c.obstacles.num_obstacles=1; c.mpc.enable_contouring_constraints=true; c.mpc.constraints.road_width=4.0;
     c.environment.custom_ref_path=p; c.environment.custom_initial_ego=EgoState(0,0,0,1.5); c.obstacles.initial_obstacle_states={o};
     return c;
 }

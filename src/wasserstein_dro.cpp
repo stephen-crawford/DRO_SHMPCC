@@ -6,6 +6,8 @@
 #include "wasserstein_dro.hpp"
 #include "collision_constraints.hpp"
 #include "primal_ot.hpp"
+#include "mode_weights.hpp"
+#include "schuurmans_ambiguity.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -246,7 +248,8 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     double margin,
     int risk_horizon,
     int num_discs,
-    double vehicle_length
+    double vehicle_length,
+    const Eigen::MatrixXd* transition
 ) {
     if (ego_linearization_traj.empty()) {
         throw std::invalid_argument(
@@ -283,13 +286,62 @@ DROResult WassersteinDRO::compute_worst_case_weights(
         obs_state, mode_models, mode_ids, horizon
     );
 
-    // Step 2: Compute risk vector r[m] (truncated to risk_horizon if set)
+    // Step 2: Compute risk vector r[m] (truncated to risk_horizon if set).
+    // If a transition matrix is supplied, the obstacle is a Markov-jump system
+    // that may switch modes during the horizon, so r[m] is computed over the
+    // switching chain; otherwise each mode is held over the horizon.
     double safety_threshold = ego_r + obs_r + margin;
     int effective_risk_horizon = (risk_horizon > 0) ? risk_horizon : horizon;
-    result.risk_per_mode = compute_risk_vector(
-        obs_state, mode_models, mode_ids, ego_linearization_traj,
-        effective_risk_horizon, safety_threshold, num_discs, vehicle_length
-    );
+    if (transition != nullptr &&
+        transition->rows() == static_cast<Eigen::Index>(mode_ids.size()) &&
+        transition->cols() == static_cast<Eigen::Index>(mode_ids.size())) {
+        result.risk_per_mode = compute_risk_vector_switching(
+            obs_state, mode_models, mode_ids, ego_linearization_traj,
+            effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
+            *transition
+        );
+    } else {
+        result.risk_per_mode = compute_risk_vector(
+            obs_state, mode_models, mode_ids, ego_linearization_traj,
+            effective_risk_horizon, safety_threshold, num_discs, vehicle_length
+        );
+    }
+
+    // Schuurmans Table I (arXiv:2106.00561): a non-Wasserstein ambiguity geometry
+    // reweights via its own conic worst-case max_{D(p̂,q)≤r} <q,r_risk>
+    // (schuurmans_ambiguity.hpp), with the family-specific finite-sample radius.
+    // WASSERSTEIN falls through to the calibrated true-W1 dual below.
+    if (config_.radius_calibration.divergence != AmbiguityDivergence::WASSERSTEIN) {
+        const int M = static_cast<int>(mode_ids.size());
+        std::vector<double> phat(M), xi(M);
+        for (int i = 0; i < M; ++i) {
+            auto it = nominal_weights.find(mode_ids[i]);
+            phat[i] = (it != nominal_weights.end()) ? it->second : 0.0;
+            xi[i]   = result.risk_per_mode.count(mode_ids[i]) ? result.risk_per_mode[mode_ids[i]] : 0.0;
+        }
+        const int m = std::max(1, observation_count_);
+        const double beta = std::clamp(config_.radius_calibration.confidence_beta, 1e-6, 0.5);
+        double kmax = 0.0;
+        for (const auto& row : result.transport_cost_matrix)
+            for (double v : row) kmax = std::max(kmax, v);
+        const double r = schuurmans::ambiguity_radius(
+            config_.radius_calibration.divergence, M, m, beta, kmax);
+        schuurmans::WorstCase wc = schuurmans::worst_case_expectation(
+            config_.radius_calibration.divergence, phat, xi, r, &result.transport_cost_matrix);
+        for (int i = 0; i < M; ++i) result.worst_case_weights[mode_ids[i]] = wc.p[i];
+        result.rho_used = r;
+        result.worst_case_risk = wc.value;
+        result.implied_transport_cost = wc.divergence;
+        result.recovery_feasible = wc.feasible;
+        double floor_val = std::numeric_limits<double>::infinity(); int support = 0;
+        for (const auto& [_, w] : result.worst_case_weights) {
+            floor_val = std::min(floor_val, w); if (w > 0.0) ++support;
+        }
+        result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
+        result.qstar_support_size = support;
+        result.satisfies_full_support = (support == M) && (result.qstar_support_floor > 0.0);
+        return result;
+    }
 
     // Step 3: Get adaptive Wasserstein radius rho.
     // Fold the ground-metric diameter diam(D) = max_{i,j} D[i][j] into the
@@ -907,6 +959,15 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
                                          num_discs, vehicle_length);
     }
 
+    // BONFERRONI_VAR: PROPER Bonferroni VaR on the TRUE per-step Euclidean violation
+    // (Monte Carlo on each step's marginal Gaussian). Dispatch out; the linearised
+    // surrogate path below is not used.
+    if (config_.radius_calibration.risk_measure == DRORiskMeasure::BONFERRONI_VAR) {
+        return compute_risk_vector_bonferroni(obs_state, mode_models, mode_ids,
+                                              ego_linearization_traj, horizon, safety_radius,
+                                              num_discs, vehicle_length);
+    }
+
     // SURROGATE_VAR (default, bit-for-bit master/CDC'26), SURROGATE_CVAR, and
     // SURROGATE_VAR_BONFERRONI.
     //
@@ -1003,6 +1064,206 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
         risk[mode_id] = max_risk;
     }
 
+    return risk;
+}
+
+double WassersteinDRO::surrogate_traj_violation(
+    const std::vector<Eigen::Vector2d>& means,
+    const std::vector<Eigen::Matrix2d>& covs,
+    const std::vector<EgoState>& ego_traj,
+    int horizon, double safety_radius, int num_discs, double vehicle_length,
+    double z_alpha, double alpha) const
+{
+    const double sigma_floor = config_.radius_calibration.sigma_floor;
+    const int n_steps = std::min({static_cast<int>(means.size()),
+                                  static_cast<int>(covs.size()),
+                                  horizon + 1});
+    double max_risk = 0.0;
+    for (int k = 1; k < n_steps; ++k) {
+        const EgoState& ego_state =
+            (k < static_cast<int>(ego_traj.size())) ? ego_traj[k] : ego_traj.back();
+        std::vector<Eigen::Vector2d> disc_positions;
+        if (num_discs > 1)
+            disc_positions = compute_ego_disc_positions(ego_state, num_discs, vehicle_length);
+        else
+            disc_positions = { ego_state.position() };
+
+        double step_risk = 0.0;
+        for (const auto& c_d : disc_positions) {
+            const Eigen::Vector2d mu = means[k];
+            const Eigen::Matrix2d Sigma = covs[k];
+            const Eigen::Vector2d diff = mu - c_d;
+            const double dist = diff.norm();
+            const Eigen::Vector2d n = safe_unit(diff);
+            double var_dir = n.transpose() * Sigma * n;
+            if (!std::isfinite(var_dir) || var_dir < 0.0) var_dir = 0.0;
+            const double sigma_dir = std::max(std::sqrt(var_dir), sigma_floor);
+            const double mu_V = safety_radius - dist;
+            double r_kd;
+            if (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_CVAR)
+                r_kd = cvar_clamped_gaussian(mu_V, sigma_dir, alpha);
+            else
+                r_kd = std::max(0.0, mu_V + z_alpha * sigma_dir);
+            step_risk = std::max(step_risk, r_kd);
+        }
+        max_risk = std::max(max_risk, step_risk);
+    }
+    return max_risk;
+}
+
+std::map<std::string, double> WassersteinDRO::compute_risk_vector_switching(
+    const ObstacleState& obs_state,
+    const std::map<std::string, ModeModel>& mode_models,
+    const std::vector<std::string>& mode_ids,
+    const std::vector<EgoState>& ego_linearization_traj,
+    int horizon,
+    double safety_radius,
+    int num_discs,
+    double vehicle_length,
+    const Eigen::MatrixXd& transition
+) {
+    const int M = static_cast<int>(mode_ids.size());
+    std::map<std::string, double> risk;
+    if (M == 0) return risk;
+
+    // Same VaR level / Bonferroni union correction as the held-mode surrogate.
+    const double alpha = config_.radius_calibration.alpha_one_sided;
+    double alpha_eff = alpha;
+    if (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI) {
+        const double n_events = std::max(1.0, static_cast<double>(horizon) *
+                                              static_cast<double>(std::max(1, num_discs)));
+        alpha_eff = 1.0 - (1.0 - alpha) / n_events;
+    }
+    const double z_alpha = normal_quantile(alpha_eff);
+
+    // Monte Carlo over the transition chain, common random numbers across modes.
+    const int K = std::clamp(config_.radius_calibration.joint_risk_samples / 128, 16, 128);
+    std::mt19937 rng(config_.radius_calibration.joint_risk_seed ^ 0x9E3779B9ULL);
+
+    for (int i = 0; i < M; ++i) {
+        // Point-mass initial belief on mode i: r[m] is the danger of STARTING here.
+        ModeDistribution e_m;
+        for (const auto& mid : mode_ids) e_m[mid] = 0.0;
+        e_m[mode_ids[i]] = 1.0;
+
+        double acc = 0.0;
+        for (int s = 0; s < K; ++s) {
+            std::vector<std::string> seq = sample_mode_sequence(
+                e_m, transition, mode_ids, horizon, rng,
+                /*predict_before_first_sample=*/false);
+
+            // Propagate obstacle mean/covariance under the sampled switching sequence.
+            std::vector<Eigen::Vector2d> means; means.reserve(horizon + 1);
+            std::vector<Eigen::Matrix2d> covs;  covs.reserve(horizon + 1);
+            Eigen::Vector4d x = obs_state.to_array();
+            Eigen::Matrix4d cov = Eigen::Matrix4d::Zero();
+            means.emplace_back(x.head<2>());
+            covs.emplace_back(cov.block<2, 2>(0, 0));
+            for (int k = 0; k < horizon && k < static_cast<int>(seq.size()); ++k) {
+                auto it = mode_models.find(seq[k]);
+                if (it == mode_models.end()) {
+                    means.emplace_back(x.head<2>());
+                    covs.emplace_back(cov.block<2, 2>(0, 0));
+                    continue;
+                }
+                const ModeModel& m = it->second;
+                x = m.A * x + m.b;
+                cov = m.A * cov * m.A.transpose() + m.G * m.G.transpose();
+                means.emplace_back(x.head<2>());
+                covs.emplace_back(cov.block<2, 2>(0, 0));
+            }
+
+            acc += surrogate_traj_violation(means, covs, ego_linearization_traj,
+                                            horizon, safety_radius, num_discs,
+                                            vehicle_length, z_alpha, alpha);
+        }
+        risk[mode_ids[i]] = acc / static_cast<double>(K);
+    }
+    return risk;
+}
+
+std::map<std::string, double> WassersteinDRO::compute_risk_vector_bonferroni(
+    const ObstacleState& obs_state,
+    const std::map<std::string, ModeModel>& mode_models,
+    const std::vector<std::string>& mode_ids,
+    const std::vector<EgoState>& ego_linearization_traj,
+    int horizon,
+    double safety_radius,
+    int num_discs,
+    double vehicle_length
+) {
+    std::map<std::string, double> risk;
+
+    const double alpha = config_.radius_calibration.alpha_one_sided;
+    const int n_samples = std::max(256, config_.radius_calibration.joint_risk_samples);
+
+    // Bonferroni union correction over the N_s * D per-step, per-disc events, so the
+    // max over (k,d) still controls the JOINT violation at level alpha. The union
+    // term count must match the (k,d) loops below exactly (k = 1..horizon, d over discs).
+    const double n_events = std::max(1.0, static_cast<double>(horizon) *
+                                          static_cast<double>(std::max(1, num_discs)));
+    const double alpha_eff = 1.0 - (1.0 - alpha) / n_events;
+    // VaR_{alpha'}([R - dist]_+) = [R - Q_{1-alpha'}(dist)]_+: the alpha'-quantile of
+    // the (decreasing) violation is the (1-alpha')-quantile of the distance.
+    const double tail = std::clamp(1.0 - alpha_eff, 0.0, 1.0);
+
+    // Deterministic ego disc centres per step (shared across modes and samples).
+    std::vector<std::vector<Eigen::Vector2d>> disc_centres(horizon + 1);
+    for (int k = 1; k <= horizon; ++k) {
+        const EgoState& e = (k < static_cast<int>(ego_linearization_traj.size()))
+                                ? ego_linearization_traj[k]
+                                : ego_linearization_traj.back();
+        disc_centres[k] = (num_discs > 1)
+                              ? compute_ego_disc_positions(e, num_discs, vehicle_length)
+                              : std::vector<Eigen::Vector2d>{ e.position() };
+    }
+
+    for (const auto& mode_id : mode_ids) {
+        auto it = mode_models.find(mode_id);
+        if (it == mode_models.end()) { risk[mode_id] = 0.0; continue; }
+
+        // Per-step MARGINAL mean/covariance (Bonferroni uses per-step marginals, not
+        // the correlated joint rollout).
+        auto means = propagate_mode_mean(obs_state, it->second, horizon);
+        auto covs  = propagate_mode_covariance(it->second, horizon);
+        const int n_steps = std::min({static_cast<int>(means.size()),
+                                      static_cast<int>(covs.size()), horizon + 1});
+
+        // Common random numbers across modes (deterministic reweighting, no jitter).
+        std::mt19937_64 rng(config_.radius_calibration.joint_risk_seed);
+        std::normal_distribution<double> gauss(0.0, 1.0);
+
+        double max_var = 0.0;
+        for (int k = 1; k < n_steps; ++k) {
+            // 2x2 Cholesky of Sigma_k (robust).
+            const Eigen::Matrix2d S = covs[k];
+            const double l11 = std::sqrt(std::max(S(0, 0), 1e-18));
+            const double l21 = S(1, 0) / l11;
+            const double l22 = std::sqrt(std::max(S(1, 1) - l21 * l21, 0.0));
+
+            const size_t nd = disc_centres[k].size();
+            std::vector<std::vector<double>> dist(nd);
+            for (auto& v : dist) v.reserve(n_samples);
+
+            // Sample the step-k marginal position once, score every disc from it.
+            for (int s = 0; s < n_samples; ++s) {
+                const double z0 = gauss(rng), z1 = gauss(rng);
+                const Eigen::Vector2d x =
+                    means[k] + Eigen::Vector2d(l11 * z0, l21 * z0 + l22 * z1);
+                for (size_t d = 0; d < nd; ++d)
+                    dist[d].push_back((x - disc_centres[k][d]).norm());
+            }
+            for (size_t d = 0; d < nd; ++d) {
+                std::sort(dist[d].begin(), dist[d].end());
+                const int idx = std::clamp(
+                    static_cast<int>(std::floor(tail * (dist[d].size() - 1))),
+                    0, static_cast<int>(dist[d].size()) - 1);
+                const double var_kd = std::max(0.0, safety_radius - dist[d][idx]);
+                max_var = std::max(max_var, var_kd);
+            }
+        }
+        risk[mode_id] = max_var;
+    }
     return risk;
 }
 

@@ -55,10 +55,10 @@ struct StrategyDef {
 static const std::vector<StrategyDef> STRATEGIES = {
     // Non-SH baselines
     {"Base",            false, InjectionMode::NONE,         false},
-    {"DRO(inj)",        true,  InjectionMode::DRO,          false},
+    {"DRO(inj)",        true,  InjectionMode::TOP_RISK_INJECT,          false},
     // SH variants
     {"SH",              false, InjectionMode::NONE,         true},
-    {"DRO(inj)+SH",     true,  InjectionMode::DRO,          true},
+    {"DRO(inj)+SH",     true,  InjectionMode::TOP_RISK_INJECT,          true},
     {"DRO(q*)+SH",      true,  InjectionMode::QSTAR_SAMPLE, true},
 };
 
@@ -261,7 +261,6 @@ static ExperimentConfig make_config(const StrategyDef& strat,
         cfg.obstacles.obs_arc_fractions = OBS_ARC_FRACS_4;
     }
 
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = (strat.enable_dro);
     cfg.dro.injection_mode = strat.injection_mode;
     cfg.dro.solver.base_radius = DRO_RHO_BASE;

@@ -26,11 +26,11 @@
 namespace dro_mpc {
 
 struct PrimalOTResult {
-    std::map<std::string, double> q;                 ///< Q*_j = sum_i pi_ij
-    std::vector<std::vector<double>> plan;           ///< pi_ij transport plan
-    double expected_risk = 0.0;                      ///< sum_j r_j Q*_j (= LP optimum)
-    double transport_cost = 0.0;                     ///< sum_ij D_ij pi_ij
-    bool solved = false;                             ///< simplex converged
+    std::map<std::string, double> q;                 // Q*_j = sum_i pi_ij
+    std::vector<std::vector<double>> plan;           // pi_ij transport plan
+    double expected_risk = 0.0;                      // sum_j r_j Q*_j (= LP optimum)
+    double transport_cost = 0.0;                     // sum_ij D_ij pi_ij
+    bool solved = false;                             // simplex converged
 };
 
 /// Solve the primal OT LP. mode_ids fixes the index order for p, r, D.

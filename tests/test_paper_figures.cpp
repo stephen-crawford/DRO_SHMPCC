@@ -212,7 +212,6 @@ static ExperimentConfig make_base_config(double switch_prob, double rare_prob,
     cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = false;
     cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = 0.1;
@@ -234,11 +233,11 @@ static ExperimentConfig make_method_config(MethodType method, double switch_prob
             break;
         case MethodType::WDRO_INJECTION:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
         case MethodType::WDRO_COMBINED:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
     }
     return cfg;
@@ -331,7 +330,7 @@ static void run_fig40_risk_lift() {
             }
             hist.record_observation(t, mode);
         }
-        auto nominal_weights = compute_mode_weights(hist, WeightType::FREQUENCY);
+        auto nominal_weights = compute_mode_weights(hist);
 
         // Set observation count for adaptive rho
         dro_probe.set_observation_count(n_obs);
@@ -732,7 +731,7 @@ static void run_fig45_feasibility() {
             }
             hist.record_observation(t, mode);
         }
-        auto nominal_weights = compute_mode_weights(hist, WeightType::FREQUENCY);
+        auto nominal_weights = compute_mode_weights(hist);
         dro_probe.set_observation_count(n_obs);
 
         DROResult dro_result = dro_probe.compute_worst_case_weights(

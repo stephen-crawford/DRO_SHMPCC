@@ -67,8 +67,8 @@ enum class ModeSwitchConfiguration {
 };
 
 enum class ObstacleHistoryConfiguration {
-    INDEPENDENT,  ///< Several obstacles, one class each
-    SHARED        ///< Several obstacles sharing class history
+    INDEPENDENT,  // Several obstacles, one class each
+    SHARED        // Several obstacles sharing class history
 };
 
 // ---- Enum names ------------------------------------------------------------
@@ -116,8 +116,8 @@ struct ObstacleExperimentConfig {
     std::string rare_mode = "lane_change_left";
     double rare_switch_prob = 0.05;
 
-    std::vector<double> obs_arc_fractions;               ///< Empty => auto placement
-    std::vector<ObstacleState> initial_obstacle_states;  ///< Overrides arc fracs
+    std::vector<double> obs_arc_fractions;               // Empty => auto placement
+    std::vector<ObstacleState> initial_obstacle_states;  // Overrides arc fracs
     DistributionShiftConfig shift;
 
     void apply_layout() {
@@ -232,52 +232,33 @@ struct EnvironmentExperimentConfig {
 
 // ---- Sampling baselines ----------------------------------------------------
 
+// Sampling STRATEGIES (how scenarios are drawn), not belief weightings — the
+// nominal belief is fixed by NominalBeliefKind (config.hpp). The former
+// weighting baselines (uniform / recency / temperature / eps-greedy) were
+// dropped: they distorted the belief, which is now the Dirichlet
+// posterior-predictive, full stop.
 enum class SamplingBaseline {
-    STANDARD,
-    STRATIFIED,
-    TEMPERATURE,
-    EPSILON_GREEDY,
-    RISK_BIASED,
-    UNIFORM_WEIGHT,
-    RECENCY_WEIGHT,
-    ORACLE_FLOOD
+    STANDARD,     // i.i.d. draws from the nominal belief
+    STRATIFIED,   // stratified allocation across modes
+    RISK_BIASED,  // risk-biased scenario selection
+    ORACLE_FLOOD  // oracle scenario flooding (via step_callback)
 };
 
 inline std::string baseline_name(SamplingBaseline b) {
     switch (b) {
-        case SamplingBaseline::STANDARD:       return "Standard";
-        case SamplingBaseline::STRATIFIED:     return "Stratified";
-        case SamplingBaseline::TEMPERATURE:    return "Temperature";
-        case SamplingBaseline::EPSILON_GREEDY: return "EpsilonGreedy";
-        case SamplingBaseline::RISK_BIASED:    return "RiskBiased";
-        case SamplingBaseline::UNIFORM_WEIGHT: return "Uniform";
-        case SamplingBaseline::RECENCY_WEIGHT: return "Recency";
-        case SamplingBaseline::ORACLE_FLOOD:   return "Oracle";
+        case SamplingBaseline::STANDARD:     return "Standard";
+        case SamplingBaseline::STRATIFIED:   return "Stratified";
+        case SamplingBaseline::RISK_BIASED:  return "RiskBiased";
+        case SamplingBaseline::ORACLE_FLOOD: return "Oracle";
         default: return "unknown";
     }
 }
 
-inline WeightType baseline_to_weight(SamplingBaseline bl) {
-    switch (bl) {
-        case SamplingBaseline::STANDARD:       return WeightType::FREQUENCY;
-        case SamplingBaseline::STRATIFIED:     return WeightType::FREQUENCY;
-        case SamplingBaseline::TEMPERATURE:    return WeightType::TEMPERATURE;
-        case SamplingBaseline::EPSILON_GREEDY: return WeightType::EPSILON_GREEDY;
-        case SamplingBaseline::UNIFORM_WEIGHT: return WeightType::UNIFORM;
-        case SamplingBaseline::RECENCY_WEIGHT: return WeightType::RECENCY;
-        case SamplingBaseline::RISK_BIASED:
-        case SamplingBaseline::ORACLE_FLOOD:
-        default:                               return WeightType::FREQUENCY;
-    }
-}
-
 /**
- * @brief Thin experiment overlay that can override mpc.sampling.weight_type.
+ * @brief Thin experiment overlay selecting a sampling strategy.
  */
 struct SamplingExperimentConfig {
     SamplingBaseline baseline = SamplingBaseline::STANDARD;
-
-    WeightType weight_type() const { return baseline_to_weight(baseline); }
 };
 
 // ---- DRO arm label ---------------------------------------------------------
@@ -286,8 +267,8 @@ struct SamplingExperimentConfig {
 /// (The runtime switch is DROControllerConfig::enabled; this is naming sugar
 /// for arm builders.)
 enum class DROConfiguration {
-    BASE,  ///< Safe-horizon (scenario) MPCC, no DRO reweighting
-    DRO    ///< DRO-enabled
+    BASE,  // Safe-horizon (scenario) MPCC, no DRO reweighting
+    DRO    // DRO-enabled
 };
 
 inline std::string dro_configuration_name(DROConfiguration c) {
@@ -303,7 +284,7 @@ inline std::string dro_configuration_name(DROConfiguration c) {
 struct RolloutExperimentConfig {
     int rollout_steps = 60;
     std::string scenario_tag = "baseline";
-    std::string method_name;  ///< Empty => auto from DRO/MPC labels
+    std::string method_name;  // Empty => auto from DRO/MPC labels
 
     /// Called after mode observation, before solve.
     /// Args: (step, obstacle_id, obstacle_sim, controller, rng)
@@ -351,9 +332,12 @@ struct ExperimentConfig {
         obstacles.apply_layout();
         dro.apply_fixed_rho();
         mpc.sampling.sync_belief();
-        if (sampling.baseline != SamplingBaseline::STANDARD) {
-            mpc.sampling.weight_type = sampling.weight_type();
-        }
+        // A Markov-jump obstacle changes modes DURING the horizon, so the
+        // predictor must sample mode SEQUENCES (within-horizon switching) rather
+        // than a single held mode; a HOLD_OVER_HORIZON obstacle is predicted with
+        // a held mode. Couple the scenario predictor to the ground-truth regime.
+        mpc.sampling.use_markov_mode_sampling =
+            (obstacles.switch_regime == ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM);
         if (rollout.method_name.empty()) {
             rollout.method_name =
                 dro_configuration_name(
@@ -375,9 +359,9 @@ struct ExperimentConfig {
         cfg.solver = solver;
         cfg.obstacle_radius = obstacle_radius;
         cfg.mpc.dt = dt;
-        if (sampling.baseline != SamplingBaseline::STANDARD) {
-            cfg.mpc.sampling.weight_type = sampling.weight_type();
-        }
+        // Markov-jump obstacles => predict within-horizon mode switching.
+        cfg.mpc.sampling.use_markov_mode_sampling =
+            (obstacles.switch_regime == ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM);
         cfg.normalize();  // belief sync + fixed_rho only
         return cfg;
     }
@@ -418,7 +402,6 @@ inline ExperimentConfig make_arm_config(
     cfg.mpc.sampling.num_scenarios = num_scenarios;
     cfg.mpc.ego.num_discs = num_discs;
     cfg.mpc.ego.length = vehicle_length;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
     cfg.obstacles.switch_prob = switch_prob;
     cfg.obstacles.obs_modes = obs_modes;

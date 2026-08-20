@@ -26,7 +26,7 @@ static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) 
     c.mpc.ego.num_discs = 1; c.mpc.ego.length = 1.5;
     c.mpc.safe_horizon_enabled = true; c.mpc.constraints.safe_horizon_min = 3;
     c.environment.path_completion_termination = true; c.environment.path_completion_fraction = 0.95;
-    c.mpc.sampling.weight_type = WeightType::FREQUENCY; c.obstacles.num_obstacles = 1;
+    c.obstacles.num_obstacles = 1;
     c.mpc.enable_contouring_constraints = true; c.mpc.constraints.road_width = 4.0;
     c.environment.custom_ref_path = path; c.environment.custom_initial_ego = EgoState(0,0,0,1.5);
     c.obstacles.initial_obstacle_states = {obs};
@@ -53,9 +53,9 @@ int main() {
 
     { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;
       arm("OT-only (QSTAR_SAMPLE)", c, N, bp); }
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::DRO; c.dro.injection_count=1;
+    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=1;
       arm("DRO-inject K=1", c, N, bp); }
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::DRO; c.dro.injection_count=3;
+    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=3;
       arm("DRO-inject K=3", c, N, bp); }
     { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=3;
       arm("TopRisk-inject K=3 (no OT)", c, N, bp); }

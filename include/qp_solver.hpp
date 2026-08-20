@@ -23,21 +23,21 @@ namespace dro_mpc {
  * @brief QP problem data.
  */
 struct QPProblem {
-    Eigen::MatrixXd H;   ///< n x n PSD Hessian
-    Eigen::VectorXd g;   ///< n gradient
-    Eigen::MatrixXd C;   ///< m x n inequality matrix (Cx >= d)
-    Eigen::VectorXd d;   ///< m RHS of inequality constraints
-    Eigen::VectorXd lb;  ///< n lower bounds (can be -inf)
-    Eigen::VectorXd ub;  ///< n upper bounds (can be +inf)
+    Eigen::MatrixXd H;   // n x n PSD Hessian
+    Eigen::VectorXd g;   // n gradient
+    Eigen::MatrixXd C;   // m x n inequality matrix (Cx >= d)
+    Eigen::VectorXd d;   // m RHS of inequality constraints
+    Eigen::VectorXd lb;  // n lower bounds (can be -inf)
+    Eigen::VectorXd ub;  // n upper bounds (can be +inf)
 };
 
 /**
  * @brief QP solver result.
  */
 struct QPResult {
-    Eigen::VectorXd x;        ///< Optimal primal variable
-    bool converged = false;    ///< Whether solver converged
-    int iterations = 0;        ///< Number of ADMM iterations used
+    Eigen::VectorXd x;        // Optimal primal variable
+    bool converged = false;    // Whether solver converged
+    int iterations = 0;        // Number of ADMM iterations used
     double primal_residual = 0.0;
     double dual_residual = 0.0;
 };
@@ -46,13 +46,13 @@ struct QPResult {
  * @brief ADMM solver settings.
  */
 struct QPSettings {
-    double rho = 1.0;             ///< ADMM penalty parameter
-    int max_iterations = 200;     ///< Maximum ADMM iterations
-    double abs_tol = 1e-4;        ///< Absolute convergence tolerance
-    double rel_tol = 1e-3;        ///< Relative convergence tolerance
-    bool adaptive_rho = true;     ///< Enable adaptive rho scaling
-    double rho_min = 1e-6;        ///< Minimum rho for adaptive scaling
-    double rho_max = 1e6;         ///< Maximum rho for adaptive scaling
+    double rho = 1.0;             // ADMM penalty parameter
+    int max_iterations = 200;     // Maximum ADMM iterations
+    double abs_tol = 1e-4;        // Absolute convergence tolerance
+    double rel_tol = 1e-3;        // Relative convergence tolerance
+    bool adaptive_rho = true;     // Enable adaptive rho scaling
+    double rho_min = 1e-6;        // Minimum rho for adaptive scaling
+    double rho_max = 1e6;         // Maximum rho for adaptive scaling
 };
 
 /**

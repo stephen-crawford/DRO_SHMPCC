@@ -1,0 +1,46 @@
+# Example experiment test-config. Flat `key: value`; '#' comments; lists are CSV.
+# Load with: yaml_config::load_experiment_config("configs/example_test.yaml")
+
+# --- MPC / constraints (road_width & safety_margin are here) ---
+mpc_type: sh_mpcc              # mpc | mpcc | sh_mpc | sh_mpcc
+horizon: 15
+num_scenarios: 40
+road_width: 4.0
+safety_margin: 0.1
+enable_contouring_constraints: true
+safe_horizon_mode: fixed_nbar # fixed_nbar | practical | theoretical_tight | theoretical_simple
+safe_horizon_min: 3
+support_cap_nbar: 5
+
+# --- ego geometry + dynamics ---
+ego_radius: 0.5
+ego_length: 1.5
+num_discs: 1
+max_velocity: 4.0
+
+# --- nominal belief ---
+belief_kind: dirichlet        # dirichlet | sticky
+
+# --- DRO (calibrated true-W1 radius is the default) ---
+dro_enabled: true
+reweighting: sampling_only    # sampling_only | injection_only | sampling_and_injection
+injection_mode: qstar_sample
+risk_measure: surrogate_var_bonferroni
+ground_cost: w2_bures
+confidence_beta: 0.05
+
+# --- obstacles / mode process ---
+obstacle_radius: 0.35
+num_obstacles: 1
+switch_regime: markov         # markov | hold  (markov => switching-aware risk + predictor)
+switch_prob: 0.2
+obs_modes: [constant_velocity, turn_left, turn_right, decelerating, lane_change_left, lane_change_right]
+rare_mode: ""
+rare_switch_prob: 0.0
+
+# --- environment ---
+environment: oncoming         # overtake | narrow | intersection | oncoming
+
+# --- rollout ---
+rollout_steps: 200
+scenario_tag: example

@@ -148,7 +148,6 @@ static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_p
     cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = false;
     cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.obstacles.num_obstacles = num_obs;
@@ -202,7 +201,7 @@ static void run_e1() {
     const std::vector<MethodDef> METHODS = {
         {"Base",            false, InjectionMode::NONE,         0.0, 0.0},
         {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE, 0.0, 0.0},
-        {"WDRO-injection",  true,  InjectionMode::DRO,          0.0, 0.0},
+        {"WDRO-injection",  true,  InjectionMode::TOP_RISK_INJECT,          0.0, 0.0},
     };
     const int N = 1000;
 
@@ -291,7 +290,7 @@ static void run_e2() {
                 cfg.dro.injection_mode = InjectionMode::NONE;
             } else {
                 cfg.dro.enabled = true;
-                cfg.dro.injection_mode = InjectionMode::DRO;
+                cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
                 cfg.dro.injection_count = K;
             }
             cfg.rollout.method_name = met.method;
@@ -324,7 +323,7 @@ static void run_e4() {
     const std::vector<MethodDef> METHODS = {
         {"Base",              false, InjectionMode::NONE,              0.0, 0.0},
         {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0},
-        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0},
+        {"WDRO-injection",    true,  InjectionMode::TOP_RISK_INJECT,              0.0, 0.0},
         {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0},
         {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     5.0, 0.0},
         {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.3},
@@ -392,7 +391,7 @@ static void run_baselines() {
     const std::vector<MethodDef> METHODS = {
         {"Base",              false, InjectionMode::NONE,              0.0, 0.0},
         {"WDRO-sampling",     true,  InjectionMode::QSTAR_SAMPLE,     0.0, 0.0},
-        {"WDRO-injection",    true,  InjectionMode::DRO,              0.0, 0.0},
+        {"WDRO-injection",    true,  InjectionMode::TOP_RISK_INJECT,              0.0, 0.0},
         {"Uniform-coverage",  true,  InjectionMode::UNIFORM_COVERAGE, 0.0, 0.0},
         {"Softmax-risk",      true,  InjectionMode::SOFTMAX_RISK,     5.0, 0.0},
         {"Eps-greedy",        true,  InjectionMode::EPSILON_GREEDY_INJ, 0.0, 0.3},
@@ -480,7 +479,7 @@ static void run_a1() {
 
             ExperimentConfig cfg = make_base_config();
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             cfg.dro.solver.ground_cost_type = gc.ground_cost;
             cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
             cfg.obstacles.obs_modes = env_setup.obs_modes;
@@ -537,7 +536,7 @@ static void run_a2() {
 
             ExperimentConfig cfg = make_base_config();
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             cfg.dro.solver.base_radius = rho;
             cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
             cfg.obstacles.obs_modes = env_setup.obs_modes;
@@ -581,7 +580,7 @@ static void run_d1_env(EnvironmentType env_type, const std::string& env_label,
     for (int K : K_VALUES) {
         struct SelectorDef { std::string name; InjectionMode mode; };
         std::vector<SelectorDef> selectors = {
-            {"WDRO",        InjectionMode::DRO},
+            {"WDRO",        InjectionMode::TOP_RISK_INJECT},
             {"TopRisk",     InjectionMode::TOP_RISK_INJECT},
             {"DiverseRisk", InjectionMode::DIVERSE_RISK_INJECT},
         };
@@ -734,7 +733,7 @@ static void run_d3_env(EnvironmentType env_type, const std::string& env_label,
     struct MethodD3 { std::string name; bool dro; InjectionMode mode; };
     const std::vector<MethodD3> METHODS = {
         {"Base",            false, InjectionMode::NONE},
-        {"WDRO-injection",  true,  InjectionMode::DRO},
+        {"WDRO-injection",  true,  InjectionMode::TOP_RISK_INJECT},
         {"TopRisk-inject",  true,  InjectionMode::TOP_RISK_INJECT},
         {"WDRO-sampling",   true,  InjectionMode::QSTAR_SAMPLE},
     };
@@ -797,8 +796,8 @@ static void run_d4() {
 
     struct MethodD4 { std::string name; InjectionMode mode; int K; };
     const std::vector<MethodD4> METHODS = {
-        {"WDRO-K2",       InjectionMode::DRO,          2},
-        {"WDRO-K3",       InjectionMode::DRO,          3},
+        {"WDRO-K2",       InjectionMode::TOP_RISK_INJECT,          2},
+        {"WDRO-K3",       InjectionMode::TOP_RISK_INJECT,          3},
         {"WDRO-sampling", InjectionMode::QSTAR_SAMPLE, 1},
     };
 

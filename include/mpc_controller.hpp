@@ -245,7 +245,7 @@ private:
     ADMMSolver qp_solver_;
     std::map<std::string, ModeModel> default_modes_;
     std::map<int, ModeHistory> mode_histories_;
-    std::map<int, int> obstacle_classes_;  ///< obstacle_id -> obstacle_class
+    std::map<int, int> obstacle_classes_;  // obstacle_id -> obstacle_class
     std::vector<Scenario> scenarios_;
     WassersteinDRO dro_;
     std::vector<EgoState> reference_trajectory_;

@@ -24,28 +24,24 @@ namespace dro_mpc {
 using ModeDistribution = std::map<std::string, double>;
 
 /**
- * @brief Compute the mode belief from observation history (Dirichlet posterior-predictive).
+ * @brief Compute the nominal mode belief from observation history.
  *
- * FREQUENCY returns the Dirichlet posterior-predictive mean
- *   p_m = (n_m + a) / (N + M a),
- * with symmetric pseudocount `a = dirichlet_alpha`, so EVERY mode in the library keeps
- * strictly positive mass (no zero-mask on unobserved modes). UNIFORM is 1/M;
- * EPSILON_GREEDY and TEMPERATURE reshape the Dirichlet-smoothed frequencies.
+ * The belief is the Dirichlet posterior-predictive mean
+ *   p_m = (n_m + a) / (N + M a),   a = belief.alpha(M),
+ * so EVERY mode in the library keeps strictly positive mass (no zero-mask on
+ * unobserved modes). The belief KIND (NominalBeliefKind: DIRICHLET vs STICKY)
+ * shares this marginal; stickiness enters only through the Markov transition
+ * prior (ModeBeliefConfig::kappa), applied by the mode-sequence samplers.
  *
  * @param mode_history Observed mode history for an obstacle (available_modes = full library).
- * @param weight_type Weight computation strategy.
- * @param recency_decay Decay factor lambda for recency weighting.
- * @param current_timestep Current timestep for recency computation.
- * @param dirichlet_alpha Symmetric Dirichlet pseudocount a (Laplace a=1 by default; use
- *        ModeBeliefConfig::alpha(M) for KT/Perks).
+ * @param belief Nominal-belief hyperparameters (Dirichlet prior + optional stickiness).
+ * @param current_timestep Reserved (unused; retained for call-site stability).
  * @return Dictionary mapping mode_id to weight (normalized to sum to 1).
  */
 std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
-    WeightType weight_type = WeightType::FREQUENCY,
-    double recency_decay = 0.9,
-    int current_timestep = 0,
-    double dirichlet_alpha = 1.0
+    const ModeBeliefConfig& belief = {},
+    int current_timestep = 0
 );
 
 /**

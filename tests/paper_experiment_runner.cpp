@@ -21,12 +21,11 @@
  *
  * Helper mappings:
  *   make_experiment_config()  — DRO/MPC arm -> ExperimentConfig
- *   baseline_to_weight()      — SamplingBaseline -> WeightType
  *   arm_uses_dro/arm_uses_sh — DRO/MPC flags
  *
  * Paper variants:
- *   Base      – WeightType::FREQUENCY, no DRO
- *   DRO       – WeightType::FREQUENCY + Wasserstein DRO
+ *   Base      – Dirichlet posterior-predictive belief, no DRO
+ *   DRO       – Dirichlet posterior-predictive belief + Wasserstein DRO
  *   *+SH      – any of the above with safe horizon enabled
  *
  * Outputs CSV files to paper_figures/ for generate_results_figures.py.
@@ -282,7 +281,6 @@ static void run_experiment_a() {
                 cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
                 cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = false;
                 cfg.mpc.ego.num_discs = 1;
@@ -817,7 +815,6 @@ static void run_experiment_g() {
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
             cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.mpc.safe_horizon_enabled = false;
             cfg.mpc.ego.num_discs = 1;
@@ -1027,7 +1024,7 @@ static void run_experiment_i() {
             RuntimeConfig tmp_cfg;
             tmp_cfg.mpc.horizon = HORIZON;
             tmp_cfg.mpc.safe_horizon_enabled = sh;
-            tmp_cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            tmp_cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             int predicted_ns = tmp_cfg.compute_safe_horizon(S);
 
             f_out << arm_label(arm.dro, arm.mpc) << "," << S << ","
@@ -1062,8 +1059,7 @@ static void run_experiment_j() {
 
     std::vector<SamplingBaseline> baselines = {
         SamplingBaseline::STANDARD,
-        SamplingBaseline::STRATIFIED, SamplingBaseline::TEMPERATURE,
-        SamplingBaseline::EPSILON_GREEDY, SamplingBaseline::RISK_BIASED
+        SamplingBaseline::STRATIFIED, SamplingBaseline::RISK_BIASED
     };
 
     EnvironmentSetup default_env;
@@ -1220,10 +1216,9 @@ static void run_experiment_l() {
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
                 cfg.mpc.constraints.safety_margin = 0.2;
                 cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
-                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
                 cfg.mpc.ego.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
@@ -1268,7 +1263,7 @@ static void run_experiment_l() {
                 for (int i = 0; i < 35; ++i) {
                     mh.record_observation(i, osim.current_mode);
                 }
-                auto weights = compute_mode_weights(mh, WeightType::FREQUENCY);
+                auto weights = compute_mode_weights(mh);
 
                 double collision_radius = cfg.mpc.ego.radius + cfg.obstacle_radius;
 
@@ -1416,9 +1411,8 @@ static void run_experiment_n() {
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = S;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.mpc.safe_horizon_enabled = true;
-            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
             AdaptiveScenarioMPC ctrl(cfg);
@@ -1489,9 +1483,8 @@ static void run_experiment_n() {
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.mpc.safe_horizon_enabled = true;
-            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = D; cfg.mpc.ego.length = 4.0;
 
             AdaptiveScenarioMPC ctrl(cfg);
@@ -1562,9 +1555,8 @@ static void run_experiment_n() {
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.mpc.safe_horizon_enabled = true;
-            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.constraints.forced_safe_horizon = ns;
             cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
@@ -1673,10 +1665,9 @@ static void run_experiment_o() {
                 cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
                 cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
-                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+                cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
                 cfg.mpc.ego.num_discs = 1;
 
                 AdaptiveScenarioMPC ctrl(cfg);
@@ -1782,10 +1773,8 @@ static void run_experiment_p() {
         ArmSpec variant;
     };
     std::vector<CoverageStrategy> strategies = {
-        {"Standard",  SamplingBaseline::STANDARD,       ARM_BASE},
-        {"Uniform",   SamplingBaseline::UNIFORM_WEIGHT,  ARM_BASE},
-        {"Recency",   SamplingBaseline::RECENCY_WEIGHT,  ARM_BASE},
-        {"Oracle",    SamplingBaseline::ORACLE_FLOOD,    ARM_BASE},
+        {"Standard",  SamplingBaseline::STANDARD,     ARM_BASE},
+        {"Oracle",    SamplingBaseline::ORACLE_FLOOD, ARM_BASE},
     };
 
     std::ofstream csv(OUTPUT_DIR + "exp_p_coverage_baselines.csv");
@@ -1876,7 +1865,6 @@ static void run_experiment_r() {
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.mpc.safe_horizon_enabled = false;
             cfg.mpc.ego.num_discs = 1;
@@ -2256,11 +2244,10 @@ static void run_experiment_z() {
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
-            cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
-            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonMode::PRACTICAL;
+            cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = 1;
 
             AdaptiveScenarioMPC ctrl(cfg);

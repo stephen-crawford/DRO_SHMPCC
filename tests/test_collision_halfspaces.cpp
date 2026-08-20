@@ -96,6 +96,38 @@ void test_fallback_normal() {
     );
 }
 
+// Helper: true iff calling f() throws std::invalid_argument.
+template <typename F>
+bool throws_invalid_argument(F&& f) {
+    try { f(); } catch (const std::invalid_argument&) { return true; } catch (...) { return false; }
+    return false;
+}
+
+void test_input_validation_and_robust_fallback() {
+    const EgoState st(0.0, 0.0, 0.0, 1.0);
+    // (A) num_discs must be positive; vehicle_length finite and nonnegative.
+    expect(throws_invalid_argument([&]{ compute_ego_disc_positions(st, 0, 4.0); }),
+           "compute_ego_disc_positions rejects num_discs = 0");
+    expect(throws_invalid_argument([&]{ compute_ego_disc_positions(st, -2, 4.0); }),
+           "compute_ego_disc_positions rejects negative num_discs");
+    expect(throws_invalid_argument([&]{ compute_ego_disc_positions(st, 2, -1.0); }),
+           "compute_ego_disc_positions rejects negative vehicle_length");
+    // (C) direction_epsilon must be finite and positive.
+    expect(throws_invalid_argument([&]{
+               make_collision_halfspace(Eigen::Vector2d(3,0), Eigen::Vector2d(0,0), 1.0,
+                                        std::nullopt, /*direction_epsilon=*/0.0); }),
+           "make_collision_halfspace rejects direction_epsilon = 0");
+    // (C) a DEGENERATE (zero) fallback normal must NOT be normalized -> UnitX fallback.
+    const Eigen::Vector2d coincident(1.0, 1.0);
+    auto hs_zero = make_collision_halfspace(coincident, coincident, 0.5,
+                                            Eigen::Vector2d(0.0, 0.0));
+    expect(hs_zero.used_fallback_normal && hs_zero.normal.allFinite() &&
+               std::abs(hs_zero.normal.norm() - 1.0) < 1e-12,
+           "zero fallback normal yields a finite unit normal (no divide-by-zero)");
+    expect(std::abs(hs_zero.normal.x() - 1.0) < 1e-12,
+           "zero fallback falls through to UnitX");
+}
+
 void test_legacy_conversion_sign() {
     const Eigen::Vector2d obs(3.0, 0.0);
     const Eigen::Vector2d disc(0.0, 0.0);
@@ -152,6 +184,7 @@ int main() {
         test_clearance_identity();
         test_halfspace_implies_circular_separation();
         test_fallback_normal();
+        test_input_validation_and_robust_fallback();
         test_legacy_conversion_sign();
         test_disc_offset_matches_positions();
         test_affine_disc_linearization_at_reference();

@@ -130,8 +130,7 @@ MPCResult AdaptiveScenarioMPC::solve(
 
             // Frequency / belief-based weights (the single nominal P_hat).
             auto freq_weights = compute_mode_weights(
-                hist_it->second, config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay, iteration_count_
+                hist_it->second, config_.mpc.sampling.mode_belief, iteration_count_
             );
 
             // Optional custom weights override both sampling and DRO center.
@@ -146,6 +145,23 @@ MPCResult AdaptiveScenarioMPC::solve(
             dro_.set_observation_count(
                 static_cast<int>(hist_it->second.observed_modes.size()));
 
+            // Markov-jump obstacle: hand the DRO risk model the transition chain so
+            // per-mode risk is computed over within-horizon switching rather than a
+            // held mode. Ordering matches `nominal` (== the solver's mode_ids order).
+            Eigen::MatrixXd obs_transition;
+            const Eigen::MatrixXd* transition_ptr = nullptr;
+            if (config_.mpc.sampling.use_markov_mode_sampling) {
+                std::vector<std::string> modes_order;
+                modes_order.reserve(nominal.size());
+                for (const auto& [mid, _] : nominal) modes_order.push_back(mid);
+                const int M = static_cast<int>(modes_order.size());
+                obs_transition = compute_mode_transition_matrix(
+                    hist_it->second, modes_order,
+                    config_.mpc.sampling.mode_belief.alpha(M),
+                    config_.mpc.sampling.mode_belief.kappa(M));
+                transition_ptr = &obs_transition;
+            }
+
             dro_results[obs_id] = dro_.compute_worst_case_weights(
                 nominal, obs_state, hist_it->second.available_modes,
                 reference_trajectory_, config_.mpc.horizon,
@@ -153,7 +169,8 @@ MPCResult AdaptiveScenarioMPC::solve(
                 config_.mpc.constraints.safety_margin,
                 pre_dro_safe_horizon,
                 config_.mpc.ego.num_discs,
-                config_.mpc.ego.length
+                config_.mpc.ego.length,
+                transition_ptr
             );
         }
 
@@ -329,64 +346,6 @@ MPCResult AdaptiveScenarioMPC::solve(
                     }
                 }
             }
-        } else if (config_.dro.resolved_injection_mode() == InjectionMode::DRO ||
-                   config_.dro.resolved_injection_mode() == InjectionMode::ADVERSARIAL) {
-            // INJECTION PATH: sample using nominal/OT weights, then inject
-            // worst-case scenario(s) as additional hard constraints.
-            if (!per_obs_nominal.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_nominal,
-                    config_.mpc.horizon, S,
-                    config_.mpc.sampling.ensure_mode_coverage, &rng_
-                );
-            }
-
-            int next_id = S;
-            int K = config_.dro.injection_count;
-            for (const auto& [obs_id, obs_state] : obstacles) {
-                auto dr_it = dro_results.find(obs_id);
-                if (dr_it == dro_results.end()) continue;
-
-                auto hist_it = mode_histories_.find(obs_id);
-                if (hist_it == mode_histories_.end()) continue;
-
-                std::vector<Scenario> injected_scenarios;
-                if (config_.dro.resolved_injection_mode() == InjectionMode::DRO) {
-                    if (K == 1) {
-                        auto s = dro_.generate_worst_case_scenario(
-                            dr_it->second, obs_id, obs_state,
-                            hist_it->second.available_modes,
-                            config_.mpc.horizon, next_id);
-                        if (!s.trajectories.empty()) injected_scenarios.push_back(std::move(s));
-                    } else {
-                        injected_scenarios = dro_.generate_topk_worst_case_scenarios(
-                            dr_it->second, obs_id, obs_state,
-                            hist_it->second.available_modes,
-                            config_.mpc.horizon, next_id, K);
-                    }
-                } else {
-                    if (K == 1) {
-                        auto s = dro_.generate_adversarial_scenario(
-                            dr_it->second, obs_id, obs_state,
-                            hist_it->second.available_modes,
-                            reference_trajectory_, config_.mpc.horizon, next_id,
-                            config_.dro.adversarial_sigma_scale);
-                        if (!s.trajectories.empty()) injected_scenarios.push_back(std::move(s));
-                    } else {
-                        injected_scenarios = dro_.generate_topk_adversarial_scenarios(
-                            dr_it->second, obs_id, obs_state,
-                            hist_it->second.available_modes,
-                            reference_trajectory_, config_.mpc.horizon, next_id, K,
-                            config_.dro.adversarial_sigma_scale);
-                    }
-                }
-
-                for (auto& inj : injected_scenarios) {
-                    scenarios_.push_back(std::move(inj));
-                    dro_injected++;
-                    next_id++;
-                }
-            }
         } else {
             // Q* SAMPLING PATH (QSTAR_SAMPLE or default):
             // Resample ALL S scenarios from q* distribution (Eq. 3-4).
@@ -402,8 +361,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                     // matrix propagates it over the horizon.
                     scenarios_ = sample_scenarios_markov(
                         obstacles, mode_histories_, &per_obs_weights_dro,
-                        config_.mpc.horizon, S, config_.mpc.sampling.weight_type,
-                        config_.mpc.sampling.mode_belief, &rng_
+                        config_.mpc.horizon, S, config_.mpc.sampling.mode_belief, &rng_
                     );
                 } else {
                     scenarios_ = sample_scenarios_with_weights(
@@ -432,20 +390,25 @@ MPCResult AdaptiveScenarioMPC::solve(
             // the Dirichlet prior, no Q* override.
             scenarios_ = sample_scenarios_markov(
                 obstacles, mode_histories_, nullptr,
-                config_.mpc.horizon, config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.mode_belief, &rng_
+                config_.mpc.horizon, config_.mpc.sampling.num_scenarios, config_.mpc.sampling.mode_belief, &rng_
             );
         } else if (config_.mpc.sampling.ensure_mode_coverage) {
-            scenarios_ = sample_scenarios_with_mode_coverage(
-                obstacles, mode_histories_, config_.mpc.horizon,
-                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
+            // Coverage-forcing baseline (deliberately breaks i.i.d.): route through the
+            // SINGLE i.i.d. sampler with computed nominal weights + ensure_mode_coverage,
+            // instead of a separate coverage function.
+            std::map<int, std::map<std::string, double>> nominal_w;
+            for (const auto& [obs_id, hist] : mode_histories_) {
+                auto w = compute_mode_weights(hist, config_.mpc.sampling.mode_belief, iteration_count_);
+                if (!w.empty()) nominal_w[obs_id] = w;
+            }
+            scenarios_ = sample_scenarios_with_weights(
+                obstacles, mode_histories_, nominal_w, config_.mpc.horizon,
+                config_.mpc.sampling.num_scenarios, /*ensure_mode_coverage=*/true, &rng_
             );
         } else {
             scenarios_ = sample_scenarios(
                 obstacles, mode_histories_, config_.mpc.horizon,
-                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
+                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.mode_belief, iteration_count_, &rng_
             );
         }
     }
@@ -460,13 +423,15 @@ MPCResult AdaptiveScenarioMPC::solve(
     }
     pre_injected_scenarios_.clear();
 
-    // Verify scenario sufficiency for epsilon guarantee (Part 4)
+    // Verify scenario sufficiency for epsilon guarantee (Part 4).
+    // de Groot sizes S from the SUPPORT LIMIT n̄ (horizon-independent) via the exact
+    // NSO bound (Eq. 8), not from the decision-variable dimension.
     {
-        int n_x = 4, n_u = 2;
-        int d = config_.mpc.horizon * n_x + config_.mpc.horizon * n_u;
         int S_actual = static_cast<int>(scenarios_.size());
-        int S_required = config_.compute_required_scenarios(d);
-        (void)config_.compute_effective_epsilon(S_actual, d);
+        int S_required = config_.compute_required_scenarios(
+            config_.mpc.constraints.support_cap_nbar);
+        (void)config_.compute_effective_epsilon(
+            S_actual, config_.mpc.constraints.support_cap_nbar);
 
         if (S_actual < S_required && config_.mpc.sampling.enforce_scenario_count) {
             // Auto-increase: sample additional scenarios
@@ -476,8 +441,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                 mode_histories_,
                 config_.mpc.horizon,
                 additional_count,
-                config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay,
+                config_.mpc.sampling.mode_belief,
                 iteration_count_,
                 &rng_
             );
@@ -492,8 +456,7 @@ MPCResult AdaptiveScenarioMPC::solve(
                 mode_histories_,
                 config_.mpc.horizon,
                 additional_count,
-                config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay,
+                config_.mpc.sampling.mode_belief,
                 iteration_count_,
                 &rng_
             );
@@ -503,17 +466,15 @@ MPCResult AdaptiveScenarioMPC::solve(
 
     // Step 3b: Verify scenario sufficiency for epsilon guarantee (Part 4)
     if (config_.mpc.sampling.enforce_scenario_count) {
-        int n_x = 4, n_u = 2;
-        int d = config_.mpc.horizon * n_x + config_.mpc.horizon * n_u;
-        int S_required = config_.compute_required_scenarios(d);
+        int S_required = config_.compute_required_scenarios(
+            config_.mpc.constraints.support_cap_nbar);
         int S_actual = static_cast<int>(scenarios_.size());
         if (S_actual < S_required) {
             // Auto-increase: sample additional scenarios
             int additional_count = S_required - S_actual;
             auto additional = sample_scenarios(
                 obstacles, mode_histories_, config_.mpc.horizon,
-                additional_count, config_.mpc.sampling.weight_type,
-                config_.mpc.sampling.recency_decay, iteration_count_, &rng_
+                additional_count, config_.mpc.sampling.mode_belief, iteration_count_, &rng_
             );
             scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
         }
@@ -523,6 +484,23 @@ MPCResult AdaptiveScenarioMPC::solve(
     // Normals are held constant for the subsequent QP (Case B also linearizes
     // heading-dependent disc centers about the same numerical reference).
     auto constraint_start = std::chrono::high_resolution_clock::now();
+
+    // de Groot 2023 Definition-2 geometric dominance pruning: drop scenarios whose
+    // collision half-spaces are IMPLIED (on the reachable ball) by a more-restrictive
+    // scenario's, evaluated at the reference trajectory. The implication is certified
+    // exactly on the actual (a, b) per ego disc, so it is sound (never drops an active
+    // scenario) rather than an a-priori heuristic. Injected worst-case scenarios are
+    // never pruned; enforce_all_scenarios disables pruning entirely to keep the full S
+    // constraints (restores the Theorem-1 premise).
+    if (!config_.mpc.sampling.enforce_all_scenarios) {
+        const double combined_radius = config_.mpc.ego.radius +
+                                       config_.obstacle_radius +
+                                       config_.mpc.constraints.safety_margin;
+        scenarios_ = prune_dominated_scenarios(
+            scenarios_, reference_trajectory_, combined_radius,
+            config_.mpc.ego.num_discs, config_.mpc.ego.length);
+    }
+
     auto constraints = compute_linearized_constraints(
         reference_trajectory_,
         scenarios_,
@@ -559,11 +537,11 @@ MPCResult AdaptiveScenarioMPC::solve(
         }
     }
 
-    // Step 4c: Filter far-away constraints and merge redundant ones
-    // This significantly reduces QP size for large S without losing safety
-    constraints = filter_constraints_by_distance(
+    // Step 4c: Drop far-away (trivially non-binding) constraints. The support
+    // reduction itself was already done at the scenario level via dominance
+    // pruning above (de Groot Algorithm 3), which is non-distorting.
+    constraints = filter_constraints_by_clearance(
         constraints, reference_trajectory_, 20.0);
-    constraints = merge_redundant_constraints(constraints);
 
     auto constraint_end = std::chrono::high_resolution_clock::now();
 
@@ -736,18 +714,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
         inputs = new_inputs;
     }
 
-    double effective_goal_weight = config_.mpc.objective.goal_weight;
-    bool progress_aware = (path_progress >= 0 && path_length > 0);
-    double progress_fraction = 0.0;
-    if (progress_aware) {
-        progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
-                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
-        }
-    }
+    const double effective_goal_weight = config_.mpc.objective.goal_weight;
+    (void)path_progress; (void)path_length;
 
     double cost = 0.0;
     for (int k = 0; k <= N; ++k) {
@@ -760,12 +728,6 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
         double v_diff = trajectory[k].v - reference_velocity;
         cost += w_vel * v_diff * v_diff;
 
-        if (progress_aware) {
-            double v_deficit = config_.mpc.objective.min_velocity_threshold - trajectory[k].v;
-            if (v_deficit > 0) {
-                cost += config_.mpc.objective.min_velocity_penalty * v_deficit * v_deficit;
-            }
-        }
     }
     for (int k = 0; k < N; ++k) {
         cost += config_.mpc.objective.acceleration_weight * inputs[k].a * inputs[k].a;
@@ -887,8 +849,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     // Douglas-Rachford projection: ensure warmstart satisfies collision constraints
     if (!constraints.empty()) {
         project_warmstart_to_safety(
-            x_ref, constraints, config_.mpc.ego.radius,
-            config_.obstacle_radius, config_.mpc.constraints.safety_margin);
+            x_ref, constraints, /*max_projection_sweeps=*/10, /*tolerance=*/1e-3);
     }
 
     // 2. SQP loop
@@ -987,18 +948,8 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
                     : ego_dynamics_.rollout(ego_state, u_ref);
     }
 
-    // Compute progress-aware goal weight
-    double effective_goal_weight = config_.mpc.objective.goal_weight;
-    bool progress_aware = (path_progress >= 0 && path_length > 0);
-    if (progress_aware) {
-        double progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
-                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
-        }
-    }
+    const double effective_goal_weight = config_.mpc.objective.goal_weight;
+    (void)path_progress; (void)path_length;
 
     // Compute final cost
     double cost = 0.0;
@@ -1013,12 +964,6 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
         double v_diff = x_ref[k].v - reference_velocity;
         cost += w_vel * v_diff * v_diff;
 
-        if (progress_aware) {
-            double v_deficit = config_.mpc.objective.min_velocity_threshold - x_ref[k].v;
-            if (v_deficit > 0) {
-                cost += config_.mpc.objective.min_velocity_penalty * v_deficit * v_deficit;
-            }
-        }
     }
     for (int k = 0; k < N; ++k) {
         cost += config_.mpc.objective.acceleration_weight * u_ref[k].a * u_ref[k].a;
@@ -1177,18 +1122,8 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     //       + sum_k w_vel * V[k,i]^T * V[k,j]
     //       + diag(w_accel, w_steer, w_accel, w_steer, ...)
 
-    // Compute progress-aware goal weight
-    double effective_goal_weight = config_.mpc.objective.goal_weight;
-    bool progress_aware = (path_progress >= 0 && path_length > 0);
-    if (progress_aware) {
-        double progress_fraction = path_progress / path_length;
-        if (progress_fraction > config_.mpc.objective.goal_scale_start_fraction) {
-            double t = (progress_fraction - config_.mpc.objective.goal_scale_start_fraction)
-                     / (1.0 - config_.mpc.objective.goal_scale_start_fraction);
-            double scale = 1.0 + t * (config_.mpc.objective.goal_weight_scale_max - 1.0);
-            effective_goal_weight = config_.mpc.objective.goal_weight * scale;
-        }
-    }
+    const double effective_goal_weight = config_.mpc.objective.goal_weight;
+    (void)path_progress; (void)path_length;
 
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n_dec, n_dec);
     Eigen::VectorXd g = Eigen::VectorXd::Zero(n_dec);

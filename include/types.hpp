@@ -35,11 +35,11 @@ namespace dro_mpc {
  * (ContouringSecondOrderUnicycleModel).
  */
 struct EgoState {
-    double x;      ///< Position x-coordinate [m]
-    double y;      ///< Position y-coordinate [m]
-    double theta;  ///< Heading angle [rad]
-    double v;      ///< Velocity magnitude [m/s]
-    double s;      ///< Spline/arc-length parameter along reference path [m] (-1 = not tracking)
+    double x;      // Position x-coordinate [m]
+    double y;      // Position y-coordinate [m]
+    double theta;  // Heading angle [rad]
+    double v;      // Velocity magnitude [m/s]
+    double s;      // Spline/arc-length parameter along reference path [m] (-1 = not tracking)
 
     EgoState() : x(0), y(0), theta(0), v(0), s(-1) {}
     EgoState(double x, double y, double theta, double v)
@@ -75,8 +75,8 @@ struct EgoState {
  * @brief Ego vehicle control input: u = (a, delta)
  */
 struct EgoInput {
-    double a;      ///< Acceleration [m/s^2]
-    double delta;  ///< Steering angle or angular velocity [rad or rad/s]
+    double a;      // Acceleration [m/s^2]
+    double delta;  // Steering angle or angular velocity [rad or rad/s]
 
     EgoInput() : a(0), delta(0) {}
     EgoInput(double a, double delta) : a(a), delta(delta) {}
@@ -96,10 +96,10 @@ struct EgoInput {
  * @brief Obstacle state: x_obs = (x, y, vx, vy)
  */
 struct ObstacleState {
-    double x;   ///< Position x-coordinate [m]
-    double y;   ///< Position y-coordinate [m]
-    double vx;  ///< Velocity x-component [m/s]
-    double vy;  ///< Velocity y-component [m/s]
+    double x;   // Position x-coordinate [m]
+    double y;   // Position y-coordinate [m]
+    double vx;  // Velocity x-component [m/s]
+    double vy;  // Velocity y-component [m/s]
 
     ObstacleState() : x(0), y(0), vx(0), vy(0) {}
     ObstacleState(double x, double y, double vx, double vy)
@@ -137,11 +137,11 @@ struct ObstacleState {
  * where w_k ~ N(0, I) is process noise.
  */
 struct ModeModel {
-    std::string mode_id;          ///< Unique identifier for this mode
-    Eigen::Matrix4d A;            ///< State transition matrix (4x4)
-    Eigen::Vector4d b;            ///< Bias/drift vector (4,)
-    Eigen::MatrixXd G;            ///< Process noise matrix (4 x n_noise)
-    std::string description;      ///< Human-readable description
+    std::string mode_id;          // Unique identifier for this mode
+    Eigen::Matrix4d A;            // State transition matrix (4x4)
+    Eigen::Vector4d b;            // Bias/drift vector (4,)
+    Eigen::MatrixXd G;            // Process noise matrix (4 x n_noise)
+    std::string description;      // Human-readable description
 
     ModeModel() : A(Eigen::Matrix4d::Identity()), b(Eigen::Vector4d::Zero()),
                   G(Eigen::MatrixXd::Zero(4, 2)) {}
@@ -176,11 +176,11 @@ struct ModeModel {
  * @brief Track observed modes for an obstacle over time.
  */
 struct ModeHistory {
-    int obstacle_id;                                    ///< Unique obstacle identifier
-    int obstacle_class = 0;                             ///< Class identifier (shared across obstacles)
-    std::map<std::string, ModeModel> available_modes;   ///< Mode ID to ModeModel
-    std::vector<std::pair<int, std::string>> observed_modes;  ///< (timestep, mode_id)
-    int max_history = 100;                              ///< Maximum history length
+    int obstacle_id;                                    // Unique obstacle identifier
+    int obstacle_class = 0;                             // Class identifier (shared across obstacles)
+    std::map<std::string, ModeModel> available_modes;   // Mode ID to ModeModel
+    std::vector<std::pair<int, std::string>> observed_modes;  // (timestep, mode_id)
+    int max_history = 100;                              // Maximum history length
 
     ModeHistory() : obstacle_id(0) {}
     ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes,
@@ -229,9 +229,9 @@ struct ModeHistory {
  * @brief Single step of an obstacle trajectory prediction.
  */
 struct PredictionStep {
-    int k;                        ///< Timestep index
-    Eigen::Vector2d mean;         ///< Mean position [x, y]
-    Eigen::Matrix2d covariance;   ///< Position covariance (2x2)
+    int k;                        // Timestep index
+    Eigen::Vector2d mean;         // Mean position [x, y]
+    Eigen::Matrix2d covariance;   // Position covariance (2x2)
 
     PredictionStep() : k(0), mean(Eigen::Vector2d::Zero()),
                        covariance(Eigen::Matrix2d::Zero()) {}
@@ -243,10 +243,10 @@ struct PredictionStep {
  * @brief Predicted trajectory for a single obstacle over the horizon.
  */
 struct ObstacleTrajectory {
-    int obstacle_id;                   ///< Unique obstacle identifier
-    std::string mode_id;               ///< Mode used for this trajectory
-    std::vector<PredictionStep> steps; ///< Prediction steps over horizon
-    double probability = 1.0;          ///< Probability/weight of this trajectory
+    int obstacle_id;                   // Unique obstacle identifier
+    std::string mode_id;               // Mode used for this trajectory
+    std::vector<PredictionStep> steps; // Prediction steps over horizon
+    double probability = 1.0;          // Probability/weight of this trajectory
 
     ObstacleTrajectory() : obstacle_id(0) {}
     ObstacleTrajectory(int obstacle_id, const std::string& mode_id,
@@ -275,10 +275,10 @@ struct ObstacleTrajectory {
  * @brief A scenario is a collection of obstacle trajectories.
  */
 struct Scenario {
-    int scenario_id;                                      ///< Unique scenario identifier
-    std::map<int, ObstacleTrajectory> trajectories;       ///< obstacle_id -> trajectory
-    double probability = 1.0;                             ///< Combined probability
-    bool is_injected = false;                             ///< True if DRO worst-case injected (never prune)
+    int scenario_id;                                      // Unique scenario identifier
+    std::map<int, ObstacleTrajectory> trajectories;       // obstacle_id -> trajectory
+    double probability = 1.0;                             // Combined probability
+    bool is_injected = false;                             // True if DRO worst-case injected (never prune)
 
     Scenario() : scenario_id(0) {}
     Scenario(int scenario_id, const std::map<int, ObstacleTrajectory>& trajectories,
@@ -302,17 +302,6 @@ struct Scenario {
 // =============================================================================
 
 /**
- * @brief Mode weight computation strategies.
- */
-enum class WeightType {
-    UNIFORM,          ///< Equal weights for all modes
-    RECENCY,          ///< Exponential decay weighting recent observations
-    FREQUENCY,        ///< Weights based on observation frequency
-    TEMPERATURE,      ///< Temperature-scaled frequency: w'_m = exp(log(w_m)/T)
-    EPSILON_GREEDY    ///< Epsilon-greedy: w'_m = (1-eps)*w_m + eps/M
-};
-
-/**
  * @brief Linearized collision avoidance constraint.
  *
  * Form: a^T @ p_ego >= b
@@ -322,14 +311,14 @@ enum class WeightType {
  * via a = -n and b = -upper_bound. The normal is frozen before the QP solve.
  */
 struct CollisionConstraint {
-    int k;                    ///< Timestep index
-    int obstacle_id;          ///< Obstacle this constraint is for
-    int scenario_id;          ///< Scenario this constraint belongs to
-    Eigen::Vector2d a;        ///< Constraint normal vector (2,)
-    double b;                 ///< Constraint offset (scalar)
-    Eigen::Vector2d linearization_point = Eigen::Vector2d::Zero();  ///< Ego disc position at linearization
-    int disc_index = 0;       ///< Disc used for this constraint (Case B Jacobian)
-    double disc_offset = 0.0; ///< Longitudinal disc offset ℓ_d used at linearization
+    int k;                    // Timestep index
+    int obstacle_id;          // Obstacle this constraint is for
+    int scenario_id;          // Scenario this constraint belongs to
+    Eigen::Vector2d a;        // Constraint normal vector (2,)
+    double b;                 // Constraint offset (scalar)
+    Eigen::Vector2d linearization_point = Eigen::Vector2d::Zero();  // Ego disc position at linearization
+    int disc_index = 0;       // Disc used for this constraint (Case B Jacobian)
+    double disc_offset = 0.0; // Longitudinal disc offset ℓ_d used at linearization
 
     CollisionConstraint() : k(0), obstacle_id(0), scenario_id(0), b(0) {}
     CollisionConstraint(int k, int obstacle_id, int scenario_id,
@@ -350,16 +339,16 @@ struct CollisionConstraint {
  * @brief Result from MPC optimization.
  */
 struct MPCResult {
-    bool success;                           ///< Whether optimization succeeded
-    std::vector<EgoState> ego_trajectory;   ///< Planned ego states over horizon
-    std::vector<EgoInput> control_inputs;   ///< Planned control inputs
-    std::vector<int> active_scenarios;      ///< Scenarios with binding constraints
-    double solve_time = 0.0;                ///< Optimization solve time [s]
-    double cost = std::numeric_limits<double>::infinity();  ///< Optimal cost value
-    int safe_horizon = -1;              ///< Truncated safe horizon used (-1 = full)
-    int num_dro_injected = 0;           ///< Number of DRO worst-case scenarios injected
-    double constraint_construction_time = 0.0;  ///< Time for constraint building [s]
-    double qp_solve_time = 0.0;                 ///< Time for QP/SQP solve [s]
+    bool success;                           // Whether optimization succeeded
+    std::vector<EgoState> ego_trajectory;   // Planned ego states over horizon
+    std::vector<EgoInput> control_inputs;   // Planned control inputs
+    std::vector<int> active_scenarios;      // Scenarios with binding constraints
+    double solve_time = 0.0;                // Optimization solve time [s]
+    double cost = std::numeric_limits<double>::infinity();  // Optimal cost value
+    int safe_horizon = -1;              // Truncated safe horizon used (-1 = full)
+    int num_dro_injected = 0;           // Number of DRO worst-case scenarios injected
+    double constraint_construction_time = 0.0;  // Time for constraint building [s]
+    double qp_solve_time = 0.0;                 // Time for QP/SQP solve [s]
 
     MPCResult() : success(false) {}
 
@@ -373,13 +362,66 @@ struct MPCResult {
 };
 
 /**
- * @brief Ground cost type for the Wasserstein ball transport matrix.
+ * @brief Ground cost D[i][j] between two MODES for the Wasserstein ball.
+ *
+ * TWO WASSERSTEIN LEVELS — do not conflate the ground-cost order with the ball
+ * order. The ambiguity ball itself is Wasserstein-ONE: q lives on the mode
+ * simplex and W_D(q,p̂)=min_Π Σ Π_ij D_ij is LINEAR in D (that linearity is what
+ * gives the single-λ Kantorovich LP dual). These enum values name only the
+ * GROUND COST — the distance BETWEEN two modes — not the ball's order:
+ *
+ *   W2_BURES (default): D_ij = the Wasserstein-2 / BURES distance between mode i's
+ *     and mode j's predicted Gaussian trajectory distributions (the √ form, i.e.
+ *     the metric, not the squared cost). So the outer ball is W1 while the inner
+ *     mode-to-mode metric is W2-Bures — the canonical closed-form metric between
+ *     Gaussians. A categorical mode set is not a priori a metric space; embedding
+ *     each mode via its dynamics into Bures–Wasserstein space supplies a genuine
+ *     ground metric, on which the outer W1 ball is well defined.
+ *
+ * Keep D a proper metric (symmetric, D_ii=0, triangle inequality) so W_D stays a
+ * metric and the radius keeps its meaning; ZERO_ONE ⇒ W_D = total variation.
  */
 enum class DROGroundCostType {
-    W1_METRIC,      ///< Gaussian W1 metric
-    W2_BURES,       ///< Gaussian W2 Bures metric (default)
-    ZERO_ONE,       ///< D[i][j] = (i!=j) ? 1 : 0
-    EUCLIDEAN_MEAN  ///< ||mu_i - mu_j|| averaged over horizon
+    W1_METRIC,      // Gaussian W1 metric (ground cost between mode Gaussians)
+    W2_BURES,       // W2 Bures distance between mode Gaussians (default); OUTER ball is still W1
+    ZERO_ONE,       // D[i][j] = (i!=j) ? 1 : 0  ⇒  W_D = total variation
+    EUCLIDEAN_MEAN  // ||mu_i - mu_j|| averaged over horizon (mode-to-mode)
+};
+
+/**
+ * @brief Divergence-based ambiguity families over the discrete mode simplex.
+ *
+ * Table I of Schuurmans & Patrinos, "A General Framework for Learning-Based
+ * Distributionally Robust MPC of Markov Jump Systems," arXiv:2106.00561 (2021).
+ * Each family defines the ambiguity ball A = {p ∈ Δ_d : D(p̂,p) ≤ r} through a
+ * distance D(p̂,p), a FINITE-SAMPLE radius r(m,β) guaranteeing p⋆ ∈ A w.p. ≥ 1−β,
+ * and a conic reformulation of the worst-case expectation max_{p∈A} ⟨p, r_risk⟩:
+ *
+ *   family            D(p̂,p)                            radius r(m,β)   cone
+ *   TOTAL_VARIATION   ‖p−p̂‖₁                            2√r_TV         linear
+ *   KULLBACK_LEIBLER  D_KL(p̂,p)=Σ p̂_i log(p̂_i/p_i)      r_KL           exponential
+ *   JENSEN_SHANNON    ½[D_KL(p̂,M)+D_KL(p,M)], M=(p̂+p)/2  ½ r_KL        exponential
+ *   HELLINGER         Σ(√p_i−√p̂_i)²                      r_KL           quadratic
+ *   WASSERSTEIN       min_Π{Σ Π_ij K_ij : Π1=p, Πᵀ1=p̂}   maxK·√r_TV    linear
+ *
+ * with  r_TV(m,β) = (d·ln2 − ln β)/(2m)   [Bretagnolle–Huber–Carol, Eq. 12]
+ *       r_KL(m,β) = (d·ln m − ln β)/m     [method of types,          Eq. 13]
+ * where m = mode-observation count, d = #modes, K_ij = dist(i,j).
+ *
+ * WHY TV AND WASSERSTEIN SHARE A RADIUS: the calibrated true-W1 radius used
+ * elsewhere in this codebase IS the WASSERSTEIN row — it is the TV concentration
+ * r_TV lifted to W₁ by the transport diameter, since
+ *   maxK·√r_TV = ½·diam(K)·(2√r_TV) = ½·diam(K)·ε_n(β).
+ * So TOTAL_VARIATION and WASSERSTEIN rest on the SAME BHC concentration and differ
+ * only by the ½·diam(K) diameter scaling; W₁ = TV × ½·diam(K). All five families
+ * are implemented in schuurmans_ambiguity.hpp.
+ */
+enum class AmbiguityDivergence {
+    TOTAL_VARIATION,   // ‖p−p̂‖₁; radius 2√r_TV; linear cone
+    KULLBACK_LEIBLER,  // D_KL(p̂,p); radius r_KL; exponential cone
+    JENSEN_SHANNON,    // symmetrized KL; radius ½ r_KL; exponential cone
+    HELLINGER,         // Σ(√p−√p̂)²; radius r_KL; quadratic cone
+    WASSERSTEIN        // W₁ with ground cost K; radius maxK·√r_TV; linear cone (DEFAULT)
 };
 
 /**
@@ -413,12 +455,28 @@ enum class DROGroundCostType {
  * form (the distance is non-Gaussian and the steps are dependent), so it is
  * estimated by Monte Carlo with common random numbers across modes.
  */
+// Three families, in increasing fidelity (and cost):
+//  SURROGATE_* — LINEARISED per-step violation: the true Euclidean violation
+//    [R-||x_k-c||]_+ is replaced by its projection on the ego->obstacle MEAN
+//    direction, modelled as Gaussian with directional sigma. By Cauchy-Schwarz this
+//    projection is an UPPER bound of the true violation, so the surrogate is
+//    closed-form (no Monte Carlo) and conservative. "Surrogate" names the
+//    linearisation, not an invalid bound.
+//  BONFERRONI_VAR — PROPER Bonferroni VaR: the union-bound level correction
+//    a' = 1-(1-a)/(N_s*D) applied to the TRUE per-step EUCLIDEAN VaR (Monte Carlo
+//    on each step's marginal Gaussian, no projection). Removes the Cauchy-Schwarz
+//    slack of SURROGATE_VAR_BONFERRONI while keeping the per-step decoupling; still
+//    a valid upper bound on the joint-horizon VaR (union bound).
+//  JOINT_* — the TRUE joint-horizon risk measure of V = max_{k,d}[R-||x_k-c||]_+
+//    over the WHOLE horizon, x_k from the mode's correlated rollout (exact temporal
+//    correlation), estimated by Monte Carlo.
 enum class DRORiskMeasure {
-    SURROGATE_VAR,   ///< DEFAULT, bit-for-bit master/CDC'26: per-step linearised VaR, max over (k,d)
-    SURROGATE_CVAR,  ///< per-step linearised CVaR, correct clamp order (closed form), max over (k,d)
-    SURROGATE_VAR_BONFERRONI,  ///< per-step linearised VaR at the union-bound-corrected level (see below)
-    JOINT_VAR,       ///< joint-horizon VaR of Euclidean collision over the whole horizon (MC)
-    JOINT_CVAR       ///< joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
+    SURROGATE_VAR,   // per-step LINEARISED VaR, max over (k,d) (CDC'26 legacy)
+    SURROGATE_CVAR,  // per-step LINEARISED CVaR, correct clamp order (closed form), max over (k,d)
+    SURROGATE_VAR_BONFERRONI,  // LINEARISED VaR at the union-corrected level a'=1-(1-a)/(N_s*D)
+    BONFERRONI_VAR,  // PROPER Bonferroni VaR: union correction on the TRUE per-step Euclidean VaR (MC)
+    JOINT_VAR,       // joint-horizon VaR of Euclidean collision over the whole horizon (MC)
+    JOINT_CVAR       // joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
 };
 
 /*
@@ -480,9 +538,9 @@ enum class DRORiskMeasure {
  * Whichever is chosen, the paper must name the criterion it is optimal under.
  */
 enum class DirichletPrior {
-    LAPLACE,              ///< a = 1      (uniform prior on the simplex)
-    KRICHEVSKY_TROFIMOV,  ///< a = 1/2    (Jeffreys; asymptotically minimax, cumulative regret)
-    PERKS                 ///< a = 1/M    (total prior mass 1, M-invariant)
+    LAPLACE,              // a = 1      (uniform prior on the simplex)
+    KRICHEVSKY_TROFIMOV,  // a = 1/2    (Jeffreys; asymptotically minimax, cumulative regret)
+    PERKS                 // a = 1/M    (total prior mass 1, M-invariant)
 };
 
 /**

@@ -44,6 +44,15 @@ target_link_libraries(test_obstacle_class PRIVATE scenario_mpc)
 add_executable(test_collision_halfspaces tests/test_collision_halfspaces.cpp)
 target_link_libraries(test_collision_halfspaces PRIVATE scenario_mpc)
 
+add_executable(test_pruning_and_linearization tests/test_pruning_and_linearization.cpp)
+target_link_libraries(test_pruning_and_linearization PRIVATE scenario_mpc)
+
+add_executable(test_sample_complexity tests/test_sample_complexity.cpp)
+target_link_libraries(test_sample_complexity PRIVATE scenario_mpc)
+
+add_executable(test_projection tests/test_projection.cpp)
+target_link_libraries(test_projection PRIVATE scenario_mpc)
+
 add_executable(test_paper_strategies tests/test_paper_strategies.cpp)
 target_link_libraries(test_paper_strategies PRIVATE scenario_mpc)
 

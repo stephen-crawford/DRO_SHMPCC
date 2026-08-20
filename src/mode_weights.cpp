@@ -12,34 +12,6 @@ namespace dro_mpc {
 namespace {
 
 /**
- * @brief Compute recency-based weights (Eq. 5).
- *
- * w_m = sum_{t: m_t = m} lambda^(T - t)
- * Recent observations are weighted more heavily.
- */
-std::map<std::string, double> compute_recency_weights(
-    const ModeHistory& mode_history,
-    const std::vector<std::string>& modes,
-    double decay,
-    int current_timestep
-) {
-    std::map<std::string, double> weights;
-    for (const auto& mode_id : modes) {
-        weights[mode_id] = 0.0;
-    }
-
-    for (const auto& [timestep, mode_id] : mode_history.observed_modes) {
-        if (weights.find(mode_id) != weights.end()) {
-            // Exponential decay based on how old the observation is
-            int age = current_timestep - timestep;
-            weights[mode_id] += std::pow(decay, age);
-        }
-    }
-
-    return weights;
-}
-
-/**
  * @brief Compute frequency-based weights (Eq. 6).
  *
  * w_m = n_m / sum_j n_j
@@ -65,10 +37,8 @@ std::map<std::string, double> compute_frequency_weights(
 
 std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
-    WeightType weight_type,
-    double recency_decay,
-    int current_timestep,
-    double dirichlet_alpha
+    const ModeBeliefConfig& belief,
+    int /*current_timestep*/
 ) {
     std::vector<std::string> modes;
     for (const auto& [mode_id, _] : mode_history.available_modes) {
@@ -80,74 +50,25 @@ std::map<std::string, double> compute_mode_weights(
         return {};
     }
 
-    std::map<std::string, double> weights;
+    // Nominal belief = Dirichlet posterior-predictive mean
+    //   p_m = (n_m + a) / (N + M a),   a = belief.alpha(M),
+    // so every library mode keeps strictly positive mass (no zero-mask on
+    // unobserved modes). The belief KIND (DIRICHLET vs STICKY) shares this
+    // marginal; stickiness enters only through the Markov transition prior
+    // (ModeBeliefConfig::kappa), which the mode-sequence samplers apply.
+    auto weights = compute_frequency_weights(mode_history, modes, belief.alpha(num_modes));
 
-    switch (weight_type) {
-        case WeightType::UNIFORM:
-            // Eq. 4: w_m = 1/M for all modes
-            for (const auto& mode_id : modes) {
-                weights[mode_id] = 1.0 / num_modes;
-            }
-            break;
-
-        case WeightType::RECENCY:
-            // Eq. 5: w_m = sum_{t: m_t = m} lambda^(T - t)
-            weights = compute_recency_weights(
-                mode_history, modes, recency_decay, current_timestep
-            );
-            break;
-
-        case WeightType::FREQUENCY:
-            // Dirichlet posterior-predictive mean: w_m = (n_m + a) / (N + M a).
-            weights = compute_frequency_weights(mode_history, modes, dirichlet_alpha);
-            break;
-
-        case WeightType::TEMPERATURE:
-            // Temperature scaling (T=0.5): w'_m = exp(log(w_m)/T), sharpens distribution
-            {
-                const double T = 0.5;
-                auto freq_w = compute_frequency_weights(mode_history, modes, dirichlet_alpha);
-                double freq_total = 0;
-                for (auto& [_, w] : freq_w) freq_total += w;
-                if (freq_total > 0) for (auto& [_, w] : freq_w) w /= freq_total;
-                for (const auto& m : modes) {
-                    double w = freq_total > 0 ? freq_w[m] : 1.0 / num_modes;
-                    // Avoid log(0): clamp to small positive value
-                    w = std::max(w, 1e-10);
-                    weights[m] = std::exp(std::log(w) / T);
-                }
-            }
-            break;
-
-        case WeightType::EPSILON_GREEDY:
-            // Epsilon-greedy (eps=0.3): w'_m = (1-eps)*w_m + eps/M
-            {
-                const double eps = 0.3;
-                auto freq_w = compute_frequency_weights(mode_history, modes, dirichlet_alpha);
-                double freq_total = 0;
-                for (auto& [_, w] : freq_w) freq_total += w;
-                if (freq_total > 0) for (auto& [_, w] : freq_w) w /= freq_total;
-                for (const auto& m : modes) {
-                    double w = freq_total > 0 ? freq_w[m] : 1.0 / num_modes;
-                    weights[m] = (1.0 - eps) * w + eps / num_modes;
-                }
-            }
-            break;
-    }
-
-    // Normalize weights to sum to 1
+    // Normalize to sum to 1
     double total = 0.0;
     for (const auto& [_, w] : weights) {
         total += w;
     }
-
     if (total > 0) {
         for (auto& [_, w] : weights) {
             w /= total;
         }
     } else {
-        // No modes observed yet — return empty to signal stationary treatment.
-        // Callers generate a hold-position trajectory for this obstacle.
+        // No modes and no prior mass — stationary treatment by caller.
         return {};
     }
 

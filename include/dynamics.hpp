@@ -44,8 +44,8 @@ public:
     /// vehicle geometry. Accessible as ego_dynamics_.model.max_velocity, etc.
     EgoDynamicsConfig model;
 
-    static constexpr int STATE_DIM = 4;  ///< [x, y, theta, v]
-    static constexpr int INPUT_DIM = 2;  ///< [a, w]
+    static constexpr int STATE_DIM = 4;  // [x, y, theta, v]
+    static constexpr int INPUT_DIM = 2;  // [a, w]
 
     /**
      * @brief Initialize dynamics model with just a timestep (default limits).
@@ -151,7 +151,7 @@ public:
     double dt() const { return dt_; }
 
 private:
-    double dt_;  ///< Timestep for discrete integration
+    double dt_;  // Timestep for discrete integration
 };
 
 /**

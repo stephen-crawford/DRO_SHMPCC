@@ -430,7 +430,6 @@ static ExperimentConfig make_config(
     cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = false;
     cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = rho;
@@ -450,7 +449,7 @@ static ExperimentConfig make_config(
 
         case TrajDROMethod::MODE_DRO_INJECT:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
 
         case TrajDROMethod::TRAJ_DRO_RESAMPLE:

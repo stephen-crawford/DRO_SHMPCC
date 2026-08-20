@@ -22,10 +22,10 @@ namespace dro_mpc {
  * @brief Point on reference path with position and tangent.
  */
 struct PathPoint {
-    Eigen::Vector2d position;    ///< Position [x, y]
-    double heading;              ///< Tangent angle [rad]
-    double curvature;            ///< Path curvature [1/m]
-    double s;                    ///< Arc length parameter
+    Eigen::Vector2d position;    // Position [x, y]
+    double heading;              // Tangent angle [rad]
+    double curvature;            // Path curvature [1/m]
+    double s;                    // Arc length parameter
 
     PathPoint() : heading(0), curvature(0), s(0) {}
     PathPoint(const Eigen::Vector2d& pos, double h, double k, double s)

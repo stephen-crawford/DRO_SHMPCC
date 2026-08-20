@@ -127,7 +127,6 @@ static RolloutResult run_rollout(
     config.mpc.ego.num_discs = num_discs;
     config.mpc.safe_horizon_enabled = safe_horizon_enabled;
     config.mpc.constraints.safe_horizon_min = 3;
-    config.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
     AdaptiveScenarioMPC controller(config);
 
@@ -488,9 +487,9 @@ static int test_h3_safe_horizon_truncation() {
         }
     }
 
-    // Also output the theoretical safe horizon as function of S
-    // Uses tighter bound (Eq. 25): S >= (2/eps)*ln(1/beta) + 2*nbar + (2*nbar/eps)*ln(2/eps)
-    // where nbar = N_safe * n_u. Binary search for largest N_safe satisfied.
+    // Also output the theoretical safe horizon as function of S, using de Groot's
+    // EXACT NSO bound (Eq. 8): the largest N_safe whose support proxy nbar = N_safe*n_u
+    // is certified by S, i.e. the realized risk degroot_violation_risk(S, nbar, beta) <= eps.
     std::ofstream csv_theory(OUTPUT_DIR + "exp_h3_theoretical_safe_horizon.csv");
     csv_theory << "num_scenarios,epsilon,beta,safe_horizon_theoretical\n";
     for (int S = 5; S <= 500; S += 5) {
@@ -500,10 +499,7 @@ static int test_h3_safe_horizon_truncation() {
             int N_safe = 0;
             for (int N_try = 20; N_try >= 1; --N_try) {
                 int nbar = N_try * n_u;
-                double S_req = (2.0 / eps) * std::log(1.0 / beta_val)
-                             + 2.0 * nbar
-                             + (2.0 * nbar / eps) * std::log(2.0 / eps);
-                if (S >= static_cast<int>(std::ceil(S_req))) {
+                if (RuntimeConfig::degroot_violation_risk(S, nbar, beta_val) <= eps) {
                     N_safe = N_try;
                     break;
                 }

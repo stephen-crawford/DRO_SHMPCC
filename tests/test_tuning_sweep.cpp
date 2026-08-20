@@ -56,10 +56,10 @@ static std::vector<TuningConfig> build_configs() {
         false, InjectionMode::NONE, false,
         0.1, -1, 3, BASE_S});
     cfgs.push_back({"DRO(inj)",
-        true, InjectionMode::DRO, false,
+        true, InjectionMode::TOP_RISK_INJECT, false,
         0.1, -1, 3, BASE_S});
     cfgs.push_back({"DRO(inj)+SH",
-        true, InjectionMode::DRO, true,
+        true, InjectionMode::TOP_RISK_INJECT, true,
         0.1, -1, 3, BASE_S});
 
     // === Sweep 1: DRO rho for DRO(inj) alone ===
@@ -67,7 +67,7 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj) rho=" << std::fixed << std::setprecision(2) << rho;
         cfgs.push_back({ss.str(),
-            true, InjectionMode::DRO, false,
+            true, InjectionMode::TOP_RISK_INJECT, false,
             rho, -1, 3, BASE_S});
     }
 
@@ -78,7 +78,7 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj)+SH min=" << sh_min;
         cfgs.push_back({ss.str(),
-            true, InjectionMode::DRO, true,
+            true, InjectionMode::TOP_RISK_INJECT, true,
             0.1, -1, sh_min, BASE_S});
     }
 
@@ -87,7 +87,7 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj)+SH forced=" << fsh;
         cfgs.push_back({ss.str(),
-            true, InjectionMode::DRO, true,
+            true, InjectionMode::TOP_RISK_INJECT, true,
             0.1, fsh, 3, BASE_S});
     }
 
@@ -96,20 +96,20 @@ static std::vector<TuningConfig> build_configs() {
         std::ostringstream ss;
         ss << "DRO(inj) S=" << S;
         cfgs.push_back({ss.str(),
-            true, InjectionMode::DRO, false,
+            true, InjectionMode::TOP_RISK_INJECT, false,
             0.1, -1, 3, S});
     }
 
     // === Sweep 5: Best combo attempts ===
     // DRO(inj)+SH with tuned rho and higher SH min
     cfgs.push_back({"DRO(inj)+SH rho=0.2 min=12",
-        true, InjectionMode::DRO, true,
+        true, InjectionMode::TOP_RISK_INJECT, true,
         0.2, -1, 12, BASE_S});
     cfgs.push_back({"DRO(inj)+SH rho=0.05 min=15",
-        true, InjectionMode::DRO, true,
+        true, InjectionMode::TOP_RISK_INJECT, true,
         0.05, -1, 15, BASE_S});
     cfgs.push_back({"DRO(inj) rho=0.2 S=60",
-        true, InjectionMode::DRO, false,
+        true, InjectionMode::TOP_RISK_INJECT, false,
         0.2, -1, 3, 60});
 
     return cfgs;
@@ -239,7 +239,6 @@ int main(int argc, char** argv) {
         cfg.environment.path_completion_termination = true;
         cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
         cfg.rollout.method_name = tc.name;
-        cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
 
         cfg.dro.enabled = (tc.enable_dro);
         cfg.dro.injection_mode = tc.injection_mode;

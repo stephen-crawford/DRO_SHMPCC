@@ -47,8 +47,8 @@ static void test_dirichlet_posterior_mean() {
     ModeHistory h(0, lib, 0);
     for (int t = 0; t < 20; ++t) h.record_observation(t, "constant_velocity");
 
-    const double alpha = 1.0;
-    auto w = compute_mode_weights(h, WeightType::FREQUENCY, 0.9, 20, alpha);
+    ModeBeliefConfig belief; belief.prior = DirichletPrior::LAPLACE;  // a = 1
+    auto w = compute_mode_weights(h, belief);
 
     // p_m = (n_m + a) / sum_j (n_j + a);  n_cv = 20, M = 3, a = 1
     //   cv   = 21/23,  others = 1/23
@@ -72,8 +72,10 @@ static void test_alpha_is_live() {
     ModeHistory h(0, lib, 0);
     for (int t = 0; t < 20; ++t) h.record_observation(t, "constant_velocity");
 
-    auto w_laplace = compute_mode_weights(h, WeightType::FREQUENCY, 0.9, 20, 1.0);
-    auto w_kt      = compute_mode_weights(h, WeightType::FREQUENCY, 0.9, 20, 0.5);
+    ModeBeliefConfig laplace; laplace.prior = DirichletPrior::LAPLACE;             // a = 1
+    ModeBeliefConfig kt;      kt.prior      = DirichletPrior::KRICHEVSKY_TROFIMOV;  // a = 1/2
+    auto w_laplace = compute_mode_weights(h, laplace);
+    auto w_kt      = compute_mode_weights(h, kt);
 
     // Krichevsky-Trofimov (a=1/2) puts LESS mass on the unseen mode than Laplace.
     check(w_kt["lane_change_left"] < w_laplace["lane_change_left"],
@@ -81,26 +83,6 @@ static void test_alpha_is_live() {
     check(close_to(w_kt["lane_change_left"], 0.5 / 21.5, 1e-12),
           "KT alpha=1/2 matches closed form a/(N+Ma)");
     check(w_kt["lane_change_left"] > 0.0, "KT still strictly positive");
-}
-
-// ---------------------------------------------------------------------------
-// 3. The estimators are DISTINCT. Pre-fix, all four collapsed to FREQUENCY.
-// ---------------------------------------------------------------------------
-static void test_estimators_are_distinct() {
-    auto lib = make_library();
-    ModeHistory h(0, lib, 0);
-    for (int t = 0; t < 20; ++t) h.record_observation(t, "constant_velocity");
-
-    auto f = compute_mode_weights(h, WeightType::FREQUENCY, 0.9, 20, 1.0);
-    auto u = compute_mode_weights(h, WeightType::UNIFORM, 0.9, 20, 1.0);
-    auto e = compute_mode_weights(h, WeightType::EPSILON_GREEDY, 0.9, 20, 1.0);
-
-    check(close_to(u["constant_velocity"], 1.0 / 3.0, 1e-12),
-          "UNIFORM is genuinely uniform (1/M)");
-    check(!close_to(u["lane_change_left"], f["lane_change_left"], 1e-6),
-          "UNIFORM != FREQUENCY (zero-mask regression would collapse them)");
-    check(e["lane_change_left"] > f["lane_change_left"],
-          "EPSILON_GREEDY lifts the unobserved mode above FREQUENCY");
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +204,7 @@ static void test_markov_sampling_switches_within_horizon() {
     std::mt19937 rng(12345);
     ModeBeliefConfig cfg;  // alpha=1, kappa=2
     auto scenarios = sample_scenarios_markov(
-        obstacles, hists, nullptr, 15, 200, WeightType::FREQUENCY, cfg, &rng
+        obstacles, hists, nullptr, 15, 200, cfg, &rng
     );
     check(scenarios.size() == 200, "markov sampler returns the requested budget");
 
@@ -258,9 +240,9 @@ static void test_qstar_override_seeds_chain() {
     ModeBeliefConfig cfg;
     std::mt19937 rng_a(7), rng_b(7);
     auto with_q = sample_scenarios_markov(
-        obstacles, hists, &qstar, 15, 200, WeightType::FREQUENCY, cfg, &rng_a);
+        obstacles, hists, &qstar, 15, 200, cfg, &rng_a);
     auto without_q = sample_scenarios_markov(
-        obstacles, hists, nullptr, 15, 200, WeightType::FREQUENCY, cfg, &rng_b);
+        obstacles, hists, nullptr, 15, 200, cfg, &rng_b);
 
     auto count_label = [](const std::vector<Scenario>& v, const std::string& m) {
         int n = 0;
@@ -437,6 +419,88 @@ static void test_slack_budget_collapse() {
     check(std::isfinite(e.likelihood_ratio_bound()), "...so L stays finite");
 }
 
+// ---------------------------------------------------------------------------
+// 10. One-step predictive flag: predict_before_first_sample controls whether
+//     mode_0 is drawn from pi_0 (raw belief) or pi_1 = T^T pi_0 (predictive).
+// ---------------------------------------------------------------------------
+static void test_predict_before_first_sample_flag() {
+    std::vector<std::string> modes = {"a", "b"};
+    Eigen::MatrixXd T(2, 2);
+    T << 0.2, 0.8,   // a -> mostly b
+         0.5, 0.5;
+    ModeDistribution pi0 = {{"a", 1.0}, {"b", 0.0}};       // point mass on a
+    auto pi1 = predict_mode_belief(pi0, T, modes);          // = T[a,:] = [0.2, 0.8]
+    check(close_to(pi1["a"], 0.2, 1e-12) && close_to(pi1["b"], 0.8, 1e-12),
+          "predict_mode_belief = T^T pi_0 (one-step predictive)");
+
+    std::mt19937 rng(1);
+    const int N = 20000;
+    int a_true = 0, a_false = 0;
+    for (int i = 0; i < N; ++i) {
+        if (sample_mode_sequence(pi0, T, modes, 1, rng, /*predict=*/true)[0]  == "a") ++a_true;
+        if (sample_mode_sequence(pi0, T, modes, 1, rng, /*predict=*/false)[0] == "a") ++a_false;
+    }
+    check(std::abs((double)a_true / N - 0.2) < 0.02,
+          "predict_before_first_sample=true: mode_0 ~ pi_1 (one-step predictive)");
+    check(std::abs((double)a_false / N - 1.0) < 1e-9,
+          "predict_before_first_sample=false: mode_0 ~ pi_0 (raw belief)");
+}
+
+// ---------------------------------------------------------------------------
+// 11. Markov sampler: the STORED first-step probability must equal the actual
+//     sampling law (no one-step skew). At horizon 1, trajectory.mode_id == mode_0
+//     and trajectory.probability == pi_1[mode_0], so for every first mode the
+//     stored probability must equal its empirical sampling frequency.
+// ---------------------------------------------------------------------------
+static void test_markov_first_step_prob_alignment() {
+    auto lib = make_library();
+    std::map<int, ObstacleState> obstacles;
+    obstacles[0] = ObstacleState(5.0, 0.0, 0.5, 0.0);
+
+    // History where constant_velocity is always followed by turn_left, so the cv
+    // transition row (hence pi_1) spreads mass well away from the pi_0 point mass.
+    ModeHistory h(0, lib, 0);
+    const char* seq[] = {"constant_velocity", "turn_left", "constant_velocity", "turn_left",
+                         "constant_velocity", "turn_left", "constant_velocity", "turn_left"};
+    for (int t = 0; t < 8; ++t) h.record_observation(t, seq[t]);
+    std::map<int, ModeHistory> hists; hists[0] = h;
+
+    // pi_0 = point mass on constant_velocity via the Q* override.
+    std::map<int, std::map<std::string, double>> qstar;
+    qstar[0]["constant_velocity"] = 1.0;
+    qstar[0]["turn_left"] = 0.0;
+    qstar[0]["lane_change_left"] = 0.0;
+
+    ModeBeliefConfig cfg;
+    std::mt19937 rng(2024);
+    const int N = 4000;
+    // horizon = 1  =>  mode_id == mode_0 and probability == pi_1[mode_0].
+    auto scen = sample_scenarios_markov(obstacles, hists, &qstar, 1, N, cfg, &rng);
+    check((int)scen.size() == N, "alignment: markov sampler returns the requested budget");
+
+    std::map<std::string, int> freq;
+    std::map<std::string, double> stored;
+    for (const auto& sc : scen) {
+        const auto& traj = sc.trajectories.at(0);
+        freq[traj.mode_id]++;
+        stored[traj.mode_id] = traj.probability;  // constant per mode = pi_1[mode]
+    }
+    // (i) The predictive was applied: pi_0 is a point mass on cv, yet the first mode is
+    // spread (pi_1 = T[cv,:]), so cv is NOT drawn every time. Under the OLD (buggy)
+    // sampling-from-pi_0, cv would appear in all N trajectories.
+    check(freq["constant_velocity"] < N,
+          "alignment: mode_0 drawn from the one-step predictive, not the raw belief");
+    // (ii) For every first mode, stored probability == empirical sampling frequency
+    //      => the recorded trajectory_prob is the true likelihood of the sampled mode.
+    bool aligned = true;
+    for (const auto& [m, c] : freq) {
+        const double emp = (double)c / N;
+        if (std::abs(emp - stored[m]) > 0.03) { aligned = false;
+            std::cout << "    mode " << m << ": emp=" << emp << " stored=" << stored[m] << "\n"; }
+    }
+    check(aligned, "alignment: stored first-step probability == empirical sampling frequency");
+}
+
 int main() {
     test_entropic_full_support();
     test_entropic_frontier_monotone();
@@ -446,12 +510,13 @@ int main() {
     test_theta_roundtrip_through_estimator();
     test_dirichlet_posterior_mean();
     test_alpha_is_live();
-    test_estimators_are_distinct();
     test_transition_matrix();
     test_prediction_reaches_unobserved_mode();
     test_bayes_update();
     test_markov_sampling_switches_within_horizon();
     test_qstar_override_seeds_chain();
+    test_predict_before_first_sample_flag();
+    test_markov_first_step_prob_alignment();
 
     if (g_failures == 0) {
         std::cout << "All mode-belief tests passed.\n";

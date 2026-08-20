@@ -141,7 +141,6 @@ static ExperimentConfig make_config(Method method, double switch_prob, double ra
     cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
-    cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
     cfg.dro.enabled = false;
     cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = 0.1;
@@ -158,11 +157,11 @@ static ExperimentConfig make_config(Method method, double switch_prob, double ra
             break;
         case Method::WDRO_INJECTION:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
         case Method::WDRO_COMBINED:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::DRO;
+            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
     }
     return cfg;
@@ -437,7 +436,7 @@ static void run_exp_d() {
     const int N_ROLLOUTS = 1000;
     // K values: 0=no injection (base+DRO weights only), 1..5=top-K, -1=all modes
     const std::vector<int> K_VALUES = {0, 1, 2, 3, 5, -1};
-    const std::vector<InjectionMode> INJ_MODES = {InjectionMode::DRO, InjectionMode::ADVERSARIAL};
+    const std::vector<InjectionMode> INJ_MODES = {InjectionMode::TOP_RISK_INJECT, InjectionMode::TOP_RISK_INJECT};
 
     std::string filepath = OUTPUT_DIR + "dro_injection_count_sweep.csv";
     std::ofstream ofs(filepath);
@@ -447,7 +446,7 @@ static void run_exp_d() {
         << "mean_dro_injected,n_rollouts\n";
 
     for (auto inj_mode : INJ_MODES) {
-        std::string mode_label = (inj_mode == InjectionMode::DRO) ? "DRO" : "ADVERSARIAL";
+        std::string mode_label = (inj_mode == InjectionMode::TOP_RISK_INJECT) ? "DRO" : "ADVERSARIAL";
 
         for (int K : K_VALUES) {
             std::string k_label = (K < 0) ? "all" : std::to_string(K);
@@ -484,7 +483,6 @@ static void run_exp_d() {
                 cfg.mpc.constraints.safe_horizon_min = SAFE_HORIZON_MIN;
                 cfg.environment.path_completion_termination = true;
                 cfg.environment.path_completion_fraction = 0.95;
-                cfg.mpc.sampling.weight_type = WeightType::FREQUENCY;
                 cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
                 cfg.obstacles.num_obstacles = 1;
                 cfg.obstacles.obstacles_per_class = 1;
