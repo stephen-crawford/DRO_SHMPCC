@@ -1,23 +1,20 @@
 // True Wasserstein-metric reweighting via the primal optimal-transport LP.
-//
-// The existing WassersteinDRO recovers Q* with a dual + greedy deterministic
-// transport (each source ships ALL its mass to one destination, then two extreme
-// plans are convex-mixed to meet the rho budget). That is a heuristic primal
-// recovery. This module instead solves the genuine primal OT linear program
+//This module solves the genuine primal OT linear program
 //
 //     max_{pi >= 0}  sum_{i,j} pi_ij * r_j
 //     s.t.  sum_j pi_ij = p_i           for all i   (source marginals fixed)
 //           sum_{i,j} pi_ij * D_ij <= rho            (Wasserstein budget)
 //
-// and returns Q*_j = sum_i pi_ij. Unlike the greedy recovery, the LP permits a
-// single source to SPLIT its mass fractionally across destinations, which is the
+// and returns q*_j = sum_i pi_ij. 
+// 
+// LP permits a single source to SPLIT its mass fractionally across destinations, which is the
 // true OT optimum when several (symmetric) modes tie at the optimal dual price.
 //
 // Solved with a self-contained two-phase dense simplex (Bland's rule for
 // anti-cycling). Problem size here is tiny (M^2+1 vars, M+1 rows), so this is
 // exact and fast.
-#ifndef SCENARIO_MPC_PRIMAL_OT_HPP
-#define SCENARIO_MPC_PRIMAL_OT_HPP
+#ifndef DRO_MPC_PRIMAL_OT_HPP
+#define DRO_MPC_PRIMAL_OT_HPP
 
 #include <map>
 #include <string>
@@ -43,4 +40,4 @@ PrimalOTResult solve_primal_ot(
 
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_PRIMAL_OT_HPP
+#endif  // DRO_MPC_PRIMAL_OT_HPP

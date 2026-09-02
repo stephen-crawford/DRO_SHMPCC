@@ -29,8 +29,8 @@ int main(){
     ReferencePath path=ReferencePath::create_s_curve(S_CURVE_LENGTH,S_CURVE_AMPLITUDE,S_CURVE_POINTS);
     ExperimentConfig b=mk(path,place_oncoming(path,0.0));
 
-    ExperimentConfig base_cfg=b; base_cfg.dro.enabled = false; base_cfg.dro.injection_mode=InjectionMode::NONE;
-    ExperimentConfig wdro=b; wdro.dro.enabled = true; wdro.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;
+    ExperimentConfig base_cfg=b; base_cfg.dro.enabled = false;
+    ExperimentConfig wdro=b; wdro.dro.enabled = true;
 
     std::printf("### Ablation confound check (offset 0, road ON, S=40, N=%d) ###\n", N);
     double tb=rate(base_cfg,N); std::printf("  base      (DRO off, injection NONE)                   coll=%.3f\n", tb);

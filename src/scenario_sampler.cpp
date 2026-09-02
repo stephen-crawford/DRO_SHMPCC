@@ -116,7 +116,7 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
     // predict_mode_belief). predict_before_first_sample=true is REQUIRED here: with the
     // default (false) mode_0 would be drawn from the raw belief pi_0 while its stored
     // probability used pi_1, misaligning the sampling law and the recorded trajectory_prob
-    // by exactly one step. (The DRO risk-vector path in wasserstein_dro.cpp deliberately
+    // by exactly one step. (The DRO risk-vector path in dro.cpp deliberately
     // uses false + a point-mass belief and stores no sequence probability, so it is exempt.)
     auto sequence = sample_mode_sequence(
         mode_belief,
@@ -204,7 +204,6 @@ std::vector<Scenario> sample_scenarios(
     int horizon,
     int num_scenarios,
     const ModeBeliefConfig& mode_belief,
-    int current_timestep,
     std::mt19937* rng
 ) {
     // Create local RNG if not provided
@@ -215,6 +214,35 @@ std::vector<Scenario> sample_scenarios(
         rng = &local_rng;
     }
 
+    // Per-obstacle nominal belief, built ONCE. p̂ depends only on history +
+    // the Dirichlet prior, not on the scenario index, so hoisting this out of
+    // the s-loop is exact — it only removes redundant work.
+    struct ObsPlan {
+        bool stationary = true;
+        ModeDistribution weights;
+        const std::map<std::string, ModeModel>* available_modes = nullptr;
+    };
+    std::map<int, ObsPlan> plans;
+
+    for (const auto& [obs_id, obs_state] : obstacles) {
+        ObsPlan plan;
+        auto hist_it = mode_histories.find(obs_id);
+        if (hist_it == mode_histories.end()) {
+            plans[obs_id] = plan;  // stationary
+            continue;
+        }
+        const ModeHistory& mode_history = hist_it->second;
+        ModeDistribution weights = compute_mode_weights(mode_history, mode_belief);
+        if (weights.empty()) {
+            plans[obs_id] = plan;  // cold start -> stationary
+            continue;
+        }
+        plan.weights = std::move(weights);
+        plan.available_modes = &mode_history.available_modes;
+        plan.stationary = false;
+        plans[obs_id] = std::move(plan);
+    }
+
     std::vector<Scenario> scenarios;
     scenarios.reserve(num_scenarios);
 
@@ -222,36 +250,17 @@ std::vector<Scenario> sample_scenarios(
         std::map<int, ObstacleTrajectory> trajectories;
 
         for (const auto& [obs_id, obs_state] : obstacles) {
-            auto hist_it = mode_histories.find(obs_id);
-            if (hist_it == mode_histories.end()) {
-                // No mode history — treat as stationary
+            const ObsPlan& plan = plans[obs_id];
+            if (plan.stationary) {
                 trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
-
-            const ModeHistory& mode_history = hist_it->second;
-
-            // Step 1: Compute mode weights
-            auto mode_weights = compute_mode_weights(
-                mode_history, mode_belief, current_timestep
-            );
-
-            if (mode_weights.empty()) {
-                // No modes observed yet — treat as stationary
-                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
-                continue;
-            }
-
-            // Step 2 & 3 & 4: Sample trajectory
-            ObstacleTrajectory trajectory = sample_obstacle_trajectory(
-                obs_id, obs_state, mode_history.available_modes, mode_weights,
+            trajectories[obs_id] = sample_obstacle_trajectory(
+                obs_id, obs_state, *plan.available_modes, plan.weights,
                 horizon, *rng
             );
-
-            trajectories[obs_id] = trajectory;
         }
 
-        // Compute scenario probability as product of trajectory probabilities
         double scenario_prob = 1.0;
         for (const auto& [_, traj] : trajectories) {
             scenario_prob *= traj.probability;
@@ -269,10 +278,8 @@ std::vector<Scenario> sample_scenarios_with_weights(
     const std::map<int, std::map<std::string, double>>& per_obstacle_weights,
     int horizon,
     int num_scenarios,
-    bool ensure_mode_coverage,
     std::mt19937* rng
 ) {
-    // Create local RNG if not provided
     std::mt19937 local_rng;
     if (rng == nullptr) {
         std::random_device rd;
@@ -280,107 +287,46 @@ std::vector<Scenario> sample_scenarios_with_weights(
         rng = &local_rng;
     }
 
-    // Determine mode coverage requirements
-    int num_coverage = 0;
-    struct ObsCoverageInfo {
-        std::map<std::string, double> weights;
-        std::vector<std::string> coverage_modes;
+    // Caller already computed the categorical (q*, custom, or p̂). Cache the
+    // per-obstacle lookup once; it does not depend on the scenario index.
+    struct ObsPlan {
+        bool stationary = true;
+        ModeDistribution weights;
+        const std::map<std::string, ModeModel>* available_modes = nullptr;
     };
-    std::map<int, ObsCoverageInfo> obs_info;
+    std::map<int, ObsPlan> plans;
 
     for (const auto& [obs_id, obs_state] : obstacles) {
+        ObsPlan plan;
         auto weight_it = per_obstacle_weights.find(obs_id);
-        if (weight_it == per_obstacle_weights.end()) continue;
         auto hist_it = mode_histories.find(obs_id);
-        if (hist_it == mode_histories.end()) continue;
-
-        ObsCoverageInfo info;
-        info.weights = weight_it->second;
-        if (ensure_mode_coverage) {
-            for (const auto& [mode_id, w] : info.weights) {
-                if (w > 0.0) {
-                    info.coverage_modes.push_back(mode_id);
-                }
-            }
-            num_coverage = std::max(num_coverage,
-                static_cast<int>(info.coverage_modes.size()));
+        if (weight_it == per_obstacle_weights.end() || hist_it == mode_histories.end()
+            || weight_it->second.empty()) {
+            plans[obs_id] = plan;  // stationary
+            continue;
         }
-        obs_info[obs_id] = std::move(info);
-    }
-
-    if (ensure_mode_coverage) {
-        num_coverage = std::min(num_coverage, num_scenarios);
+        plan.weights = weight_it->second;
+        plan.available_modes = &hist_it->second.available_modes;
+        plan.stationary = false;
+        plans[obs_id] = std::move(plan);
     }
 
     std::vector<Scenario> scenarios;
     scenarios.reserve(num_scenarios);
 
-    // Phase 1: Coverage scenarios (if enabled)
-    for (int s = 0; s < num_coverage; ++s) {
+    for (int s = 0; s < num_scenarios; ++s) {
         std::map<int, ObstacleTrajectory> trajectories;
-
         for (const auto& [obs_id, obs_state] : obstacles) {
-            auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) {
+            const ObsPlan& plan = plans[obs_id];
+            if (plan.stationary) {
                 trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
-            const auto& info = info_it->second;
-            auto hist_it = mode_histories.find(obs_id);
-            const ModeHistory& mode_history = hist_it->second;
-
-            if (s < static_cast<int>(info.coverage_modes.size())) {
-                // Force this specific mode
-                std::map<std::string, double> forced_weights;
-                for (const auto& [mode_id, _] : info.weights) {
-                    forced_weights[mode_id] = 0.0;
-                }
-                forced_weights[info.coverage_modes[s]] = 1.0;
-
-                ObstacleTrajectory trajectory = sample_obstacle_trajectory(
-                    obs_id, obs_state, mode_history.available_modes, forced_weights,
-                    horizon, *rng
-                );
-                trajectory.probability = info.weights.at(info.coverage_modes[s]);
-                trajectories[obs_id] = trajectory;
-            } else {
-                // Sample normally with provided weights
-                ObstacleTrajectory trajectory = sample_obstacle_trajectory(
-                    obs_id, obs_state, mode_history.available_modes, info.weights,
-                    horizon, *rng
-                );
-                trajectories[obs_id] = trajectory;
-            }
-        }
-
-        double scenario_prob = 1.0;
-        for (const auto& [_, traj] : trajectories) {
-            scenario_prob *= traj.probability;
-        }
-        scenarios.emplace_back(s, trajectories, scenario_prob);
-    }
-
-    // Phase 2: Remaining scenarios — sample with provided weights
-    for (int s = num_coverage; s < num_scenarios; ++s) {
-        std::map<int, ObstacleTrajectory> trajectories;
-
-        for (const auto& [obs_id, obs_state] : obstacles) {
-            auto info_it = obs_info.find(obs_id);
-            if (info_it == obs_info.end()) {
-                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
-                continue;
-            }
-            const auto& info = info_it->second;
-            auto hist_it = mode_histories.find(obs_id);
-            const ModeHistory& mode_history = hist_it->second;
-
-            ObstacleTrajectory trajectory = sample_obstacle_trajectory(
-                obs_id, obs_state, mode_history.available_modes, info.weights,
+            trajectories[obs_id] = sample_obstacle_trajectory(
+                obs_id, obs_state, *plan.available_modes, plan.weights,
                 horizon, *rng
             );
-            trajectories[obs_id] = trajectory;
         }
-
         double scenario_prob = 1.0;
         for (const auto& [_, traj] : trajectories) {
             scenario_prob *= traj.probability;

@@ -5,8 +5,12 @@
  * Owns controller settings only:
  *   - Ego vehicle specification (geometry + kinematic limits)
  *   - MPC type, horizon, objective, constraints, sampling / belief
- *   - DRO on/off, injection, risk measure, ground cost, ambiguity radius, OT
+ *   - DRO on/off, risk measure, ground cost, ambiguity radius, OT
  *   - QP / SQP solver knobs
+ *
+ * Numeric defaults MUST match configs/default.yaml (the runtime source of
+ * truth). In-class initializers exist only as a fallback when that file
+ * cannot be loaded.
  *
  * World setup (obstacles, environment, rollout protocol) lives in
  * experiment_harness.hpp.
@@ -15,9 +19,6 @@
  *   config.hpp             — controller runtime (RuntimeConfig = mpc + dro + solver)
  *   experiment_harness.hpp — world / trial protocol (ExperimentConfig wraps the above)
  *
- * The core vocabulary enums (DROGroundCostType, DRORiskMeasure,
- * DirichletPrior, ModeBeliefConfig) are defined once in types.hpp and reused
- * here — they are NOT redefined.
  */
 
 #ifndef DRO_MPC_CONFIG_HPP
@@ -36,22 +37,25 @@ namespace dro_mpc {
 // MPC type
 // ============================================================================
 
-enum class MPCConfiguration {
+enum class MPCType {
     MPC,     // Point-to-point / goal-tracking
     MPCC,    // Contouring control (path following)
     SH_MPC,  // Safe-horizon MPC
     SH_MPCC  // Safe-horizon MPCC
 };
 
-inline std::string mpc_configuration_name(MPCConfiguration t) {
+inline std::string mpc_type_name(MPCType t) {
     switch (t) {
-        case MPCConfiguration::MPC:     return "mpc";
-        case MPCConfiguration::MPCC:    return "mpcc";
-        case MPCConfiguration::SH_MPC:  return "sh_mpc";
-        case MPCConfiguration::SH_MPCC: return "sh_mpcc";
+        case MPCType::MPC:     return "mpc";
+        case MPCType::MPCC:    return "mpcc";
+        case MPCType::SH_MPC:  return "sh_mpc";
+        case MPCType::SH_MPCC: return "sh_mpcc";
         default: return "unknown";
     }
 }
+
+/// Compatibility alias used by paper-arm helpers.
+using MPCConfiguration = MPCType;
 
 /// @brief Safe-horizon truncation rule: how many stages N_s <= N receive
 /// collision constraints, given S sampled scenarios. Declared before use below.
@@ -86,24 +90,20 @@ struct MPCConstraintSettings {
 
     // Safe-horizon knobs — active only for SH_MPC / SH_MPCC
     int safe_horizon_min = 12;
-    // Default: FIXED_NBAR — de Groot's certified strategy (fixed, horizon-
-    // independent support cap n̄). It carries a real P(collision) ≤ eps @ conf.
-    // 1-beta guarantee, but needs ~1e3 scenarios to clear its bound, so it
-    // truncates to safe_horizon_min for typical S. For an uncertified horizon
-    // that scales smoothly with the sample budget, select UNCERTIFIED_PRACTICAL explicitly.
     SafeHorizonTruncationRule safe_horizon_mode = SafeHorizonTruncationRule::FIXED_NBAR;
     int forced_safe_horizon = -1;
 
+    /// Drop collision half-spaces whose linearization point is farther than this
+    /// from the reference (metres). Does not affect scenario dominance pruning.
+    double clearance_filter_distance = 20.0;
+
     /// de Groot support cap n̄: an upper limit on the number of DISTINCT SUPPORT
     /// SCENARIOS (counted by unique scenario_id), NOT individual collision constraints.
-    /// A scenario contributes ONE element to the support set even if many of its
-    /// (obstacle, step, disc) constraints are active. In de Groot's nonconvex SQP the
-    /// support estimate is the UNION of active scenario IDs across all feasible convex
+    /// Support estimate is the UNION of active scenario IDs across all feasible convex
     /// iterations, n̂ = |∪_ℓ ω_active^ℓ| (with C ⊆ Ĉ, n ≤ n̂), not just the constraints
     /// active at the final optimum. This is the NON-REMOVED support cap: with a removal
     /// budget R the TOTAL support limit is n̄ + R (removed scenarios join the support,
-    /// de Groot Thm. 5) — set num_removal, do NOT fold R into this field (double-count).
-    /// Used by the FIXED_NBAR / de Groot Eq. 8 sample bound. Default 5.
+    /// de Groot Thm. 5)
     int support_cap_nbar = 5;
 };
 
@@ -134,7 +134,7 @@ struct EgoDynamicsConfig {
     double min_velocity = 0.0;       // Hard lower velocity bound [m/s]
     double max_acceleration = 3.0;   // Maximum acceleration [m/s^2]
     double min_acceleration = -5.0;  // Minimum acceleration (braking) [m/s^2]
-    double max_steering_rate = 0.8;  // Maximum steering rate [rad/s]
+    double max_omega = 0.8;  // Maximum angular velocity [rad/s]
 };
 
 /**
@@ -180,27 +180,18 @@ inline ModeBeliefConfig make_mode_belief(
  * effect when the corresponding flags / kinds are selected.
  */
 struct ScenarioSamplingSettings {
-    int num_scenarios = 20; // Samples per step (default operating point; S-sweeps override this)
-    // The TWO distinct probabilities in the de Groot bound (do not conflate them):
-    //   one_minus_chance_constraint_violation_probability = 1 - eps = required per-decision
-    //     SAFETY probability. eps = 1 - this (see epsilon()). NOT the certificate confidence.
+    int num_scenarios = 40; // Samples per step (default operating point; S-sweeps override this)
+
     double one_minus_chance_constraint_violation_probability = 0.95; // = 1 - eps  (safety prob)
-    //   chance_of_certificate_violation = beta = the certificate FAILURE probability; the
-    //     certificate holds with confidence 1 - beta. Governs how much the bound "trusts" S.
     double chance_of_certificate_violation = 0.01; // = beta  (certificate confidence = 1 - beta)
 
-    bool enforce_all_scenarios = false;
-    // Certified-S ablation switch. When true, the controller tops the sample count up
-    // to de Groot's certified requirement, compute_required_scenarios(support_cap_nbar)
-    // (exact Eq. 8 bisection). Left FALSE by default so num_scenarios is honored as-is
-    // and the S-sweep experiments keep control of their sample budget; set true only in
-    // the ablation that studies the fully certified operating point.
-    bool enforce_scenario_count = false;
+    bool enforce_certified_scenario_count = false;
+    /// Guarantee at least one i.i.d. scenario per observed mode (breaks i.i.d.
+    /// exchangeability; off by default so the scenario bound still applies).
     bool ensure_mode_coverage = false;
     int max_history_length = -1;
 
-    // Hold-mode vs Markov jump prediction over the horizon.
-    bool use_markov_mode_sampling = false;
+    bool markov_jump_system = false;
 
     NominalBeliefKind belief_kind = NominalBeliefKind::DIRICHLET;
     ModeBeliefConfig mode_belief{};
@@ -220,7 +211,7 @@ struct ScenarioSamplingSettings {
 // ============================================================================
 
 struct MPCConfig {
-    MPCConfiguration type = MPCConfiguration::SH_MPCC;
+    MPCType type = MPCType::SH_MPCC;
     int horizon = 20;
     double dt = 0.1;
 
@@ -236,19 +227,19 @@ struct MPCConfig {
     /// Call after setting `type` and before overriding those two flags by hand.
     void sync_from_type() {
         switch (type) {
-            case MPCConfiguration::MPC:
+            case MPCType::MPC:
                 safe_horizon_enabled = false;
                 enable_contouring_constraints = false;
                 break;
-            case MPCConfiguration::MPCC:
+            case MPCType::MPCC:
                 safe_horizon_enabled = false;
                 enable_contouring_constraints = true;
                 break;
-            case MPCConfiguration::SH_MPC:
+            case MPCType::SH_MPC:
                 safe_horizon_enabled = true;
                 enable_contouring_constraints = false;
                 break;
-            case MPCConfiguration::SH_MPCC:
+            case MPCType::SH_MPCC:
                 safe_horizon_enabled = true;
                 enable_contouring_constraints = true;
                 break;
@@ -259,7 +250,7 @@ struct MPCConfig {
 };
 
 // ============================================================================
-// DRO — risk / ground cost / injection vocabulary
+// DRO — risk / ground cost
 // ============================================================================
 //
 // DROGroundCostType and DRORiskMeasure are defined in types.hpp.
@@ -279,38 +270,14 @@ inline std::string risk_measure_name(DRORiskMeasure r) {
         case DRORiskMeasure::SURROGATE_VAR:            return "surrogate_var";
         case DRORiskMeasure::SURROGATE_CVAR:           return "surrogate_cvar";
         case DRORiskMeasure::SURROGATE_VAR_BONFERRONI: return "surrogate_var_bonferroni";
+        case DRORiskMeasure::BONFERRONI_VAR:           return "bonferroni_var";
+        case DRORiskMeasure::MIXTURE_VAR:              return "mixture_var";
+        case DRORiskMeasure::MIXTURE_CVAR:             return "mixture_cvar";
         case DRORiskMeasure::JOINT_VAR:                return "joint_var";
         case DRORiskMeasure::JOINT_CVAR:               return "joint_cvar";
         default: return "unknown";
     }
 }
-
-/// How the reweighted (worst-case) distribution q* is used by the controller.
-enum class ReweightedDistributionUse {
-    SAMPLING_ONLY,          //Resample all S scenarios from q*
-    INJECTION_ONLY,         //Sample nominally, inject argmax(q*) as an extra constraint
-    SAMPLING_AND_INJECTION  //Both
-};
-
-inline std::string reweighted_distribution_use_name(ReweightedDistributionUse u) {
-    switch (u) {
-        case ReweightedDistributionUse::SAMPLING_ONLY:          return "sampling_only";
-        case ReweightedDistributionUse::INJECTION_ONLY:         return "injection_only";
-        case ReweightedDistributionUse::SAMPLING_AND_INJECTION: return "sampling_and_injection";
-        default: return "unknown";
-    }
-}
-
-/// Concrete scenario-injection strategy the controller executes each step.
-enum class InjectionMode {
-    NONE,               //No DRO injection (base scenario MPC)
-    QSTAR_SAMPLE,       //Resample ALL S scenarios from the q* distribution
-    UNIFORM_COVERAGE,   //Force each observed mode to appear at least once
-    SOFTMAX_RISK,       //Sample modes via p(m) ∝ exp(tau * r_m)
-    EPSILON_GREEDY_INJ, //eps-greedy: (1-eps)*nominal + eps*uniform
-    TOP_RISK_INJECT,    //Inject top-K modes by r_m deterministically (no WDRO)
-    DIVERSE_RISK_INJECT //Inject K modes by risk*diversity (greedy facility-location)
-};
 
 // ============================================================================
 // DRO — ambiguity-radius calibration
@@ -347,22 +314,20 @@ struct RadiusCalibrationSettings {
     /// Exact W1 primal OT reweighting instead of dual-guided heuristic recovery.
     bool use_primal_ot = true;
 
-    /// Default: SURROGATE_VAR_BONFERRONI — the closed-form (linearised) Bonferroni
-    /// VaR, chosen as the default for EFFICIENCY (no per-step Monte Carlo). It is a
-    /// conservative upper bound on the joint-horizon VaR. For the non-linearised
-    /// version use BONFERRONI_VAR (union correction on the TRUE per-step Euclidean
-    /// VaR, Monte Carlo); JOINT_* are the exact correlated joint-horizon measures.
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
-    /// Ambiguity-set geometry (Schuurmans Table I, arXiv:2106.00561): selects the
-    /// divergence D(p̂,p), its finite-sample radius r(m,β), and the conic worst-case
-    /// reformulation. WASSERSTEIN (default) is the calibrated true-W1 path; the
-    /// others (TV / KL / JS / Hellinger) route through schuurmans_ambiguity.hpp.
     AmbiguityDivergence divergence = AmbiguityDivergence::WASSERSTEIN;
 
     /// Monte Carlo sample count / seed for JOINT_VAR / JOINT_CVAR (offline).
     int joint_risk_samples = 8000;
     uint64_t joint_risk_seed = 0x5150C0FFEEULL;
+
+    /// Mode-SEQUENCE sample count K for MIXTURE_VAR / MIXTURE_CVAR. Only the chain is
+    /// sampled (the noise is integrated in closed form), so K buys mixture-component
+    /// resolution rather than tail resolution and 512 is affordable in the loop.
+    /// Ignored when no transition matrix is supplied: the mixture then has one
+    /// component and MIXTURE_* collapses onto SURROGATE_*.
+    int mixture_sequence_samples = 512;
 
     double sigma_floor = 1e-6;           //Floor for directional sigma
 
@@ -372,9 +337,9 @@ struct RadiusCalibrationSettings {
 };
 
 /**
- * @brief Wasserstein-DRO solver knobs (radius, ground cost, calibration, OT).
+ * @brief DRO solver knobs (radius, ground cost, calibration, OT).
  *
- * Consumed directly by WassersteinDRO. The flat radius fields set the clamp
+ * Consumed directly by DRO. The flat radius fields set the clamp
  * band and the non-calibrated fallbacks; the nested radius_calibration holds
  * the confidence-calibrated radius parameters and the OT / risk selection.
  */
@@ -382,16 +347,8 @@ struct DROConfig {
     double base_radius = 0.1;        //Base radius rho (non-calibrated / fixed use)
     double min_radius = 0.01;        //Minimum rho (clamp floor; calibrated radius offset)
     double max_radius = 0.10;        //Maximum rho (clamp ceiling; below mode-transport collapse)
-    /// Legacy heuristic rho scaling — OFF by default. The calibrated true-W1
-    /// concentration radius (radius_calibration.use_calibrated_radius, default
-    /// true) is the default rho mode; this fallback only fires if calibration is
-    /// explicitly disabled.
-    bool adaptive_radius = false;
 
     RadiusCalibrationSettings radius_calibration;
-
-    double confidence_alpha = 1.0;   //Legacy: scaling for the 1/sqrt(n_obs) term
-    double entropy_gamma = 0.5;      //Legacy: scaling for the entropy term
 
     DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;
 };
@@ -399,47 +356,18 @@ struct DROConfig {
 /**
  * @brief Controller-facing DRO settings.
  *
- * Solver knobs live in nested `solver` (DROConfig). Enablement, how q* is used,
- * and the concrete scenario-injection strategy sit beside it.
  */
 struct DROControllerConfig {
     bool enabled = false;
 
-    /// How the reweighted distribution is used. Drives injection_mode when the
-    /// latter is left at NONE (see resolved_injection_mode()).
-    ReweightedDistributionUse reweighting = ReweightedDistributionUse::SAMPLING_ONLY;
-
-    /// Explicit injection strategy. NONE + enabled => derived from `reweighting`.
-    InjectionMode injection_mode = InjectionMode::NONE;
-    int injection_count = 1;
-    double softmax_tau = 5.0;
-    double eps_greedy_epsilon = 0.3;
-    double adversarial_sigma_scale = 1.5;
-
-    /// >0 forces a constant radius (disables calibrated / adaptive).
+    /// If > 0, disable calibrated rho and pin the ambiguity radius to this value.
     double fixed_rho = -1.0;
 
     DROConfig solver;
 
-    /// The injection strategy actually executed: the explicit one if set,
-    /// otherwise derived from how the reweighted distribution is used.
-    InjectionMode resolved_injection_mode() const {
-        if (injection_mode != InjectionMode::NONE) return injection_mode;
-        if (!enabled) return InjectionMode::NONE;
-        switch (reweighting) {
-            case ReweightedDistributionUse::SAMPLING_ONLY:
-            case ReweightedDistributionUse::SAMPLING_AND_INJECTION:
-                return InjectionMode::QSTAR_SAMPLE;
-            case ReweightedDistributionUse::INJECTION_ONLY:
-                return InjectionMode::TOP_RISK_INJECT;
-        }
-        return InjectionMode::NONE;
-    }
-
     void apply_fixed_rho() {
         if (fixed_rho <= 0.0) return;
         solver.radius_calibration.use_calibrated_radius = false;
-        solver.adaptive_radius = false;
         solver.base_radius = fixed_rho;
         solver.min_radius = std::min(solver.min_radius, fixed_rho);
         solver.max_radius = std::max(solver.max_radius, fixed_rho);
@@ -474,7 +402,7 @@ struct RuntimeConfig {
     double obstacle_radius = 0.35;
 
     double combined_radius() const {
-        return mpc.ego.radius + obstacle_radius;
+        return mpc.ego.radius + obstacle_radius + mpc.constraints.safety_margin;
     }
 
     double epsilon() const { return mpc.sampling.epsilon(); }
@@ -521,12 +449,7 @@ struct RuntimeConfig {
     /// This is the EXACT NSO bound de Groot bisects; it replaces the earlier closed-form
     /// Alamo/Campi upper bound, which over-estimated S by 15-30% (e.g. n̄=5: exact 781 vs
     /// closed-form 932 at ε=0.05, β=0.01).
-    ///
-    /// CONVENTION (chosen: non-removed cap, de Groot Thm. 5). `nonremoved_support_limit`
-    /// is n̄ EXCLUDING removed scenarios; removed scenarios are themselves support, so the
-    /// TOTAL support used in Eq. 8 is n_total = nonremoved_support_limit + num_removal. Do
-    /// NOT also fold R into the first argument, or removal is double-counted. (Paper cross-
-    /// check: ε=0.1, β=1e-6, n̄=2 gives S=288 at R=0 and S=1248 at R=20.)
+    
     int compute_required_scenarios(int nonremoved_support_limit, int num_removal = 0) const {
         const double eps  = epsilon();
         const double beta = mpc.sampling.chance_of_certificate_violation;
@@ -556,8 +479,6 @@ struct RuntimeConfig {
         ));
     }
 
-    /// Controller-design rule for choosing the collision (safe) horizon N_s from the
-    /// sample budget. NOTE: this is NOT part of de Groot's sample-complexity theorem.
     /// In de Groot, "Safe Horizon MPC" means the constraints bound the JOINT collision
     /// probability over the planned horizon; the sample requirement is horizon-independent
     /// in that it depends on the support limit n̄ rather than N explicitly. It does NOT

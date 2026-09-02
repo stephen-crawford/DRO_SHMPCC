@@ -62,10 +62,10 @@ namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
 
-static constexpr int    HORIZON         = DEFAULT_HORIZON;
-static constexpr double DT              = DEFAULT_DT;
-static constexpr int    NUM_SCENARIOS   = DEFAULT_BASE_SCENARIOS;
-static constexpr int    ROLLOUT_STEPS   = DEFAULT_ROLLOUT_STEPS;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const double    DT = DEFAULT_DT;
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS;
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;
 static constexpr int    NUM_DISCS       = 1;
 static constexpr double VEHICLE_LENGTH  = 1.5;
 static constexpr int    SAFE_HORIZON_MIN = 3;
@@ -431,7 +431,6 @@ static ExperimentConfig make_config(
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
     cfg.dro.enabled = false;
-    cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = rho;
     cfg.obstacles.num_obstacles = num_obs;
     cfg.obstacles.obstacles_per_class = 1;
@@ -444,12 +443,10 @@ static ExperimentConfig make_config(
 
         case TrajDROMethod::MODE_DRO_SAMPLE:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
 
         case TrajDROMethod::MODE_DRO_INJECT:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
 
         case TrajDROMethod::TRAJ_DRO_RESAMPLE:

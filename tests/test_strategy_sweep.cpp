@@ -116,8 +116,8 @@ static constexpr int    BATCH_SIZE     = 200;
 static constexpr int    MIN_ROLLOUTS   = 400;
 static constexpr int    MAX_ROLLOUTS   = 5000;
 static constexpr double CI_Z           = 1.96;
-static constexpr int    HORIZON        = DEFAULT_HORIZON;
-static constexpr int    NUM_SCENARIOS  = DEFAULT_BASE_SCENARIOS;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS;
 static constexpr int    NUM_DISCS      = 1;
 static constexpr double VEHICLE_LENGTH = 1.5;
 static constexpr double DRO_RHO_BASE  = 0.1;
@@ -262,7 +262,6 @@ static ExperimentConfig make_config(const StrategyDef& strat,
     }
 
     cfg.dro.enabled = (strat.enable_dro);
-    cfg.dro.injection_mode = strat.injection_mode;
     cfg.dro.solver.base_radius = DRO_RHO_BASE;
     cfg.mpc.safe_horizon_enabled = strat.safe_horizon;
 

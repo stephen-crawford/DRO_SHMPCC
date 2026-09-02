@@ -38,7 +38,6 @@ static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs, 
 struct R { double coll, lo, hi, actc; };
 static R run(ExperimentConfig cfg, bool dro, double fixed_rho, int N) {
     cfg.dro.enabled = (dro);
-    cfg.dro.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
     cfg.dro.fixed_rho = dro ? fixed_rho : -1.0;
     int c = 0; double ac = 0;
     for (int i = 0; i < N; ++i) {

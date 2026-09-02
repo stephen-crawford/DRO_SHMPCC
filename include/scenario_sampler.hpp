@@ -2,7 +2,7 @@
  * @file scenario_sampler.hpp
  * @brief Scenario sampling for adaptive scenario-based MPC.
  *
- * There are exactly TWO sampling paradigms, and only two:
+ * There are two sampling approaches:
  *
  *   (1) i.i.d. scenario sampling (de Groot 2023, arXiv:2307.01070). Each of the S
  *       scenarios is an INDEPENDENT draw: one mode per obstacle held over the horizon
@@ -18,14 +18,10 @@
  *       one-step predictive of the initial belief, then mode_k ~ T[mode_{k-1}, :].
  *       Entry point: sample_scenarios_markov.
  *
- * Older overlapping variants (independent-per-step "mode sequences", "stratified"
- * allocation, and a standalone coverage-forcing sampler) have been REMOVED — coverage
- * forcing survives only as the ensure_mode_coverage flag on the single i.i.d. sampler,
- * used for the ablation baselines that break i.i.d. on purpose.
  */
 
-#ifndef SCENARIO_MPC_SCENARIO_SAMPLER_HPP
-#define SCENARIO_MPC_SCENARIO_SAMPLER_HPP
+#ifndef DRO_MPC_SCENARIO_SAMPLER_HPP
+#define DRO_MPC_SCENARIO_SAMPLER_HPP
 
 #include "types.hpp"
 #include "mode_weights.hpp"
@@ -40,12 +36,12 @@ namespace dro_mpc {
  * Input: obstacles, mode_histories, num_scenarios S, horizon N
  * Output: List of scenarios
  *
+ * Compute per-obstacle nominal weights w_m from history once (independent of s).
  * For each scenario s = 1, ..., S:
  *     For each obstacle o:
- *         1. Compute mode weights w_m from history
- *         2. Sample mode sequence m^(s) ~ Categorical(w)
- *         3. Sample noise sequence w_k ~ N(0, I)
- *         4. Propagate trajectory using sampled modes and noise
+ *         1. Sample mode m^(s) ~ Categorical(w)  (held over the horizon)
+ *         2. Sample noise sequence w_k ~ N(0, I)
+ *         3. Propagate trajectory using the sampled mode and noise
  *
  * @param obstacles Dict mapping obstacle_id to current ObstacleState
  * @param mode_histories Dict mapping obstacle_id to ModeHistory
@@ -63,7 +59,6 @@ std::vector<Scenario> sample_scenarios(
     int horizon,
     int num_scenarios,
     const ModeBeliefConfig& mode_belief = {},
-    int current_timestep = 0,
     std::mt19937* rng = nullptr
 );
 
@@ -78,7 +73,6 @@ std::vector<Scenario> sample_scenarios(
  * @param per_obstacle_weights Pre-computed weights: obstacle_id -> {mode_id -> weight}
  * @param horizon Prediction horizon N
  * @param num_scenarios Number of scenarios to sample S
- * @param ensure_mode_coverage If true, guarantee at least one scenario per mode
  * @param rng Random number generator
  * @return List of Scenario objects
  */
@@ -88,21 +82,18 @@ std::vector<Scenario> sample_scenarios_with_weights(
     const std::map<int, std::map<std::string, double>>& per_obstacle_weights,
     int horizon,
     int num_scenarios,
-    bool ensure_mode_coverage = false,
     std::mt19937* rng = nullptr
 );
 
 /**
  * @brief Markov mode-sequence sampling with an explicit initial belief.
  *
- * The live entry point for use_markov_mode_sampling. Differs from
+ * The live entry point for markov_jump_system sampling. Differs from
  * sample_scenarios_with_mode_sequences in two ways that matter:
  *
  *  1. It accepts a per-obstacle INITIAL BELIEF. Pass the DRO Q* here and the
  *     Markov propagation starts from the reweighted distribution; pass nullptr
- *     and the belief is computed from weight_type + belief_cfg. Without this the
- *     DRO path could not use Markov sampling at all, since Q* is a weight map and
- *     sample_scenarios_with_mode_sequences takes only the belief config.
+ *     and the belief is computed from weight_type + belief_cfg. 
  *  2. The belief and transition matrix are built ONCE per obstacle rather than
  *     once per (scenario, obstacle) -- they do not depend on the scenario index,
  *     so recomputing them S times was pure waste.
@@ -122,11 +113,6 @@ std::vector<Scenario> sample_scenarios_markov(
     std::mt19937* rng = nullptr
 );
 
-// NOTE: scenario sample-complexity now lives entirely in RuntimeConfig
-// (include/config.hpp): compute_required_scenarios (exact de Groot Eq. 8 NSO
-// bisection) and compute_required_scenarios_simple (convex Calafiore-Campi). The
-// old free-function convex bound that used to live here has been removed.
-
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_SCENARIO_SAMPLER_HPP
+#endif  // DRO_MPC_SCENARIO_SAMPLER_HPP

@@ -3,7 +3,7 @@
 // is wrong. On a well-specified Dirichlet belief the recompute showed ~0 benefit. Here
 // we induce shift: the obstacle is forced into the dangerous rare mode (lane_change_left,
 // boosted_mode=-1) more often than the belief expects, and/or randomly reshuffles its
-// mode (shift.rho). If WDRO benefit grows with shift, the effect is real in-regime.
+// mode (shift.psi). If WDRO benefit grows with shift, the effect is real in-regime.
 #include "experiment_harness.hpp"
 #include "reference_path.hpp"
 #include <cstdio>
@@ -38,7 +38,6 @@ static ExperimentConfig mk(const ReferencePath& path, const ObstacleState& obs) 
 
 static double coll(ExperimentConfig cfg, bool dro, int N) {
     cfg.dro.enabled = (dro);
-    cfg.dro.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
     int c = 0;
     for (int i = 0; i < N; ++i) c += run_experiment_rollout(cfg, 3000000u + unsigned(i)).collision ? 1 : 0;
     return double(c) / N;
@@ -63,7 +62,7 @@ int main() {
     };
     for (const auto& s : grid) {
         ExperimentConfig cfg = base;
-        cfg.obstacles.shift.rho = s.rho; cfg.obstacles.shift.dangerous_boost = s.boost; cfg.obstacles.shift.boosted_mode = -1;
+        cfg.obstacles.shift.psi = s.rho; cfg.obstacles.shift.dangerous_boost = s.boost; cfg.obstacles.shift.boosted_mode = -1;
         double b = coll(cfg, false, N);
         double w = coll(cfg, true,  N);
         std::printf("%-28s %8.3f %8.3f %+8.1fpp\n", s.name, b, w, 100.0*(b - w));

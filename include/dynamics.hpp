@@ -2,11 +2,11 @@
  * @file dynamics.hpp
  * @brief Ego vehicle dynamics model.
  *
- * Implements the unicycle model with acceleration and steering rate inputs.
+ * Implements the unicycle model with acceleration and angular velocity inputs.
  */
 
-#ifndef SCENARIO_MPC_DYNAMICS_HPP
-#define SCENARIO_MPC_DYNAMICS_HPP
+#ifndef DRO_MPC_DYNAMICS_HPP
+#define DRO_MPC_DYNAMICS_HPP
 
 #include "types.hpp"
 #include "config.hpp"
@@ -40,8 +40,7 @@ class EgoDynamics {
 public:
 
     /// Motion-model spec + kinematic limits this integrator realizes.
-    /// The limits are properties of the dynamics model (SLMPC-style), not the
-    /// vehicle geometry. Accessible as ego_dynamics_.model.max_velocity, etc.
+    //  Accessible as ego_dynamics_.model.max_velocity, etc.
     EgoDynamicsConfig model;
 
     static constexpr int STATE_DIM = 4;  // [x, y, theta, v]
@@ -105,8 +104,7 @@ public:
      * @brief Roll out trajectory with algebraic spline update.
      *
      * Integrates [x,y,theta,v] via RK4, then updates the spline parameter
-     * s algebraically using the curvature-aware formula from the Python
-     * reference (ContouringSecondOrderUnicycleModel.model_discrete_dynamics).
+     * s algebraically
      *
      * @param initial_state Starting ego state (with valid s >= 0)
      * @param inputs List of EgoInput for each timestep
@@ -122,19 +120,26 @@ public:
 
     /**
      * @brief Compute Jacobians of discrete dynamics for linearization.
+     *
+     * These are the EXACT derivatives of discrete_dynamics(), i.e. of the RK4 map,
+     * obtained by propagating the variational equations through the four stages:
+     *
+     *     K_1 = J_1,  K_i = J_i (I + c_i h K_{i-1}),   A = I + (h/6) sum w_i K_i,
+     *     L_1 = F_1,  L_i = J_i (c_i h L_{i-1}) + F_i, B = (h/6) sum w_i L_i,
+     *
+     * with J_i = df/dx and F_i = df/du evaluated at stage state i, c = (-, 1/2, 1/2, 1)
+     * and w = (1, 2, 2, 1). 
+     *
      * @param state State vector [x, y, theta, v]
      * @param input Input vector [a, w]
      * @return Pair of (A, B) where x_next approx A @ x + B @ u + c
      */
     std::pair<Eigen::Matrix4d, Eigen::Matrix<double, 4, 2>>
-    get_jacobians(const Eigen::Vector4d& state, const Eigen::Vector2d& input) const;
+    get_jacobians(const Eigen::Vector4d& state, const Eigen::Vector2d& input, double dt = -1) const;
 
     /**
      * @brief Compute algebraic spline update for one timestep.
      *
-     * Uses curvature-aware formula: s_new = s + R * atan2(vt, R - e_c - vn)
-     * with blending between curvature-aware and direct tangential projection.
-     * Reference: Python ContouringSecondOrderUnicycleModel.model_discrete_dynamics
      *
      * @param prev_state Previous ego state (before integration)
      * @param next_state Next ego state (after RK4 integration)
@@ -151,6 +156,14 @@ public:
     double dt() const { return dt_; }
 
 private:
+    /// df/dx of continuous_dynamics() at (state, input).
+    Eigen::Matrix4d continuous_state_jacobian(const Eigen::Vector4d& state,
+                                              const Eigen::Vector2d& input) const;
+
+    /// df/du of continuous_dynamics() at (state, input).
+    Eigen::Matrix<double, 4, 2> continuous_input_jacobian(
+        const Eigen::Vector4d& state, const Eigen::Vector2d& input) const;
+
     double dt_;  // Timestep for discrete integration
 };
 
@@ -163,4 +176,4 @@ std::map<std::string, ModeModel> create_obstacle_mode_models(double dt = 0.1);
 
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_DYNAMICS_HPP
+#endif  // DRO_MPC_DYNAMICS_HPP

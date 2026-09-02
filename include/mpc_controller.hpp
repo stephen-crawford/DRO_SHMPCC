@@ -2,8 +2,6 @@
  * @file mpc_controller.hpp
  * @brief Adaptive Scenario-Based MPC Controller.
  *
- * Implements Algorithm 2: AdaptiveScenarioMPC
- *
  * Main control loop that:
  * 1. Samples scenarios from obstacle predictions
  * 2. Computes linearized collision constraints
@@ -12,8 +10,8 @@
  * 5. Prunes inactive scenarios
  */
 
-#ifndef SCENARIO_MPC_MPC_CONTROLLER_HPP
-#define SCENARIO_MPC_MPC_CONTROLLER_HPP
+#ifndef DRO_MPC_MPC_CONTROLLER_HPP
+#define DRO_MPC_MPC_CONTROLLER_HPP
 
 #include "types.hpp"
 #include <map>
@@ -23,7 +21,7 @@
 #include "scenario_sampler.hpp"
 #include "collision_constraints.hpp"
 #include "qp_solver.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "reference_path.hpp"
 #include <random>
 #include <chrono>
@@ -44,17 +42,17 @@ struct MPCStatistics {
 };
 
 /**
- * @brief Adaptive Scenario-Based Model Predictive Controller.
+ * @brief Model Predictive Controller.
  *
- * Implements Algorithm 2.
+ * Implements MPC controller.
  */
-class AdaptiveScenarioMPC {
+class MPCController {
 public:
     /**
      * @brief Initialize the MPC controller.
      * @param config Configuration parameters
      */
-    explicit AdaptiveScenarioMPC(const RuntimeConfig& config);
+    explicit MPCController(const RuntimeConfig& config);
 
     /**
      * @brief Initialize mode history for a new obstacle.
@@ -85,8 +83,6 @@ public:
 
     /**
      * @brief Solve the MPC problem.
-     *
-     * Algorithm 2: AdaptiveScenarioMPC
      *
      * @param ego_state Current ego vehicle state
      * @param obstacles Current obstacle states
@@ -125,7 +121,7 @@ public:
     const std::vector<Scenario>& scenarios() const { return scenarios_; }
 
     /// Get DRO module (for diagnostics)
-    const WassersteinDRO& dro() const { return dro_; }
+    const DRO& dro() const { return dro_; }
 
     /// Set reference path for MPCC contouring/lag cost (Paper Eq. 6).
     void set_reference_path(const ReferencePath& path);
@@ -247,7 +243,7 @@ private:
     std::map<int, ModeHistory> mode_histories_;
     std::map<int, int> obstacle_classes_;  // obstacle_id -> obstacle_class
     std::vector<Scenario> scenarios_;
-    WassersteinDRO dro_;
+    DRO dro_;
     std::vector<EgoState> reference_trajectory_;
     std::mt19937 rng_;
     std::vector<double> solve_times_;
@@ -264,4 +260,4 @@ private:
 
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_MPC_CONTROLLER_HPP
+#endif  // DRO_MPC_MPC_CONTROLLER_HPP

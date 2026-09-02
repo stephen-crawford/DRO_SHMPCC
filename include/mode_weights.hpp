@@ -3,15 +3,10 @@
  * @brief Mode weight computation for adaptive scenario-based MPC.
  *
  * Implements Section 4: Mode History and Weights
- *
- * Supports three weight computation strategies:
- * - Uniform: Equal weights for all modes (Eq. 4)
- * - Recency: Exponential decay weighting recent observations (Eq. 5)
- * - Frequency: Weights based on observation frequency (Eq. 6)
  */
 
-#ifndef SCENARIO_MPC_MODE_WEIGHTS_HPP
-#define SCENARIO_MPC_MODE_WEIGHTS_HPP
+#ifndef DRO_MPC_MODE_WEIGHTS_HPP
+#define DRO_MPC_MODE_WEIGHTS_HPP
 
 #include "types.hpp"
 #include <random>
@@ -40,14 +35,11 @@ using ModeDistribution = std::map<std::string, double>;
  */
 std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
-    const ModeBeliefConfig& belief = {},
-    int current_timestep = 0
+    const ModeBeliefConfig& belief = {}
 );
 
 /**
  * @brief Sample a mode sequence for the prediction horizon.
- *
- * Assumes modes are i.i.d. across timesteps (can be extended for Markov).
  *
  * @param mode_weights Weights for each mode
  * @param horizon Number of timesteps to sample

@@ -74,24 +74,72 @@ std::vector<EgoState> EgoDynamics::rollout(const EgoState& initial_state,
     return states;
 }
 
+Eigen::Matrix4d EgoDynamics::continuous_state_jacobian(
+    const Eigen::Vector4d& state,
+    const Eigen::Vector2d& /*input*/
+) const {
+    const double theta = state(2);
+    const double v = state(3);
+
+    Eigen::Matrix4d J = Eigen::Matrix4d::Zero();
+    J(0, 2) = -v * std::sin(theta);
+    J(0, 3) = std::cos(theta);
+    J(1, 2) = v * std::cos(theta);
+    J(1, 3) = std::sin(theta);
+    // dtheta/dt = w and dv/dt = a carry no state dependence, so rows 2-3 stay zero.
+    return J;
+}
+
+Eigen::Matrix<double, 4, 2> EgoDynamics::continuous_input_jacobian(
+    const Eigen::Vector4d& /*state*/,
+    const Eigen::Vector2d& /*input*/
+) const {
+    Eigen::Matrix<double, 4, 2> F = Eigen::Matrix<double, 4, 2>::Zero();
+    F(2, 1) = 1.0;  // dtheta/dt = w
+    F(3, 0) = 1.0;  // dv/dt = a
+    return F;
+}
+
 std::pair<Eigen::Matrix4d, Eigen::Matrix<double, 4, 2>>
 EgoDynamics::get_jacobians(const Eigen::Vector4d& state,
-                           const Eigen::Vector2d& input) const {
-    double theta = state(2);
-    double v = state(3);
-    double dt = dt_;
+                           const Eigen::Vector2d& input,
+                           double dt) const {
 
-    // Jacobian w.r.t. state (using RK4 approximation)
-    Eigen::Matrix4d A = Eigen::Matrix4d::Identity();
-    A(0, 2) = -v * std::sin(theta) * dt;
-    A(0, 3) = std::cos(theta) * dt;
-    A(1, 2) = v * std::cos(theta) * dt;
-    A(1, 3) = std::sin(theta) * dt;
+    const double h = dt < 0 ? dt_ : dt;
+    const Eigen::Matrix4d I = Eigen::Matrix4d::Identity();
 
-    // Jacobian w.r.t. input
-    Eigen::Matrix<double, 4, 2> B = Eigen::Matrix<double, 4, 2>::Zero();
-    B(2, 1) = dt;  // theta depends on w
-    B(3, 0) = dt;  // v depends on a
+    // Stage states; these MUST mirror discrete_dynamics() exactly or the returned
+    // Jacobians are the derivative of a different map than the one being rolled out.
+    const Eigen::Vector4d k1 = continuous_dynamics(state, input);
+    const Eigen::Vector4d s2 = state + (h / 2) * k1;
+    const Eigen::Vector4d k2 = continuous_dynamics(s2, input);
+    const Eigen::Vector4d s3 = state + (h / 2) * k2;
+    const Eigen::Vector4d k3 = continuous_dynamics(s3, input);
+    const Eigen::Vector4d s4 = state + h * k3;
+
+    const Eigen::Matrix4d J1 = continuous_state_jacobian(state, input);
+    const Eigen::Matrix4d J2 = continuous_state_jacobian(s2, input);
+    const Eigen::Matrix4d J3 = continuous_state_jacobian(s3, input);
+    const Eigen::Matrix4d J4 = continuous_state_jacobian(s4, input);
+
+    // d(k_i)/d(state): each stage state depends on the previous stage slope.
+    const Eigen::Matrix4d K1 = J1;
+    const Eigen::Matrix4d K2 = J2 * (I + (h / 2) * K1);
+    const Eigen::Matrix4d K3 = J3 * (I + (h / 2) * K2);
+    const Eigen::Matrix4d K4 = J4 * (I + h * K3);
+    const Eigen::Matrix4d A = I + (h / 6) * (K1 + 2 * K2 + 2 * K3 + K4);
+
+    // d(k_i)/d(input): u enters each stage directly (F_i) AND through the stage state.
+    const Eigen::Matrix<double, 4, 2> F1 = continuous_input_jacobian(state, input);
+    const Eigen::Matrix<double, 4, 2> F2 = continuous_input_jacobian(s2, input);
+    const Eigen::Matrix<double, 4, 2> F3 = continuous_input_jacobian(s3, input);
+    const Eigen::Matrix<double, 4, 2> F4 = continuous_input_jacobian(s4, input);
+
+    const Eigen::Matrix<double, 4, 2> L1 = F1;
+    const Eigen::Matrix<double, 4, 2> L2 = J2 * ((h / 2) * L1) + F2;
+    const Eigen::Matrix<double, 4, 2> L3 = J3 * ((h / 2) * L2) + F3;
+    const Eigen::Matrix<double, 4, 2> L4 = J4 * (h * L3) + F4;
+    const Eigen::Matrix<double, 4, 2> B = (h / 6) * (L1 + 2 * L2 + 2 * L3 + L4);
 
     return {A, B};
 }
@@ -129,14 +177,12 @@ double EgoDynamics::compute_spline_update(
     double curvature = std::max(std::abs(pp.curvature), 1e-5);
     double R = std::min(1.0 / curvature, 1e4);  // Cap radius at 10km
 
-    // Method 1: Curvature-aware formula (from C++/Python reference)
     // s_new = s + R * atan2(vt, R - contour_error - vn)
     double denominator = std::max(R - contour_error - vn, 1e-6);
     double theta_update = std::atan2(vt, denominator);
     theta_update = std::clamp(theta_update, -0.5, 0.5);
     double ds_curvature = R * theta_update;
 
-    // Method 2: Direct tangential projection
     // vt directly represents progress along the path tangent
     double ds_tangential = vt;
 

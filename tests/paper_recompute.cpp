@@ -56,7 +56,6 @@ static Res run(const ExperimentConfig& base, bool dro, bool entropic, int N) {
     for (int i = 0; i < N; ++i) {
         ExperimentConfig cfg = base;
         cfg.dro.enabled = (dro);
-        cfg.dro.injection_mode = dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
         cfg.dro.solver.radius_calibration.use_entropic_allocator = entropic;
         cfg.dro.solver.radius_calibration.entropic_tau = 0.05;
         RolloutRecord r = run_experiment_rollout(cfg, 3000000u + unsigned(i));

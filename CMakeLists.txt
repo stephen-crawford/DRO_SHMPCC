@@ -19,12 +19,14 @@ set(SCENARIO_MPC_SOURCES
     src/qp_solver.cpp
     src/reference_path.cpp
     src/scenario_sampler.cpp
-    src/wasserstein_dro.cpp
+    src/dro.cpp
 )
 
 add_library(scenario_mpc ${SCENARIO_MPC_SOURCES})
 target_include_directories(scenario_mpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(scenario_mpc PUBLIC Eigen3::Eigen)
+target_compile_definitions(scenario_mpc PUBLIC
+    DRO_MPC_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/configs/default.yaml")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(scenario_mpc PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
@@ -88,6 +90,12 @@ target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
 
 add_executable(test_mode_belief tests/test_mode_belief.cpp)
 target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
+
+add_executable(test_switching_risk tests/test_switching_risk.cpp)
+target_link_libraries(test_switching_risk PRIVATE scenario_mpc)
+
+add_executable(test_ground_cost tests/test_ground_cost.cpp)
+target_link_libraries(test_ground_cost PRIVATE scenario_mpc)
 
 add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
 target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)

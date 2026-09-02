@@ -63,8 +63,6 @@ std::optional<CollisionConstraint> compute_single_constraint(
     const Eigen::Vector2d& reference_disc_center,
     const Eigen::Vector2d& obstacle_position,
     double combined_radius,
-    const std::optional<Eigen::Vector2d>& fallback_normal =
-        std::nullopt,
     double direction_epsilon = 1e-8
 ) {
     if (!reference_disc_center.allFinite() ||
@@ -81,13 +79,8 @@ std::optional<CollisionConstraint> compute_single_constraint(
         );
     }
 
-    // Single source of truth for the half-space math: build the fixed half-space
-    // (normal n = (x_obs - c)/||.||, upper_bound = n^T x_obs - R) with make_collision_halfspace,
-    // then convert to the stored a^T p >= b form (a = -n, b = a^T x_obs + R) with
-    // halfspace_to_collision_constraint. See the notation block at the top of file.
     LinearizedCollisionHalfspace hs = make_collision_halfspace(
-        obstacle_position, reference_disc_center, combined_radius,
-        fallback_normal, direction_epsilon);
+        obstacle_position, reference_disc_center, combined_radius, direction_epsilon);
     hs.horizon_step = k;
     hs.obstacle_id  = obstacle_id;
     hs.scenario_id  = scenario_id;
@@ -110,7 +103,6 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
     for (int k = 0; k <= horizon; ++k) {
         const EgoState& ref_state = reference_trajectory[k];
 
-        // Compute ego disc positions (Eq. 16)
         std::vector<Eigen::Vector2d> disc_positions =
             compute_ego_disc_positions(ref_state, num_discs, vehicle_length);
 
@@ -122,12 +114,6 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
             const PredictionStep& obs_step = trajectory.steps[k];
             Eigen::Vector2d obs_position = obs_step.mean;
 
-            // For each disc, compute constraint. The normal a is frozen from the
-            // reference disc center (pre-solve); thread the disc index + longitudinal
-            // offset ℓ_d so build_condensed_qp can apply the heading Jacobian
-            // J_d = [[1,0,-ℓ sinθ̄],[0,1,ℓ cosθ̄]] and keep the row a proper affine
-            // half-space in the decision variables (x, y, θ). Without this the QP would
-            // translate the disc rigidly with the center and drop the O(ℓ·δθ) rotation.
             for (int d = 0; d < static_cast<int>(disc_positions.size()); ++d) {
                 auto constraint = compute_single_constraint(
                     k, obs_id, scenario.scenario_id,
@@ -197,13 +183,10 @@ std::vector<Eigen::Vector2d> compute_ego_disc_positions( // c_{k, d} = [x_k, y_k
 
     // Place discs evenly along vehicle
     std::vector<double> offsets;
-    if (num_discs > 1) {
-        double step = vehicle_length / (num_discs - 1);
-        for (int i = 0; i < num_discs; ++i) {
-            offsets.push_back(-vehicle_length / 2 + i * step);
-        }
-    } else {
-        offsets.push_back(0.0);
+   
+    double step = vehicle_length / (num_discs - 1);
+    for (int i = 0; i < num_discs; ++i) {
+        offsets.push_back(-vehicle_length / 2 + i * step);
     }
 
     for (double offset : offsets) {
@@ -520,7 +503,8 @@ namespace {
         double combined_radius,
         int num_discs,
         double vehicle_length,
-        double reachable_radius
+        double reachable_radius,
+        double reachable_radius_growth_per_step
     ) {
         if (reference_trajectory.empty()) {
             return false;
@@ -550,6 +534,13 @@ namespace {
             reachable_radius < 0.0) {
             throw std::invalid_argument(
                 "reachable_radius must be finite and nonnegative."
+            );
+        }
+    
+        if (!std::isfinite(reachable_radius_growth_per_step) ||
+            reachable_radius_growth_per_step < 0.0) {
+            throw std::invalid_argument(
+                "reachable_radius_growth_per_step must be finite and nonnegative."
             );
         }
     
@@ -586,6 +577,16 @@ namespace {
             1e-9;
     
         for (int k = 0; k <= horizon; ++k) {
+            /*
+             * Ball radius for THIS step. The planned trajectory and the reference
+             * share x_0 exactly, so the reachable displacement is ~0 at k = 0 and
+             * grows with k; a single horizon-end scalar over-estimates every
+             * earlier step and needlessly blocks pruning there.
+             */
+            const double reachable_radius_k =
+                reachable_radius
+                + reachable_radius_growth_per_step * k;
+    
             /*
              * Reconstruct exactly the same reference disc centers used by the
              * collision-constraint builder.
@@ -695,7 +696,7 @@ namespace {
                             normal2,
                             offset2,
                             reference_disc_center,
-                            reachable_radius,
+                            reachable_radius_k,
                             implication_tolerance)) {
                         return false;
                     }
@@ -727,7 +728,8 @@ namespace {
         double combined_radius,
         int num_discs,
         double vehicle_length,
-        double reachable_radius
+        double reachable_radius,
+        double reachable_radius_growth_per_step
     ) {
         if (scenarios.size() <= 1) {
             return scenarios;
@@ -764,6 +766,13 @@ namespace {
             );
         }
     
+        if (!std::isfinite(reachable_radius_growth_per_step) ||
+            reachable_radius_growth_per_step < 0.0) {
+            throw std::invalid_argument(
+                "reachable_radius_growth_per_step must be finite and nonnegative."
+            );
+        }
+    
         const int scenario_count =
             static_cast<int>(scenarios.size());
     
@@ -795,7 +804,8 @@ namespace {
                         combined_radius,
                         num_discs,
                         vehicle_length,
-                        reachable_radius
+                        reachable_radius,
+                        reachable_radius_growth_per_step
                     );
     
                 const bool j_dominates_i =
@@ -806,7 +816,8 @@ namespace {
                         combined_radius,
                         num_discs,
                         vehicle_length,
-                        reachable_radius
+                        reachable_radius,
+                        reachable_radius_growth_per_step
                     );
     
                 if (i_dominates_j) {
@@ -1096,6 +1107,29 @@ AffineDiscConstraint linearize_disc_halfspace(
                       - halfspace.normal.dot(halfspace.reference_disc_center)
                       + out.coefficients.dot(xbar);
     return out;
+}
+
+DiscConstraintRow linearize_constraint_at_state(
+    const CollisionConstraint& constraint,
+    const EgoState& state
+) {
+    const double ell = constraint.disc_offset;
+    const double theta = state.theta;
+    const double c = std::cos(theta);
+    const double s = std::sin(theta);
+
+    // Exact nonlinear disc centre at this state -- the same expression
+    // constraint_disc_center() uses, so the QP anchor and the feasibility check
+    // agree on what "clearance" means.
+    const Eigen::Vector2d disc_center = state.position() + ell * Eigen::Vector2d(c, s);
+
+    DiscConstraintRow row;
+    row.value = constraint.evaluate(disc_center);
+    // d(a^T c_d)/d(p_x, p_y, theta) = a^T J_d,  J_d = [[1,0,-l sin th],[0,1, l cos th]].
+    row.gradient << constraint.a.x(),
+                    constraint.a.y(),
+                    constraint.a.dot(Eigen::Vector2d(-ell * s, ell * c));
+    return row;
 }
 
 CollisionConstraint halfspace_to_collision_constraint(

@@ -8,8 +8,8 @@
  * - Custom waypoint paths
  */
 
-#ifndef SCENARIO_MPC_REFERENCE_PATH_HPP
-#define SCENARIO_MPC_REFERENCE_PATH_HPP
+#ifndef DRO_MPC_REFERENCE_PATH_HPP
+#define DRO_MPC_REFERENCE_PATH_HPP
 
 #include <Eigen/Dense>
 #include <vector>

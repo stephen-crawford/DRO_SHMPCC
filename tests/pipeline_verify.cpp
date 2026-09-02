@@ -98,7 +98,7 @@ int main() {
     check(pruned.size() <= scen_q.size() && !pruned.empty(), "dominance pruning ran (inspect the reduction above)");
 
     std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
-    RuntimeConfig cfg; cfg.dro.enabled=true; cfg.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;
+    RuntimeConfig cfg; cfg.dro.enabled=true;
     cfg.mpc.sampling.num_scenarios=40; cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
     AdaptiveScenarioMPC ctrl(cfg);
     ctrl.set_reference_path(path);

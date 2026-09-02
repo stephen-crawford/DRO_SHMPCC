@@ -72,10 +72,10 @@ static constexpr int EXP_B_ROLLOUTS = 1000;
 static constexpr int EXP_C_ROLLOUTS = 120;
 
 // Aliases for shared constants from experiment_harness.hpp
-static constexpr int    ROLLOUT_STEPS  = DEFAULT_ROLLOUT_STEPS;
-static constexpr double DT             = DEFAULT_DT;
-static constexpr int    HORIZON        = DEFAULT_HORIZON;
-static constexpr int    BASE_SCENARIOS = DEFAULT_BASE_SCENARIOS;
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;
+static const double    DT = DEFAULT_DT;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const int    BASE_SCENARIOS = DEFAULT_BASE_SCENARIOS;
 
 // Shared types (RolloutResult, EnvironmentType, SamplingBaseline,
 // run_arm_rollout helpers below wrap make_arm_config + run_configured_rollout.
@@ -863,8 +863,8 @@ static void run_experiment_g() {
 
                 if (res.success && res.first_input().has_value()) {
                     auto inp = res.first_input().value();
-                    rollout_effort += inp.a * inp.a + inp.delta * inp.delta;
-                    steer_inputs.push_back(inp.delta);
+                    rollout_effort += inp.a * inp.a + inp.omega * inp.omega;
+                    steer_inputs.push_back(inp.omega);
                     ego = dynamics.propagate(ego, inp);
                 }
                 osim.step(DT, rng);
@@ -2245,7 +2245,6 @@ static void run_experiment_z() {
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
             cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
-            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
             cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = 1;

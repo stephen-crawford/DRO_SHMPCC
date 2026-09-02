@@ -1,0 +1,100 @@
+# Canonical base settings for dro_shmpcc.
+# load_experiment_config() starts from this file, then overlays the requested YAML.
+# C++ in-class initializers are last-resort fallbacks that MUST match this file.
+
+# --- MPC / type / horizon ---
+mpc_type: sh_mpcc
+horizon: 20
+dt: 0.1
+num_scenarios: 40
+safe_horizon_enabled: true
+enable_contouring_constraints: true
+
+# --- constraints ---
+road_width: 7.0
+safety_margin: 0.1
+enable_velocity_bounds: true
+safe_horizon_min: 12
+safe_horizon_mode: fixed_nbar
+forced_safe_horizon: -1
+support_cap_nbar: 5
+clearance_filter_distance: 20.0
+
+# --- ego geometry + dynamics ---
+ego_radius: 0.5
+ego_length: 4.0
+num_discs: 3
+max_velocity: 4.0
+min_velocity: 0.0
+max_acceleration: 3.0
+min_acceleration: -5.0
+max_omega: 0.8
+
+# --- scenario sampling / chance constraint ---
+one_minus_chance_constraint_violation_probability: 0.95
+chance_of_certificate_violation: 0.01
+enforce_certified_scenario_count: false
+ensure_mode_coverage: false
+max_history_length: -1
+markov_jump_system: false
+belief_kind: dirichlet
+self_persistence_prior: 0.8
+
+# --- DRO (off by default; overlay sets dro_enabled: true) ---
+dro_enabled: false
+fixed_rho: -1.0
+base_radius: 0.1
+min_radius: 0.01
+max_radius: 0.10
+use_calibrated_radius: true
+confidence_beta: 0.05
+alpha_one_sided: 0.95
+calibration_scale: 1.0
+use_primal_ot: true
+risk_measure: surrogate_var_bonferroni
+divergence: wasserstein
+ground_cost: w2_bures
+joint_risk_samples: 8000
+mixture_sequence_samples: 512
+sigma_floor: 1.0e-6
+use_entropic_allocator: false
+entropic_tau: 0.05
+
+# --- solver ---
+use_sqp_solver: true
+sqp_max_iterations: 5
+sqp_convergence_tol: 1.0e-3
+qp_max_iterations: 200
+qp_tolerance: 1.0e-4
+
+# --- obstacles / ground-truth process ---
+obstacle_radius: 0.35
+num_obstacles: 1
+num_modes: 4
+obstacles_per_class: 1
+switch_regime: hold
+switch_prob: 0.1
+obs_modes: [constant_velocity, turn_left, turn_right, decelerating]
+rare_mode: lane_change_left
+rare_switch_prob: 0.05
+obs_path_fraction: 0.35
+obs_arc_fractions: [0.20, 0.35, 0.50, 0.65]
+obstacle_process_noise: 0.02
+obstacle_speed_cap: 2.0
+shift_psi: 0.0
+shift_boost: 0.0
+boosted_mode: -1
+
+# --- environment / path ---
+environment: s_curve
+path_completion_termination: true
+path_completion_fraction: 0.95
+s_curve_length: 25.0
+s_curve_amplitude: 3.0
+s_curve_points: 200
+ego_initial_v: 1.5
+
+# --- rollout / metrics ---
+rollout_steps: 200
+scenario_tag: baseline
+metrics_v_ref: 1.5

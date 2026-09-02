@@ -29,10 +29,9 @@ namespace dro_mpc {
 /**
  * @brief Ego vehicle state: x_ego = (x, y, theta, v, s)
  *
- * The first 4 components [x, y, theta, v] are integrated via RK4.
- * The spline parameter s (arc length along reference path) is updated
- * algebraically after integration, following the Python reference
- * (ContouringSecondOrderUnicycleModel).
+ * [x, y, theta, v] integrated via RK4.
+ * Spline parameter s (arc length along reference path) is updated
+ * algebraically after integration.
  */
 struct EgoState {
     double x;      // Position x-coordinate [m]
@@ -72,18 +71,18 @@ struct EgoState {
 };
 
 /**
- * @brief Ego vehicle control input: u = (a, delta)
+ * @brief Ego vehicle control input: u = (a, omega)
  */
 struct EgoInput {
     double a;      // Acceleration [m/s^2]
-    double delta;  // Steering angle or angular velocity [rad or rad/s]
+    double omega;  // Angular velocity [rad/s]
 
-    EgoInput() : a(0), delta(0) {}
-    EgoInput(double a, double delta) : a(a), delta(delta) {}
+    EgoInput() : a(0), omega(0) {}
+    EgoInput(double a, double omega) : a(a), omega(omega) {}
 
-    /// Convert to Eigen vector [a, delta]
+    /// Convert to Eigen vector [a, omega]
     Eigen::Vector2d to_array() const {
-        return Eigen::Vector2d(a, delta);
+        return Eigen::Vector2d(a, omega);
     }
 
     /// Create from Eigen vector
@@ -278,7 +277,9 @@ struct Scenario {
     int scenario_id;                                      // Unique scenario identifier
     std::map<int, ObstacleTrajectory> trajectories;       // obstacle_id -> trajectory
     double probability = 1.0;                             // Combined probability
-    bool is_injected = false;                             // True if DRO worst-case injected (never prune)
+    /// Extra scenario supplied via AdaptiveScenarioMPC::inject_scenario (tests).
+    /// Dominance pruning never drops these.
+    bool is_injected = false;
 
     Scenario() : scenario_id(0) {}
     Scenario(int scenario_id, const std::map<int, ObstacleTrajectory>& trajectories,
@@ -346,9 +347,9 @@ struct MPCResult {
     double solve_time = 0.0;                // Optimization solve time [s]
     double cost = std::numeric_limits<double>::infinity();  // Optimal cost value
     int safe_horizon = -1;              // Truncated safe horizon used (-1 = full)
-    int num_dro_injected = 0;           // Number of DRO worst-case scenarios injected
     double constraint_construction_time = 0.0;  // Time for constraint building [s]
     double qp_solve_time = 0.0;                 // Time for QP/SQP solve [s]
+    int num_dro_injected = 0;           // Always 0; DRO now resamples from q* only
 
     MPCResult() : success(false) {}
 
@@ -363,26 +364,37 @@ struct MPCResult {
 
 /**
  * @brief Ground cost D[i][j] between two MODES for the Wasserstein ball.
+ * No intrinsic distance between the labels "turn_left" and "decelerating" 
+ * Options below give one by embedding mode m into space of predicted
+ * distributions, m ↦ {N(mu^m_k, Sigma^m_k)}_k, and measuring distance there.
+ * Modes are close when they imply similar futures.
+ * All options collapse the horizon the same way, D_ij = (1/N) sum_k d(P^i_k, P^j_k), which is safe because
+ * a mean of metrics is a metric.
  *
- * TWO WASSERSTEIN LEVELS — do not conflate the ground-cost order with the ball
- * order. The ambiguity ball itself is Wasserstein-ONE: q lives on the mode
- * simplex and W_D(q,p̂)=min_Π Σ Π_ij D_ij is LINEAR in D (that linearity is what
- * gives the single-λ Kantorovich LP dual). These enum values name only the
- * GROUND COST — the distance BETWEEN two modes — not the ball's order:
+ *   W2_BURES (default): d = W2 between the two position Gaussians,
+ *     W2^2 = ||mu_i - mu_j||^2 + Bures^2(Sigma_i, Sigma_j), with
+ *     Bures^2 = tr Si + tr Sj - 2 tr((Si^1/2 Sj Si^1/2)^1/2). The stored value is
+ *     the SQUARE ROOT — the metric, not the squared cost, which is not a metric.
+ *     Closed form, deterministic, and the canonical metric between Gaussians.
  *
- *   W2_BURES (default): D_ij = the Wasserstein-2 / BURES distance between mode i's
- *     and mode j's predicted Gaussian trajectory distributions (the √ form, i.e.
- *     the metric, not the squared cost). So the outer ball is W1 while the inner
- *     mode-to-mode metric is W2-Bures — the canonical closed-form metric between
- *     Gaussians. A categorical mode set is not a priori a metric space; embedding
- *     each mode via its dynamics into Bures–Wasserstein space supplies a genuine
- *     ground metric, on which the outer W1 ball is well defined.
+ *   W1_METRIC: d = normalised SLICED W1. Multivariate W1 has no closed form
+ *     for dim >= 2, so project both Gaussians onto directions theta (where
+ *     the 1D W1 is closed form, a folded-normal mean) and average. Scaled so equal covariances give exactly ||mu_i - mu_j||,
+ *     matching the others. Relative to W2_BURES it penalises covariance
+ *     mismatch LESS, since W1 grows linearly rather than quadratically in the
+ *     displacement.
  *
- * Keep D a proper metric (symmetric, D_ii=0, triangle inequality) so W_D stays a
- * metric and the radius keeps its meaning; ZERO_ONE ⇒ W_D = total variation.
+ *   EUCLIDEAN_MEAN: d = ||mu_i - mu_j||. Mean geometry only;. Exactly equals W2_BURES and W1_METRIC whenever the
+ *     modes share a covariance trajectory, which is the case whenever they differ
+ *     only through the affine offset b (b does not enter the covariance recursion).
+ *
+ *   ZERO_ONE: D_ij = (i != j). The discrete metric ⇒ W_D = total variation. Every
+ *     mode equidistant, so the geometry of the mode set is discarded and the worst
+ *     case moves mass to the highest-risk mode regardless of dynamic plausibility.
+ *     
  */
 enum class DROGroundCostType {
-    W1_METRIC,      // Gaussian W1 metric (ground cost between mode Gaussians)
+    W1_METRIC,      // Normalised sliced-W1 between mode Gaussians (least pessimistic metric)
     W2_BURES,       // W2 Bures distance between mode Gaussians (default); OUTER ball is still W1
     ZERO_ONE,       // D[i][j] = (i!=j) ? 1 : 0  ⇒  W_D = total variation
     EUCLIDEAN_MEAN  // ||mu_i - mu_j|| averaged over horizon (mode-to-mode)
@@ -427,34 +439,8 @@ enum class AmbiguityDivergence {
 /**
  * @brief Which risk functional the per-mode risk score r[m] reports.
  *
- * The SURROGATE_* family is the CDC'26 formulation: the violation is LINEARISED
- * (projected on the ego->obstacle mean direction, which by Cauchy-Schwarz upper
- * -bounds the true Euclidean violation, hence "conservative"), evaluated per
- * (step, disc), and aggregated with a max. That max is NOT a risk measure of the
- * trajectory: max_k VaR(V_k) <= VaR(max_k V_k). It is a per-step score under a
- * planner that enforces a JOINT bound -- the two disagree about what "risk" means.
- *
- * Two errors run in OPPOSITE directions and partially cancel:
- *   - linearisation makes the surrogate too LARGE (Vtil >= V pointwise),
- *   - max-of-marginals makes it too SMALL (max_k VaR <= VaR of max_k).
- * Which wins is scenario-dependent. For iid steps the aggregation gap is big
- * (~1.9x at 15 steps), but a real rollout is strongly correlated through A, so the
- * effective number of independent steps is far below N_s and the gap collapses.
- * Measured on the canonical 6-mode scenario, linearisation dominates and the
- * surrogate sits ~2-5% ABOVE the true joint VaR -- i.e. conservative, the safe
- * direction. Do not assume that sign holds elsewhere; it is not a theorem.
- *
- * The JOINT_* family fixes both: it is the true risk measure of the joint-horizon
- * EUCLIDEAN collision violation
- *
- *     V := max_{k=1..N_s} max_d [ R - ||x_k - c_{d,k}|| ]_+ ,
- *
- * with x_k sampled from the mode's own linear-Gaussian rollout
- * x_{k+1} = A x_k + b + G w_k, so the temporal correlation induced by A is
- * carried exactly. No linearisation, no per-step decoupling. There is no closed
- * form (the distance is non-Gaussian and the steps are dependent), so it is
- * estimated by Monte Carlo with common random numbers across modes.
  */
+ 
 // Three families, in increasing fidelity (and cost):
 //  SURROGATE_* — LINEARISED per-step violation: the true Euclidean violation
 //    [R-||x_k-c||]_+ is replaced by its projection on the ego->obstacle MEAN
@@ -467,6 +453,11 @@ enum class AmbiguityDivergence {
 //    on each step's marginal Gaussian, no projection). Removes the Cauchy-Schwarz
 //    slack of SURROGATE_VAR_BONFERRONI while keeping the per-step decoupling; still
 //    a valid upper bound on the joint-horizon VaR (union bound).
+//  MIXTURE_* — risk measure of the SEQUENCE-MIXTURE surrogate: conditional on a
+//    sampled mode sequence the surrogate makes V Gaussian, so V is a K-component
+//    Gaussian mixture and its VaR/CVaR are available semi-analytically (see below).
+//    Coherent (CVaR) and JOINT over the mode chain, at K rollouts instead of K
+//    noise-sampled rollouts -- the in-loop-affordable coherent option.
 //  JOINT_* — the TRUE joint-horizon risk measure of V = max_{k,d}[R-||x_k-c||]_+
 //    over the WHOLE horizon, x_k from the mode's correlated rollout (exact temporal
 //    correlation), estimated by Monte Carlo.
@@ -475,9 +466,68 @@ enum class DRORiskMeasure {
     SURROGATE_CVAR,  // per-step LINEARISED CVaR, correct clamp order (closed form), max over (k,d)
     SURROGATE_VAR_BONFERRONI,  // LINEARISED VaR at the union-corrected level a'=1-(1-a)/(N_s*D)
     BONFERRONI_VAR,  // PROPER Bonferroni VaR: union correction on the TRUE per-step Euclidean VaR (MC)
+    MIXTURE_VAR,     // VaR  of the sequence-mixture surrogate (semi-analytic, switching-aware)
+    MIXTURE_CVAR,    // CVaR of the sequence-mixture surrogate (semi-analytic, COHERENT, switching-aware)
     JOINT_VAR,       // joint-horizon VaR of Euclidean collision over the whole horizon (MC)
     JOINT_CVAR       // joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
 };
+
+/*
+ * MIXTURE_* -- why it exists, and what it fixes.
+ *
+ * For a Markov-jump obstacle the per-mode score r[m] must be a risk measure of the
+ * JOINT uncertainty (mode sequence, process noise) given a start in mode m. The
+ * original switching estimator was
+ *
+ *     r[m] = E_seq[ max_{k,d} VaR_alpha^noise( Vtil_{k,d} | seq ) ],
+ *
+ * which is an EXPECTATION over sequences wrapped around a VaR over noise. That is
+ * not a risk measure of the joint law, and it understates. For CVaR the direction
+ * is provable from the dual representation CVaR_a(X) = max_{dQ/dP <= 1/(1-a)} E_Q[X]:
+ * let Q_s attain the conditional max on sequence s and glue them,
+ * dQ/dP := sum_s 1{seq=s} dQ_s/dP(.|s). That Q is globally feasible, so
+ *
+ *     E_seq[ CVaR_a(X | seq) ] = E_Q[X] <= CVaR_a(X).
+ *
+ * Averaging over sequences discards exactly the between-sequence tail: if 5% of
+ * sequences are catastrophic (a sustained aggressive mode), the mean dilutes them
+ * by 20x while CVaR_0.95 puts full weight on them.
+ *
+ * THE FIX (semi-analytic, this family). Conditional on a sampled sequence s the
+ * surrogate gives V | s ~ N(mu_s, sigma_s^2) (the dominant (k,d) pair), so V is a
+ * K-component Gaussian mixture with equal weights. Then
+ *
+ *   VaR:  solve  (1/K) sum_s Phi((q - mu_s)/sigma_s) = alpha   for q  (bisection;
+ *         the mixture CDF is continuous and strictly increasing), then clamp [q]_+.
+ *   CVaR: Rockafellar-Uryasev,  CVaR_a(Z) = min_q { q + E[(Z-q)_+]/(1-a) },
+ *         attained at q* = VaR_a(Z). For Z = [V]_+ the minimiser q* >= 0, and for
+ *         q >= 0 we have ([V]_+ - q)_+ = (V - q)_+, so the clamp is handled EXACTLY:
+ *
+ *           CVaR_a([V]_+) = q* + (1/(1-a)) * (1/K) sum_s E[(V_s - q*)_+],
+ *           E[(X-q)_+] = (mu-q) Phi((mu-q)/sigma) + sigma phi((mu-q)/sigma).
+ *
+ *         No clamp-order bug is possible here (contrast cvar_clamped_gaussian, which
+ *         is the K=1 special case of this formula).
+ *
+ * Taking the max over (k,d) INSIDE the conditional and the risk measure OUTSIDE is
+ * also the correct order, so MIXTURE_* needs no Bonferroni level correction -- that
+ * apparatus exists only to patch up max-of-marginals.
+ *
+ * DEGENERACIES (both checked by test_switching_risk):
+ *   - transition = I (or absent) and K = 1  =>  a single Gaussian, so MIXTURE_VAR
+ *     reduces to SURROGATE_VAR and MIXTURE_CVAR to SURROGATE_CVAR exactly.
+ *   - JOINT_* with a transition matrix samples (sequence, noise) jointly and is the
+ *     exact reference this family approximates; at transition = I it reduces to the
+ *     held-mode JOINT_* estimator.
+ *
+ * COST. MIXTURE_* is K sequence rollouts + one 1-D bisection, with the noise handled
+ * in closed form; JOINT_* needs joint_risk_samples noise-sampled rollouts per mode.
+ * MIXTURE_* is the affordable coherent option; JOINT_* is the offline reference.
+ *
+ * RESIDUAL APPROXIMATION. MIXTURE_* inherits the surrogate's Cauchy-Schwarz slack
+ * (conservative) and summarises V|s by its dominant (k,d) pair rather than the true
+ * max of correlated Gaussians (anti-conservative). JOINT_* has neither.
+ */
 
 /*
  * SURROGATE_VAR_BONFERRONI -- the only CLOSED-FORM option that actually carries a
@@ -621,4 +671,4 @@ struct ModeBeliefConfig {
 
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_TYPES_HPP
+#endif  

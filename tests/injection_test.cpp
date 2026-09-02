@@ -1,7 +1,5 @@
-// injection_test: SLMPC's benefit comes from INJECTING extreme/high-risk scenarios as hard
-// constraints ("Extremes"), not from OT sampling reshaping (exp_h1: Base_vs_OT null). My
-// recompute only tested QSTAR_SAMPLE (= OT-only). Here we test the injection arms at
-// offset 0 (road ON, S=40, N=200): base | OT-sampling | DRO-inject K=1/3 | TopRisk-inject.
+// injection_test: Base (DRO off) vs q* resampling (DRO on). Extra worst-case
+// injection arms were removed; DRO now always samples i.i.d. from q*.
 #include "experiment_harness.hpp"
 #include "reference_path.hpp"
 #include <cstdio>
@@ -48,17 +46,11 @@ int main() {
     int bc = 0; { ExperimentConfig c = base; c.dro.enabled = false;
         for (int i=0;i<N;++i) bc += run_experiment_rollout(c,3000000u+unsigned(i)).collision?1:0; }
     double bp = double(bc)/N;
-    std::printf("### Injection vs sampling at offset 0 (road ON, S=40, N=%d) ###\n", N);
+    std::printf("### Base vs DRO q* sampling at offset 0 (road ON, S=40, N=%d) ###\n", N);
     std::printf("%-26s coll=%.3f\n\n", "base (no DRO)", bp);
 
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::QSTAR_SAMPLE;
-      arm("OT-only (QSTAR_SAMPLE)", c, N, bp); }
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=1;
-      arm("DRO-inject K=1", c, N, bp); }
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=3;
-      arm("DRO-inject K=3", c, N, bp); }
-    { ExperimentConfig c=base; c.dro.enabled = true; c.dro.injection_mode=InjectionMode::TOP_RISK_INJECT; c.dro.injection_count=3;
-      arm("TopRisk-inject K=3 (no OT)", c, N, bp); }
-    std::printf("\nSLMPC: benefit is from EXTREMES INJECTION, not OT sampling (exp_h1 Base_vs_OT null).\n");
+    { ExperimentConfig c=base; c.dro.enabled = true;
+      arm("DRO (q* sampling)", c, N, bp); }
+    std::printf("\nDRO on resamples all S scenarios from q*; extra injection is gone.\n");
     return 0;
 }

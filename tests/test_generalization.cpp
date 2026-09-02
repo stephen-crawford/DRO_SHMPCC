@@ -41,10 +41,10 @@ namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "generalization_figures/";
 
-static constexpr int    HORIZON         = DEFAULT_HORIZON;
-static constexpr double DT              = DEFAULT_DT;
-static constexpr int    NUM_SCENARIOS   = DEFAULT_BASE_SCENARIOS;
-static constexpr int    ROLLOUT_STEPS   = DEFAULT_ROLLOUT_STEPS;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const double    DT = DEFAULT_DT;
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS;
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;
 static constexpr int    NUM_DISCS       = 1;
 static constexpr double VEHICLE_LENGTH  = 1.5;
 static constexpr int    SAFE_HORIZON_MIN = 3;
@@ -160,7 +160,6 @@ static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_p
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
     cfg.dro.enabled = false;
-    cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.obstacles.num_obstacles = num_obs;
     cfg.obstacles.obstacles_per_class = 1;
     return cfg;
@@ -168,10 +167,6 @@ static ExperimentConfig make_base_config(double switch_prob = 0.2, double rare_p
 
 static ExperimentConfig apply_method(ExperimentConfig cfg, const MethodDef& m) {
     cfg.dro.enabled = (m.enable_dro);
-    cfg.dro.injection_mode = m.injection_mode;
-    cfg.dro.softmax_tau = m.softmax_tau;
-    cfg.dro.eps_greedy_epsilon = m.eps_greedy_epsilon;
-    cfg.dro.injection_count = m.injection_count;
     cfg.rollout.method_name = m.name;
     return cfg;
 }

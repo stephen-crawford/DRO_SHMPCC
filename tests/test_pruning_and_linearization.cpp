@@ -153,6 +153,93 @@ int main() {
               "zero disc offset => zero theta coefficient (single-disc case)");
     }
 
+    std::printf("\n=== (D) QP row anchoring (linearize_constraint_at_state) ===\n");
+    // An SQP row is a valid first-order model only if its constant and its gradient
+    // are taken at the SAME point. build_condensed_qp differentiates about x_ref, so
+    // the row's value must be the clearance at x_ref -- NOT at the (earlier)
+    // trajectory the normals were frozen on. Regression guard for that bug.
+    {
+        // Reference the constraints are built from.
+        std::vector<EgoState> ref;
+        for (int k = 0; k <= 4; ++k) ref.emplace_back(0.15 * k, 0.0, 0.0, 1.5);
+        Scenario sc = make_scenario(20, 0, {
+            Eigen::Vector2d(1.20, 1.30), Eigen::Vector2d(1.22, 1.24),
+            Eigen::Vector2d(1.24, 1.18), Eigen::Vector2d(1.26, 1.12),
+            Eigen::Vector2d(1.28, 1.06)});
+
+        for (int num_discs : {1, 3}) {
+            const double L = 4.0;
+            auto cs = compute_linearized_constraints(ref, {sc}, 0.5, 0.5, 0.2, num_discs, L);
+
+            // The SQP iterate drifts from the construction reference by roughly one
+            // receding-horizon step plus the Douglas-Rachford projection.
+            std::vector<EgoState> iter;
+            for (int k = 0; k <= 4; ++k)
+                iter.emplace_back(0.15 * k + 0.15, 0.12, 0.05, 1.5);
+
+            double worst_anchor = 0.0, worst_grad = 0.0, worst_self = 0.0;
+            for (const auto& c : cs) {
+                const EgoState& x = iter[c.k];
+                const auto row = linearize_constraint_at_state(c, x);
+
+                // (1) The row's value IS the clearance the feasibility check reports,
+                // so the QP model, the line search and the final check agree.
+                const Eigen::Vector2d u(std::cos(x.theta), std::sin(x.theta));
+                const double truth = c.evaluate(x.position() + c.disc_offset * u);
+                worst_anchor = std::max(worst_anchor, std::abs(row.value - truth));
+
+                // (2) The gradient is the true derivative of a^T c_d(x).
+                const double h = 1e-6;
+                for (int dim = 0; dim < 3; ++dim) {
+                    EgoState hi = x, lo = x;
+                    (dim == 0 ? hi.x : dim == 1 ? hi.y : hi.theta) += h;
+                    (dim == 0 ? lo.x : dim == 1 ? lo.y : lo.theta) -= h;
+                    auto cd = [&](const EgoState& e) {
+                        return c.evaluate(e.position() + c.disc_offset *
+                                          Eigen::Vector2d(std::cos(e.theta), std::sin(e.theta)));
+                    };
+                    worst_grad = std::max(worst_grad,
+                        std::abs(row.gradient(dim) - (cd(hi) - cd(lo)) / (2 * h)));
+                }
+
+                // (3) Evaluated AT the construction reference the anchor must coincide
+                // with the frozen disc centre -- the old behaviour, still correct there.
+                const auto row0 = linearize_constraint_at_state(c, ref[c.k]);
+                worst_self = std::max(worst_self,
+                    std::abs(row0.value - (c.a.dot(c.linearization_point) - c.b)));
+            }
+            char msg[192];
+            std::snprintf(msg, sizeof msg,
+                "num_discs=%d: row value == exact nonlinear clearance at the iterate "
+                "(max err %.2e)", num_discs, worst_anchor);
+            check(worst_anchor < 1e-12, msg);
+            std::snprintf(msg, sizeof msg,
+                "num_discs=%d: gradient matches finite differences (max err %.2e)",
+                num_discs, worst_grad);
+            check(worst_grad < 1e-5, msg);
+            std::snprintf(msg, sizeof msg,
+                "num_discs=%d: at the construction reference the anchor reproduces "
+                "linearization_point (max err %.2e)", num_discs, worst_self);
+            check(worst_self < 1e-12, msg);
+        }
+    }
+
+    std::printf("\n=== (E) per-step reachable ball ===\n");
+    {
+        // Growth of 0 must reproduce the constant-ball behaviour exactly.
+        auto flat = prune_dominated_scenarios({close, far}, ego, 1.0, 1, 0.0, 1.0e6, 0.0);
+        auto dflt = prune_dominated_scenarios({close, far}, ego);
+        check(flat.size() == dflt.size(), "growth = 0 reproduces the previous default");
+
+        // A tighter (sound) ball can only certify MORE implications, never fewer.
+        auto tight = prune_dominated_scenarios({close, far, other}, ego, 1.0, 1, 0.0, 0.0, 0.8);
+        auto loose = prune_dominated_scenarios({close, far, other}, ego, 1.0, 1, 0.0, 1.0e6, 0.0);
+        check(tight.size() <= loose.size(), "tighter reachable ball prunes at least as much");
+        // ...but still never prunes genuinely opposite-side scenarios.
+        check(has_scenario(tight, 1) && has_scenario(tight, 3),
+              "opposite-side scenarios survive even the tight ball (no false prune)");
+    }
+
     std::printf("\n%s (%d checks failed)\n",
                 fails == 0 ? "ALL PRUNING/CONSTRAINT TESTS PASSED" : "SOME TESTS FAILED", fails);
     return fails == 0 ? 0 : 1;

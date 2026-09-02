@@ -39,10 +39,10 @@ namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
 
-static constexpr int    HORIZON         = DEFAULT_HORIZON;
-static constexpr double DT              = DEFAULT_DT;
-static constexpr int    NUM_SCENARIOS   = DEFAULT_BASE_SCENARIOS;
-static constexpr int    ROLLOUT_STEPS   = DEFAULT_ROLLOUT_STEPS;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const double    DT = DEFAULT_DT;
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS;
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;
 static constexpr int    NUM_DISCS       = 1;
 static constexpr double VEHICLE_LENGTH  = 1.5;
 static constexpr int    SAFE_HORIZON_MIN = 3;
@@ -142,7 +142,6 @@ static ExperimentConfig make_config(Method method, double switch_prob, double ra
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
     cfg.dro.enabled = false;
-    cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = 0.1;
     cfg.obstacles.num_obstacles = num_obs;
     cfg.obstacles.obstacles_per_class = 1;
@@ -153,15 +152,12 @@ static ExperimentConfig make_config(Method method, double switch_prob, double ra
             break;
         case Method::WDRO_SAMPLING:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
         case Method::WDRO_INJECTION:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
         case Method::WDRO_COMBINED:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
     }
     return cfg;
@@ -491,11 +487,8 @@ static void run_exp_d() {
                 if (K == 0) {
                     // K=0: no injection, just base scenario MPC
                     cfg.dro.enabled = false;
-                    cfg.dro.injection_mode = InjectionMode::NONE;
                 } else {
                     cfg.dro.enabled = true;
-                    cfg.dro.injection_mode = inj_mode;
-                    cfg.dro.injection_count = K;
                 }
                 RolloutRecord rec = run_experiment_rollout(cfg, seed);
                 met.add(rec);

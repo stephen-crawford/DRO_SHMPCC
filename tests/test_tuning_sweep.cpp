@@ -46,7 +46,7 @@ struct TuningConfig {
     int num_scenarios;              // base scenarios
 };
 
-static constexpr int BASE_S = DEFAULT_BASE_SCENARIOS;  // 40
+static const int    BASE_S = DEFAULT_BASE_SCENARIOS;  // 40
 
 static std::vector<TuningConfig> build_configs() {
     std::vector<TuningConfig> cfgs;
@@ -241,7 +241,6 @@ int main(int argc, char** argv) {
         cfg.rollout.method_name = tc.name;
 
         cfg.dro.enabled = (tc.enable_dro);
-        cfg.dro.injection_mode = tc.injection_mode;
         cfg.dro.solver.base_radius = tc.rho;
 
         cfg.mpc.safe_horizon_enabled = tc.safe_horizon;

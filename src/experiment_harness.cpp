@@ -7,6 +7,7 @@
  */
 
 #include "experiment_harness.hpp"
+#include "experiment_config_yaml.hpp"
 #include "mpc_controller.hpp"
 #include "collision_constraints.hpp"
 #include "dynamics.hpp"
@@ -24,19 +25,59 @@
 
 namespace dro_mpc {
 
+int    DEFAULT_ROLLOUT_STEPS  = 200;
+double DEFAULT_DT             = 0.1;
+int    DEFAULT_HORIZON        = 20;
+int    DEFAULT_BASE_SCENARIOS = 40;
+double S_CURVE_LENGTH         = 25.0;
+double S_CURVE_AMPLITUDE      = 3.0;
+int    S_CURVE_POINTS         = 200;
+double PATH_COMPLETE_FRAC     = 0.95;
+double OBS_PATH_FRACTION      = 0.35;
+std::vector<double> OBS_ARC_FRACS_4 = {0.20, 0.35, 0.50, 0.65};
+
+namespace {
+const ExperimentConfig& cached_default_experiment_config() {
+    static const ExperimentConfig cfg = yaml_config::load_experiment_config("");
+    return cfg;
+}
+
+struct BindYamlDefaults {
+    BindYamlDefaults() {
+        const ExperimentConfig& d = cached_default_experiment_config();
+        DEFAULT_ROLLOUT_STEPS  = d.rollout.rollout_steps;
+        DEFAULT_DT             = d.mpc.dt;
+        DEFAULT_HORIZON        = d.mpc.horizon;
+        DEFAULT_BASE_SCENARIOS = d.mpc.sampling.num_scenarios;
+        S_CURVE_LENGTH         = d.environment.s_curve_length;
+        S_CURVE_AMPLITUDE      = d.environment.s_curve_amplitude;
+        S_CURVE_POINTS         = d.environment.s_curve_points;
+        PATH_COMPLETE_FRAC     = d.environment.path_completion_fraction;
+        OBS_PATH_FRACTION      = d.obstacles.default_arc_fraction;
+        if (!d.obstacles.obs_arc_fractions.empty()) {
+            OBS_ARC_FRACS_4 = d.obstacles.obs_arc_fractions;
+        }
+    }
+} bind_yaml_defaults;
+}  // namespace
+
+ExperimentConfig default_experiment_config() {
+    return cached_default_experiment_config();
+}
+
 // ============================================================================
 // ObstacleSim
 // ============================================================================
 
-void ObstacleSim::step(double dt, std::mt19937& rng) {
+void ObstacleSim::step(double dt, std::mt19937& rng, double process_noise, double speed_cap) {
     if (mode_models.find(current_mode) == mode_models.end()) return;
     const auto& model = mode_models.at(current_mode);
     Eigen::VectorXd noise = Eigen::VectorXd::Zero(model.noise_dim());
     std::normal_distribution<double> nd(0, 1);
-    for (int i = 0; i < model.noise_dim(); ++i) noise(i) = nd(rng) * 0.02;
+    for (int i = 0; i < model.noise_dim(); ++i) noise(i) = nd(rng) * process_noise;
     state = model.propagate(state, &noise);
     double spd = std::sqrt(state.vx * state.vx + state.vy * state.vy);
-    if (spd > 2.0) { state.vx *= 2.0 / spd; state.vy *= 2.0 / spd; }
+    if (spd > speed_cap) { state.vx *= speed_cap / spd; state.vy *= speed_cap / spd; }
 }
 
 void ObstacleSim::maybe_switch(double switch_prob, std::mt19937& rng) {
@@ -191,11 +232,11 @@ void apply_distribution_shift(
     ObstacleSim& obs_sim,
     std::mt19937& rng
 ) {
-    if (shift.rho <= 0.0 && shift.dangerous_boost <= 0.0) return;
+    if (shift.psi <= 0.0 && shift.dangerous_boost <= 0.0) return;
 
     std::uniform_real_distribution<double> u(0, 1);
 
-    if (shift.rho > 0.0 && u(rng) < shift.rho) {
+    if (shift.psi > 0.0 && u(rng) < shift.psi) {
         if (!obs_sim.available_modes.empty()) {
             std::uniform_int_distribution<int> idx(0, static_cast<int>(obs_sim.available_modes.size()) - 1);
             obs_sim.current_mode = obs_sim.available_modes[idx(rng)];
@@ -231,16 +272,6 @@ ObstacleState obstacle_on_s_curve(
     return ObstacleState(pos.x(), pos.y(), v * tangent.x(), v * tangent.y());
 }
 
-double percentile(std::vector<double> v, double p) {
-    if (v.empty()) return 0;
-    std::sort(v.begin(), v.end());
-    double idx = p / 100.0 * (v.size() - 1);
-    int lo = static_cast<int>(std::floor(idx));
-    int hi = std::min(lo + 1, static_cast<int>(v.size()) - 1);
-    double frac = idx - lo;
-    return v[lo] * (1.0 - frac) + v[hi] * frac;
-}
-
 // ============================================================================
 // Canonical Rollout Runner
 // ============================================================================
@@ -259,15 +290,14 @@ RolloutRecord run_experiment_rollout(
     rec.scenario = config.rollout.scenario_tag;
     rec.S = config.mpc.sampling.num_scenarios;
     rec.eps_wass = config.dro.solver.base_radius;
-    rec.sigma = config.dro.adversarial_sigma_scale;
-    rec.shift_rho = config.obstacles.shift.rho;
+    rec.sigma = 0.0;
+    rec.shift_rho = config.obstacles.shift.psi;
     rec.shift_boost = config.obstacles.shift.dangerous_boost;
     rec.ground_cost = ground_cost_name(config.dro.solver.ground_cost_type);
 
-    constexpr double DT = 0.1;
-    auto mode_models = create_obstacle_mode_models(DT);
+    auto mode_models = create_obstacle_mode_models(config.mpc.dt);
 
-    RuntimeConfig mpc_cfg = config.to_scenario_mpc_config(DT);
+    RuntimeConfig mpc_cfg = config.to_scenario_mpc_config();
 
     AdaptiveScenarioMPC controller(mpc_cfg);
 
@@ -282,18 +312,19 @@ RolloutRecord run_experiment_rollout(
             mode_models[config.obstacles.rare_mode];
     }
 
-    constexpr double METRICS_V_REF = 1.5;
+    const double metrics_v_ref = config.rollout.metrics_v_ref;
+    const double dt = config.mpc.dt;
+    EnvironmentSetup env_setup = create_environment(config.environment.type, rng, config.environment);
     ReferencePath ref_path = config.environment.custom_ref_path.has_value()
         ? config.environment.custom_ref_path.value()
-        : ReferencePath::create_s_curve(25.0, 3.0, 200);
+        : env_setup.path;
     controller.set_reference_path(ref_path);
     double path_length = ref_path.total_length();
     Eigen::Vector2d goal = ref_path.get_position_at(path_length);
 
-    EgoState ego = config.environment.custom_initial_ego.value_or(
-        EgoState(0.0, 0.0, 0.0, 1.5));
-    EgoDynamics dynamics(DT);
-    double collision_radius = mpc_cfg.mpc.ego.radius + mpc_cfg.obstacle_radius;
+    EgoState ego = config.environment.custom_initial_ego.value_or(env_setup.initial_ego);
+    EgoDynamics dynamics(config.mpc.ego.dynamics, dt);
+    double collision_radius = mpc_cfg.combined_radius();
     double path_progress = 0.0;
 
     const int n_obs = std::max(1, config.obstacles.num_obstacles);
@@ -312,13 +343,18 @@ RolloutRecord run_experiment_rollout(
         if (i < static_cast<int>(config.obstacles.initial_obstacle_states.size())) {
             obs_sims[i].state = config.obstacles.initial_obstacle_states[i];
         } else {
-            double frac = 0.35;
-            if (i < static_cast<int>(config.obstacles.obs_arc_fractions.size())) {
-                frac = config.obstacles.obs_arc_fractions[i];
-            } else if (n_obs > 1) {
-                frac = std::min(0.20 + 0.15 * i, 0.85);
+            if (n_obs == 1 && config.obstacles.initial_obstacle_states.empty() &&
+                i == 0) {
+                obs_sims[i].state = env_setup.initial_obs;
+            } else {
+                double frac = config.obstacles.default_arc_fraction;
+                if (i < static_cast<int>(config.obstacles.obs_arc_fractions.size())) {
+                    frac = config.obstacles.obs_arc_fractions[i];
+                } else if (n_obs > 1) {
+                    frac = std::min(0.20 + 0.15 * i, 0.85);
+                }
+                obs_sims[i].state = obstacle_on_s_curve(ref_path, frac, rng);
             }
-            obs_sims[i].state = obstacle_on_s_curve(ref_path, frac, rng);
         }
 
         obs_sims[i].current_mode = config.obstacles.obs_modes.empty()
@@ -381,7 +417,7 @@ RolloutRecord run_experiment_rollout(
         }
 
         auto mpc_result = controller.solve(
-            ego, obstacles, goal, METRICS_V_REF, path_progress, path_length);
+            ego, obstacles, goal, metrics_v_ref, path_progress, path_length);
         rec.solve_times_raw.push_back(mpc_result.solve_time);
         rec.total_dro_injected += mpc_result.num_dro_injected;
         if (mpc_result.safe_horizon > 0)
@@ -484,7 +520,7 @@ RolloutRecord run_experiment_rollout(
             const Eigen::Vector2d normal(-std::sin(pp.heading), std::cos(pp.heading));
             const double e_c = d.dot(normal);
             const double e_l = d.dot(tangent);
-            const double v_err = ego.v - METRICS_V_REF;
+            const double v_err = ego.v - metrics_v_ref;
             rec.sum_contouring_sq += e_c * e_c;
             rec.sum_lag_sq += e_l * e_l;
             rec.sum_velocity_err_sq += v_err * v_err;
@@ -493,12 +529,13 @@ RolloutRecord run_experiment_rollout(
 
         if (mpc_result.success && mpc_result.first_input().has_value()) {
             auto input = mpc_result.first_input().value();
-            control_effort += input.a * input.a + input.delta * input.delta;
+            control_effort += input.a * input.a + input.omega * input.omega;
             ego = dynamics.propagate(ego, input);
         }
 
         for (int oi = 0; oi < n_obs; ++oi) {
-            obs_sims[oi].step(DT, rng);
+            obs_sims[oi].step(dt, rng, config.obstacles.process_noise,
+                              config.obstacles.speed_cap);
         }
         rec.total_steps++;
 
@@ -554,66 +591,83 @@ RolloutRecord run_experiment_rollout(
 // Convenience Rollout Helpers
 // ============================================================================
 
-ReferencePath setup_mpcc_path(AdaptiveScenarioMPC& ctrl) {
-    auto ref_path = ReferencePath::create_s_curve(
-        S_CURVE_LENGTH, S_CURVE_AMPLITUDE, S_CURVE_POINTS);
-    ctrl.set_reference_path(ref_path);
-    return ref_path;
-}
-
-EnvironmentSetup create_environment(EnvironmentType env, std::mt19937& rng) {
+EnvironmentSetup create_environment(
+    EnvironmentType env,
+    std::mt19937& rng,
+    const EnvironmentExperimentConfig& path_cfg
+) {
     EnvironmentSetup setup;
     std::uniform_real_distribution<double> jitter(-0.3, 0.3);
 
-    auto path = ReferencePath::create_s_curve(
-        S_CURVE_LENGTH, S_CURVE_AMPLITUDE, S_CURVE_POINTS);
+    auto path = path_cfg.custom_ref_path.has_value()
+        ? path_cfg.custom_ref_path.value()
+        : ReferencePath::create_s_curve(
+              path_cfg.s_curve_length, path_cfg.s_curve_amplitude,
+              path_cfg.s_curve_points);
+    setup.path = path;
     setup.obs_modes = {
         "constant_velocity", "turn_left", "turn_right", "decelerating"};
-    setup.initial_ego = EgoState(0.0, 0.0, 0.0, 1.5);
+    setup.initial_ego = path_cfg.custom_initial_ego.value_or(
+        EgoState(0.0, 0.0, 0.0, path_cfg.ego_initial_v));
     setup.goal = path.get_position_at(path.total_length());
+    setup.name = environment_name(env);
+
+    auto place_overtake = [&] {
+        setup.initial_obs = obstacle_on_s_curve(path, OBS_PATH_FRACTION, rng);
+    };
+    auto place_narrow = [&] {
+        double s25 = 0.25 * path.total_length();
+        PathPoint pp = path.get_point_at(s25);
+        Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
+        Eigen::Vector2d t(std::cos(pp.heading), std::sin(pp.heading));
+        Eigen::Vector2d pos = pp.position + jitter(rng) * 0.15 * n;
+        setup.initial_obs = ObstacleState(
+            pos.x(), pos.y(), -0.2 * t.x(), -0.2 * t.y());
+    };
+    auto place_intersection = [&] {
+        double s40 = 0.40 * path.total_length();
+        PathPoint pp = path.get_point_at(s40);
+        Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
+        Eigen::Vector2d pos = pp.position + (2.0 + jitter(rng)) * n;
+        setup.initial_obs = ObstacleState(
+            pos.x(), pos.y(),
+            -1.0 * n.x() + jitter(rng) * 0.2,
+            -1.0 * n.y() + jitter(rng) * 0.2);
+    };
+    auto place_oncoming = [&] {
+        double s60 = 0.60 * path.total_length();
+        PathPoint pp = path.get_point_at(s60);
+        Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
+        Eigen::Vector2d t(std::cos(pp.heading), std::sin(pp.heading));
+        Eigen::Vector2d pos = pp.position + jitter(rng) * 0.3 * n;
+        setup.initial_obs = ObstacleState(
+            pos.x(), pos.y(),
+            -1.0 * t.x() + jitter(rng) * 0.2,
+            -1.0 * t.y() + jitter(rng) * 0.2);
+    };
 
     switch (env) {
-        case EnvironmentType::OVERTAKE_SLOW_LEAD: {
-            setup.name = "OvertakeSlowLead";
-            setup.initial_obs = obstacle_on_s_curve(path, 0.35, rng);
+        case EnvironmentType::S_CURVE:
+        case EnvironmentType::TWO_LANE_HIGHWAY:
+        case EnvironmentType::FOUR_LANE_HIGHWAY:
+        case EnvironmentType::OVERTAKE_SLOW_LEAD:
+            place_overtake();
             break;
-        }
-        case EnvironmentType::NARROW_CORRIDOR: {
-            setup.name = "Narrow";
-            double s25 = 0.25 * path.total_length();
-            PathPoint pp = path.get_point_at(s25);
-            Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
-            Eigen::Vector2d t(std::cos(pp.heading), std::sin(pp.heading));
-            Eigen::Vector2d pos = pp.position + jitter(rng) * 0.15 * n;
-            setup.initial_obs = ObstacleState(
-                pos.x(), pos.y(), -0.2 * t.x(), -0.2 * t.y());
+        case EnvironmentType::NARROW_CORRIDOR:
+            place_narrow();
             break;
-        }
-        case EnvironmentType::INTERSECTION: {
-            setup.name = "Intersection";
-            double s40 = 0.40 * path.total_length();
-            PathPoint pp = path.get_point_at(s40);
-            Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
-            Eigen::Vector2d pos = pp.position + (2.0 + jitter(rng)) * n;
-            setup.initial_obs = ObstacleState(
-                pos.x(), pos.y(),
-                -1.0 * n.x() + jitter(rng) * 0.2,
-                -1.0 * n.y() + jitter(rng) * 0.2);
+        case EnvironmentType::T_INTERSECTION:
+        case EnvironmentType::FOUR_WAY_INTERSECTION:
+        case EnvironmentType::TWO_LANE_ROUNDABOUT:
+        case EnvironmentType::FOUR_LANE_ROUNDABOUT:
+        case EnvironmentType::INTERSECTION:
+            place_intersection();
             break;
-        }
-        case EnvironmentType::ONCOMING: {
-            setup.name = "Oncoming";
-            double s60 = 0.60 * path.total_length();
-            PathPoint pp = path.get_point_at(s60);
-            Eigen::Vector2d n(-std::sin(pp.heading), std::cos(pp.heading));
-            Eigen::Vector2d t(std::cos(pp.heading), std::sin(pp.heading));
-            Eigen::Vector2d pos = pp.position + jitter(rng) * 0.3 * n;
-            setup.initial_obs = ObstacleState(
-                pos.x(), pos.y(),
-                -1.0 * t.x() + jitter(rng) * 0.2,
-                -1.0 * t.y() + jitter(rng) * 0.2);
+        case EnvironmentType::ENTER_RAMP:
+        case EnvironmentType::EXIT_RAMP:
+        case EnvironmentType::ONCOMING:
+            place_oncoming();
             break;
-        }
     }
     return setup;
 }
@@ -628,21 +682,13 @@ RolloutResult run_single_rollout_env(
     cfg.obstacles.obs_modes = env_setup.obs_modes;
     cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
     cfg.environment.custom_initial_ego = env_setup.initial_ego;
+    if (env_setup.path.total_length() > 0.0) {
+        cfg.environment.custom_ref_path = env_setup.path;
+    }
     cfg.sampling.baseline = baseline;
     cfg.mpc.constraints.forced_safe_horizon = forced_safe_horizon;
     if (forced_safe_horizon >= 0) {
         cfg.mpc.safe_horizon_enabled = true;
-    }
-
-    if (baseline == SamplingBaseline::ORACLE_FLOOD) {
-        cfg.rollout.step_callback =
-            [](int step, int obs_id, ObstacleSim& obs,
-               AdaptiveScenarioMPC& ctrl, std::mt19937&) {
-                for (int f = 0; f < 50; ++f) {
-                    ctrl.update_mode_observation(
-                        obs_id, 0, obs.current_mode, step + 5);
-                }
-            };
     }
 
     return run_configured_rollout(std::move(cfg), seed);

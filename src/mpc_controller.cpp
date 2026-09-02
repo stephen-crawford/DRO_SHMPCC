@@ -1,6 +1,6 @@
 /**
  * @file mpc_controller.cpp
- * @brief Implementation of Adaptive Scenario-Based MPC Controller.
+ * @brief Implementation of Scenario-Based MPC Controller.
  */
 
 #include "mpc_controller.hpp"
@@ -11,14 +11,14 @@
 
 namespace dro_mpc {
 
-AdaptiveScenarioMPC::AdaptiveScenarioMPC(const RuntimeConfig& config)
+DROMPC::MPCController(const RuntimeConfig& config)
     : config_(config), ego_dynamics_(config.mpc.ego.dynamics, config.mpc.dt) {
     config_.validate();
     default_modes_ = create_obstacle_mode_models(config_.mpc.dt);
 
     // Initialize DRO module from nested DROConfig.
     if (config_.dro.enabled) {
-        dro_ = WassersteinDRO(config_.dro.solver);
+        dro_ = DRO(config_.dro.solver);
     }
 
     // Initialize random number generator
@@ -26,7 +26,7 @@ AdaptiveScenarioMPC::AdaptiveScenarioMPC(const RuntimeConfig& config)
     rng_ = std::mt19937(rd());
 }
 
-void AdaptiveScenarioMPC::initialize_obstacle(
+void MPCController::initialize_obstacle(
     int obstacle_id,
     int obstacle_class,
     const std::map<std::string, ModeModel>& available_modes
@@ -51,7 +51,7 @@ void AdaptiveScenarioMPC::initialize_obstacle(
     mode_histories_[obstacle_id] = history;
 }
 
-void AdaptiveScenarioMPC::update_mode_observation(
+void MPCController::update_mode_observation(
     int obstacle_id,
     int obstacle_class,
     const std::string& observed_mode,
@@ -75,7 +75,7 @@ void AdaptiveScenarioMPC::update_mode_observation(
     }
 }
 
-MPCResult AdaptiveScenarioMPC::solve(
+MPCResult MPCController::solve(
     const EgoState& ego_state,
     const std::map<int, ObstacleState>& obstacles,
     const Eigen::Vector2d& goal,
@@ -108,22 +108,19 @@ MPCResult AdaptiveScenarioMPC::solve(
     // Step 1: Initialize reference trajectory (warmstart from previous)
     initialize_reference_trajectory(ego_with_spline, goal, reference_velocity);
 
-    // Step 2: Sample scenarios (DRO reshaped weights q* when DRO on, or nominal otherwise)
+    // Step 2: Sample scenarios (DRO reshapes the categorical to q*, then i.i.d. sample)
     int dro_injected = 0;
 
-    // When DRO is enabled: compute worst-case distribution q* and either
-    //   (a) QSTAR_SAMPLE: resample ALL S scenarios from q*, or
-    //   (b) DRO/ADVERSARIAL: sample nominally, then inject worst-case scenario(s).
+    // When DRO is enabled: compute worst-case distribution q* and resample all S
+    // scenarios from it. Extra worst-case injection has been removed.
     if (config_.dro.enabled && !reference_trajectory_.empty()) {
         const int S = config_.mpc.sampling.num_scenarios;
         int pre_dro_safe_horizon = config_.mpc.safe_horizon_enabled
             ? config_.compute_safe_horizon(S)
             : config_.mpc.horizon;
 
-        // Compute DRO q* and nominal weights for each obstacle.
-        // per_obs_nominal: the single P_hat from belief/weights (or custom OT).
+        // Compute DRO q* from the nominal P_hat (belief weights, or custom OT).
         std::map<int, DROResult> dro_results;
-        std::map<int, std::map<std::string, double>> per_obs_nominal;
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto hist_it = mode_histories_.find(obs_id);
             if (hist_it == mode_histories_.end()) continue;
@@ -141,7 +138,6 @@ MPCResult AdaptiveScenarioMPC::solve(
                 have_custom ? ot_it->second : freq_weights;
 
             if (nominal.empty()) continue;
-            per_obs_nominal[obs_id] = nominal;
             dro_.set_observation_count(
                 static_cast<int>(hist_it->second.observed_modes.size()));
 
@@ -150,7 +146,7 @@ MPCResult AdaptiveScenarioMPC::solve(
             // held mode. Ordering matches `nominal` (== the solver's mode_ids order).
             Eigen::MatrixXd obs_transition;
             const Eigen::MatrixXd* transition_ptr = nullptr;
-            if (config_.mpc.sampling.use_markov_mode_sampling) {
+            if (config_.mpc.sampling.markov_jump_system) {
                 std::vector<std::string> modes_order;
                 modes_order.reserve(nominal.size());
                 for (const auto& [mid, _] : nominal) modes_order.push_back(mid);
@@ -174,202 +170,27 @@ MPCResult AdaptiveScenarioMPC::solve(
             );
         }
 
-        if (config_.dro.resolved_injection_mode() == InjectionMode::UNIFORM_COVERAGE) {
-            // BASELINE B1: Force each observed mode to appear at least once.
-            // Use nominal weights but with ensure_mode_coverage=true.
-            if (!per_obs_nominal.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_nominal,
-                    config_.mpc.horizon, S, true /*ensure_mode_coverage*/, &rng_
+        // Resample ALL S scenarios from q*.
+        std::map<int, std::map<std::string, double>> per_obs_weights_dro;
+        for (auto& [obs_id, dro_result] : dro_results) {
+            per_obs_weights_dro[obs_id] = dro_result.worst_case_weights;
+        }
+
+        if (!per_obs_weights_dro.empty()) {
+            if (config_.mpc.sampling.markov_jump_system) {
+                // Seed the Markov chain from Q*: the reweighted belief sets the
+                // initial mode distribution, then the estimated transition
+                // matrix propagates it over the horizon.
+                scenarios_ = sample_scenarios_markov(
+                    obstacles, mode_histories_, &per_obs_weights_dro,
+                    config_.mpc.horizon, S, config_.mpc.sampling.mode_belief, &rng_
                 );
-            }
-        } else if (config_.dro.resolved_injection_mode() == InjectionMode::SOFTMAX_RISK) {
-            // BASELINE B2: p(m) ∝ exp(tau * r_m), no Wasserstein geometry.
-            std::map<int, std::map<std::string, double>> softmax_weights;
-            for (auto& [obs_id, dro_result] : dro_results) {
-                std::map<std::string, double> w;
-                double max_r = 0.0;
-                for (const auto& [m, r] : dro_result.risk_per_mode)
-                    max_r = std::max(max_r, r);
-                double sum = 0.0;
-                for (const auto& [m, r] : dro_result.risk_per_mode) {
-                    w[m] = std::exp(config_.dro.softmax_tau * (r - max_r));  // subtract max for stability
-                    sum += w[m];
-                }
-                if (sum > 0.0) for (auto& [_, v] : w) v /= sum;
-                softmax_weights[obs_id] = w;
-            }
-            if (!softmax_weights.empty()) {
+            } else {
                 scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, softmax_weights,
-                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
+                    obstacles, mode_histories_, per_obs_weights_dro,
+                    config_.mpc.horizon, S,
+                    config_.mpc.sampling.ensure_mode_coverage, &rng_
                 );
-            }
-        } else if (config_.dro.resolved_injection_mode() == InjectionMode::EPSILON_GREEDY_INJ) {
-            // BASELINE B3: (1-eps)*nominal + eps*uniform over modes.
-            std::map<int, std::map<std::string, double>> eg_weights;
-            double eps = config_.dro.eps_greedy_epsilon;
-            for (auto& [obs_id, nom_w] : per_obs_nominal) {
-                std::map<std::string, double> w;
-                int M_modes = static_cast<int>(nom_w.size());
-                double unif = (M_modes > 0) ? 1.0 / M_modes : 0.0;
-                for (const auto& [m, p] : nom_w) {
-                    w[m] = (1.0 - eps) * p + eps * unif;
-                }
-                eg_weights[obs_id] = w;
-            }
-            if (!eg_weights.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, eg_weights,
-                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
-                );
-            }
-        } else if (config_.dro.resolved_injection_mode() == InjectionMode::TOP_RISK_INJECT) {
-            // BASELINE B4: Sample nominally, then inject top-K modes by r_m (no WDRO).
-            if (!per_obs_nominal.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_nominal,
-                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
-                );
-            }
-            int next_id = S;
-            int K = config_.dro.injection_count;
-            for (const auto& [obs_id, obs_state] : obstacles) {
-                auto dr_it = dro_results.find(obs_id);
-                if (dr_it == dro_results.end()) continue;
-                auto hist_it = mode_histories_.find(obs_id);
-                if (hist_it == mode_histories_.end()) continue;
-
-                // Sort modes by risk r_m descending
-                std::vector<std::pair<double, std::string>> risk_sorted;
-                for (const auto& [m, r] : dr_it->second.risk_per_mode) {
-                    if (r > 1e-12) risk_sorted.push_back({r, m});
-                }
-                std::sort(risk_sorted.begin(), risk_sorted.end(),
-                          [](const auto& a, const auto& b) { return a.first > b.first; });
-
-                int n_inject = (K < 0) ? static_cast<int>(risk_sorted.size())
-                                       : std::min(K, static_cast<int>(risk_sorted.size()));
-                for (int ki = 0; ki < n_inject; ++ki) {
-                    const std::string& mode = risk_sorted[ki].second;
-                    DROResult fake_result = dr_it->second;
-                    for (auto& [m, w] : fake_result.worst_case_weights) w = 0.0;
-                    fake_result.worst_case_weights[mode] = 1.0;
-
-                    auto s = dro_.generate_worst_case_scenario(
-                        fake_result, obs_id, obs_state,
-                        hist_it->second.available_modes,
-                        config_.mpc.horizon, next_id);
-                    if (!s.trajectories.empty()) {
-                        scenarios_.push_back(std::move(s));
-                        dro_injected++;
-                        next_id++;
-                    }
-                }
-            }
-        } else if (config_.dro.resolved_injection_mode() == InjectionMode::DIVERSE_RISK_INJECT) {
-            // BASELINE B5: Greedy diverse-risk selection (facility-location style).
-            // Select K modes maximizing risk * min-distance-to-already-selected.
-            if (!per_obs_nominal.empty()) {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_nominal,
-                    config_.mpc.horizon, S, config_.mpc.sampling.ensure_mode_coverage, &rng_
-                );
-            }
-            int next_id = S;
-            int K = config_.dro.injection_count;
-            for (const auto& [obs_id, obs_state] : obstacles) {
-                auto dr_it = dro_results.find(obs_id);
-                if (dr_it == dro_results.end()) continue;
-                auto hist_it = mode_histories_.find(obs_id);
-                if (hist_it == mode_histories_.end()) continue;
-
-                const auto& rpm = dr_it->second.risk_per_mode;
-                const auto& D = dr_it->second.transport_cost_matrix;
-
-                // Build mode_id -> index mapping (matches DRO's mode_ids order)
-                std::vector<std::string> mode_ids;
-                for (const auto& [m, _] : rpm) mode_ids.push_back(m);
-                int M = static_cast<int>(mode_ids.size());
-                if (M == 0) continue;
-
-                // Greedy diverse selection
-                std::vector<int> selected;
-                std::vector<bool> used(M, false);
-
-                // First: argmax r_m
-                int best = 0;
-                for (int i = 1; i < M; ++i) {
-                    if (rpm.at(mode_ids[i]) > rpm.at(mode_ids[best])) best = i;
-                }
-                selected.push_back(best);
-                used[best] = true;
-
-                int n_inject = (K < 0) ? M : std::min(K, M);
-                // Subsequent: argmax r_m * min_dist(m, selected)
-                for (int ki = 1; ki < n_inject; ++ki) {
-                    int best_next = -1;
-                    double best_score = -1.0;
-                    for (int i = 0; i < M; ++i) {
-                        if (used[i]) continue;
-                        double r_i = rpm.at(mode_ids[i]);
-                        if (r_i < 1e-12) continue;
-                        // min distance to any already-selected mode
-                        double min_d = 1e9;
-                        for (int si : selected) {
-                            if (i < static_cast<int>(D.size()) && si < static_cast<int>(D[i].size()))
-                                min_d = std::min(min_d, D[i][si]);
-                        }
-                        double score = r_i * min_d;
-                        if (score > best_score) { best_score = score; best_next = i; }
-                    }
-                    if (best_next < 0) break;
-                    selected.push_back(best_next);
-                    used[best_next] = true;
-                }
-
-                // Inject selected modes
-                for (int si : selected) {
-                    const std::string& mode = mode_ids[si];
-                    DROResult fake_result = dr_it->second;
-                    for (auto& [m, w] : fake_result.worst_case_weights) w = 0.0;
-                    fake_result.worst_case_weights[mode] = 1.0;
-
-                    auto s = dro_.generate_worst_case_scenario(
-                        fake_result, obs_id, obs_state,
-                        hist_it->second.available_modes,
-                        config_.mpc.horizon, next_id);
-                    if (!s.trajectories.empty()) {
-                        scenarios_.push_back(std::move(s));
-                        dro_injected++;
-                        next_id++;
-                    }
-                }
-            }
-        } else {
-            // Q* SAMPLING PATH (QSTAR_SAMPLE or default):
-            // Resample ALL S scenarios from q* distribution (Eq. 3-4).
-            std::map<int, std::map<std::string, double>> per_obs_weights_dro;
-            for (auto& [obs_id, dro_result] : dro_results) {
-                per_obs_weights_dro[obs_id] = dro_result.worst_case_weights;
-            }
-
-            if (!per_obs_weights_dro.empty()) {
-                if (config_.mpc.sampling.use_markov_mode_sampling) {
-                    // Seed the Markov chain from Q*: the reweighted belief sets the
-                    // initial mode distribution, then the estimated transition
-                    // matrix propagates it over the horizon.
-                    scenarios_ = sample_scenarios_markov(
-                        obstacles, mode_histories_, &per_obs_weights_dro,
-                        config_.mpc.horizon, S, config_.mpc.sampling.mode_belief, &rng_
-                    );
-                } else {
-                    scenarios_ = sample_scenarios_with_weights(
-                        obstacles, mode_histories_, per_obs_weights_dro,
-                        config_.mpc.horizon, S,
-                        config_.mpc.sampling.ensure_mode_coverage, &rng_
-                    );
-                }
             }
         }
     }
@@ -385,7 +206,7 @@ MPCResult AdaptiveScenarioMPC::solve(
     }
 
     if (scenarios_.empty()) {
-        if (config_.mpc.sampling.use_markov_mode_sampling) {
+        if (config_.mpc.sampling.markov_jump_system) {
             // Base (non-DRO) Markov path: belief derived from weight_type +
             // the Dirichlet prior, no Q* override.
             scenarios_ = sample_scenarios_markov(
@@ -433,7 +254,7 @@ MPCResult AdaptiveScenarioMPC::solve(
         (void)config_.compute_effective_epsilon(
             S_actual, config_.mpc.constraints.support_cap_nbar);
 
-        if (S_actual < S_required && config_.mpc.sampling.enforce_scenario_count) {
+        if (S_actual < S_required && config_.mpc.sampling.enforce_certified_scenario_count) {
             // Auto-increase: sample additional scenarios
             int additional_count = S_required - S_actual;
             auto additional = sample_scenarios(
@@ -464,22 +285,6 @@ MPCResult AdaptiveScenarioMPC::solve(
         }
     }
 
-    // Step 3b: Verify scenario sufficiency for epsilon guarantee (Part 4)
-    if (config_.mpc.sampling.enforce_scenario_count) {
-        int S_required = config_.compute_required_scenarios(
-            config_.mpc.constraints.support_cap_nbar);
-        int S_actual = static_cast<int>(scenarios_.size());
-        if (S_actual < S_required) {
-            // Auto-increase: sample additional scenarios
-            int additional_count = S_required - S_actual;
-            auto additional = sample_scenarios(
-                obstacles, mode_histories_, config_.mpc.horizon,
-                additional_count, config_.mpc.sampling.mode_belief, iteration_count_, &rng_
-            );
-            scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
-        }
-    }
-
     // Step 4: Fixed collision normals from the numerical linearization trajectory.
     // Normals are held constant for the subsequent QP (Case B also linearizes
     // heading-dependent disc centers about the same numerical reference).
@@ -487,18 +292,28 @@ MPCResult AdaptiveScenarioMPC::solve(
 
     // de Groot 2023 Definition-2 geometric dominance pruning: drop scenarios whose
     // collision half-spaces are IMPLIED (on the reachable ball) by a more-restrictive
-    // scenario's, evaluated at the reference trajectory. The implication is certified
-    // exactly on the actual (a, b) per ego disc, so it is sound (never drops an active
-    // scenario) rather than an a-priori heuristic. Injected worst-case scenarios are
-    // never pruned; enforce_all_scenarios disables pruning entirely to keep the full S
-    // constraints (restores the Theorem-1 premise).
-    if (!config_.mpc.sampling.enforce_all_scenarios) {
-        const double combined_radius = config_.mpc.ego.radius +
-                                       config_.obstacle_radius +
-                                       config_.mpc.constraints.safety_margin;
+    // scenario's, evaluated at the reference trajectory. Extra scenarios marked
+    // is_injected (test hook) are never pruned.
+    {
+        const double combined_radius = config_.combined_radius();
+
+        // Sound reachable ball, derived rather than a magic constant. The planned
+        // and reference trajectories share x_0 exactly and both have speed capped at
+        // max_velocity, so their positions differ by at most 2 * v_max * k * dt at
+        // step k. For multiple discs the heading may also differ, moving a disc
+        // centre by at most 2 * l_max = vehicle_length. Any over-estimate is sound;
+        // this is far tighter than the 1e6 default, which certified implication only
+        // for essentially parallel normals.
+        const double disc_span = (config_.mpc.ego.num_discs > 1)
+                                     ? config_.mpc.ego.length
+                                     : 0.0;
+        const double reach_growth =
+            2.0 * config_.mpc.ego.dynamics.max_velocity * config_.mpc.dt;
+
         scenarios_ = prune_dominated_scenarios(
             scenarios_, reference_trajectory_, combined_radius,
-            config_.mpc.ego.num_discs, config_.mpc.ego.length);
+            config_.mpc.ego.num_discs, config_.mpc.ego.length,
+            disc_span, reach_growth);
     }
 
     auto constraints = compute_linearized_constraints(
@@ -517,11 +332,9 @@ MPCResult AdaptiveScenarioMPC::solve(
     // - THEORETICAL_TIGHT:  Eq. 25 (very conservative)
     int effective_horizon = config_.mpc.horizon;
     if (config_.mpc.safe_horizon_enabled) {
-        // Use only i.i.d. sampled scenario count for safe horizon computation.
-        // DRO-injected scenarios are deterministic additional constraints that
-        // tighten the feasible set but do NOT satisfy the i.i.d. assumption
-        // required by Calafiore-Campi scenario theory (Theorem 1).
-        // Counting them would inflate N_safe beyond what the theory certifies.
+        // S scenarios are i.i.d. draws from q* (when DRO is on) or the nominal
+        // belief (when DRO is off), so the configured sample count is the
+        // certificate count.
         int S_for_sh = config_.mpc.sampling.num_scenarios;
         effective_horizon = config_.compute_safe_horizon(S_for_sh);
 
@@ -541,7 +354,8 @@ MPCResult AdaptiveScenarioMPC::solve(
     // reduction itself was already done at the scenario level via dominance
     // pruning above (de Groot Algorithm 3), which is non-distorting.
     constraints = filter_constraints_by_clearance(
-        constraints, reference_trajectory_, 20.0);
+        constraints, reference_trajectory_,
+        config_.mpc.constraints.clearance_filter_distance);
 
     auto constraint_end = std::chrono::high_resolution_clock::now();
 
@@ -694,7 +508,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
             double w = (next_state.theta - current.theta) / config_.mpc.dt;
 
             a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
-            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_omega, config_.mpc.ego.dynamics.max_omega);
 
             inputs.emplace_back(a, w);
         } else {
@@ -731,7 +545,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization(
     }
     for (int k = 0; k < N; ++k) {
         cost += config_.mpc.objective.acceleration_weight * inputs[k].a * inputs[k].a;
-        cost += config_.mpc.objective.steering_weight * inputs[k].delta * inputs[k].delta;
+        cost += config_.mpc.objective.steering_weight * inputs[k].omega * inputs[k].omega;
     }
 
     // MPCC cost terms for heuristic solver (all steps 1..N)
@@ -802,7 +616,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             double a = (x_ref[k + 1].v - x_ref[k].v) / config_.mpc.dt;
             double w = (x_ref[k + 1].theta - x_ref[k].theta) / config_.mpc.dt;
             a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
-            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_omega, config_.mpc.ego.dynamics.max_omega);
             u_ref.emplace_back(a, w);
         } else {
             u_ref.emplace_back(0, 0);
@@ -828,7 +642,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             double a = (next.v - curr.v) / config_.mpc.dt;
             double w = (next.theta - curr.theta) / config_.mpc.dt;
             a = std::clamp(a, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
-            w = std::clamp(w, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
+            w = std::clamp(w, -config_.mpc.ego.dynamics.max_omega, config_.mpc.ego.dynamics.max_omega);
             warm_inputs.emplace_back(a, w);
         }
         std::vector<EgoState> warm_traj;
@@ -885,9 +699,9 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             trial_inputs.reserve(N);
             for (int k = 0; k < N; ++k) {
                 double a_new = u_ref[k].a + alpha * delta_u(2 * k);
-                double w_new = u_ref[k].delta + alpha * delta_u(2 * k + 1);
+                double w_new = u_ref[k].omega + alpha * delta_u(2 * k + 1);
                 a_new = std::clamp(a_new, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
-                w_new = std::clamp(w_new, -config_.mpc.ego.dynamics.max_steering_rate, config_.mpc.ego.dynamics.max_steering_rate);
+                w_new = std::clamp(w_new, -config_.mpc.ego.dynamics.max_omega, config_.mpc.ego.dynamics.max_omega);
                 trial_inputs.emplace_back(a_new, w_new);
             }
 
@@ -939,7 +753,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
             } else {
                 a = config_.mpc.ego.dynamics.max_acceleration;             // below v_min: accelerate as hard as allowed
             }
-            u_ref[k] = EgoInput(a, u_ref[k].delta);
+            u_ref[k] = EgoInput(a, u_ref[k].omega);
             v_cur += a * config_.mpc.dt;                      // exact velocity propagation
         }
         // Re-roll the trajectory so x_ref matches the clamped inputs.
@@ -967,7 +781,7 @@ MPCResult AdaptiveScenarioMPC::solve_optimization_sqp(
     }
     for (int k = 0; k < N; ++k) {
         cost += config_.mpc.objective.acceleration_weight * u_ref[k].a * u_ref[k].a;
-        cost += config_.mpc.objective.steering_weight * u_ref[k].delta * u_ref[k].delta;
+        cost += config_.mpc.objective.steering_weight * u_ref[k].omega * u_ref[k].omega;
     }
 
     // MPCC cost terms for final cost report (all steps 1..N)
@@ -1249,28 +1063,20 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
         int k = con.k;  // Timestep of this constraint
         if (k < 1 || k > N) continue;
 
-        const Eigen::Vector2d lin_pt =
-            (con.linearization_point.squaredNorm() > 1e-20)
-                ? con.linearization_point
-                : x_ref[k].position();
+        // Anchor the row at x_ref[k], the SAME point P_all/THETA_all differentiate
+        // about. con.linearization_point records where the NORMAL was frozen, which
+        // is a different (earlier) trajectory: x_ref is re-rolled from the current
+        // ego state with clamped warm inputs, Douglas-Rachford projected, then moved
+        // each SQP iteration. Anchoring on it would make the row mis-state clearance
+        // by a^T(c_bar_frozen - c_d(x_ref[k])) in an uncontrolled direction.
+        const auto row = linearize_constraint_at_state(con, x_ref[k]);
 
-        const double offset = con.disc_offset;
-        const double theta = x_ref[k].theta;
-        const Eigen::Vector2d j_theta(
-            -offset * std::sin(theta),
-             offset * std::cos(theta)
-        );
+        C.row(i) = row.gradient(0) * P_all[k].row(0)
+                 + row.gradient(1) * P_all[k].row(1)
+                 + row.gradient(2) * THETA_all[k];
 
-        // a^T J maps (Δp_x, Δp_y, Δθ) → scalar
-        const double cx = con.a(0);
-        const double cy = con.a(1);
-        const double ctheta = con.a.dot(j_theta);
-
-        C.row(i) = cx * P_all[k].row(0)
-                 + cy * P_all[k].row(1)
-                 + ctheta * THETA_all[k];
-
-        d(i) = con.b - con.a.dot(lin_pt);
+        // a^T c_d(x_ref[k]) + (a^T J) δu >= b  =>  C δu >= -clearance(x_ref[k]).
+        d(i) = -row.value;
     }
 
     // Step 5b: Contouring constraints (road boundary halfplanes)
@@ -1351,8 +1157,8 @@ QPProblem AdaptiveScenarioMPC::build_condensed_qp(
     for (int k = 0; k < N; ++k) {
         lb(2 * k) = config_.mpc.ego.dynamics.min_acceleration - u_ref[k].a;
         ub(2 * k) = config_.mpc.ego.dynamics.max_acceleration - u_ref[k].a;
-        lb(2 * k + 1) = -config_.mpc.ego.dynamics.max_steering_rate - u_ref[k].delta;
-        ub(2 * k + 1) = config_.mpc.ego.dynamics.max_steering_rate - u_ref[k].delta;
+        lb(2 * k + 1) = -config_.mpc.ego.dynamics.max_omega - u_ref[k].omega;
+        ub(2 * k + 1) = config_.mpc.ego.dynamics.max_omega - u_ref[k].omega;
     }
 
     QPProblem qp;
@@ -1412,9 +1218,9 @@ AdaptiveScenarioMPC::apply_simple_avoidance(
                         while (heading_diff < -M_PI) heading_diff += 2 * M_PI;
 
                         // Apply steering adjustment
-                        double new_w = new_inputs[k].delta + 0.3 * heading_diff;
-                        new_w = std::clamp(new_w, -config_.mpc.ego.dynamics.max_steering_rate,
-                                          config_.mpc.ego.dynamics.max_steering_rate);
+                        double new_w = new_inputs[k].omega + 0.3 * heading_diff;
+                        new_w = std::clamp(new_w, -config_.mpc.ego.dynamics.max_omega,
+                                          config_.mpc.ego.dynamics.max_omega);
                         new_inputs[k] = EgoInput(new_inputs[k].a, new_w);
                     }
                 }

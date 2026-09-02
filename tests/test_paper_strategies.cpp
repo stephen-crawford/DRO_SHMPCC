@@ -76,10 +76,10 @@ static constexpr int    BATCH_SIZE        = 200;
 static constexpr int    MIN_ROLLOUTS      = 400;
 static constexpr int    MAX_ROLLOUTS      = 5000;
 static constexpr double CI_Z              = 1.96;    // 95% Wilson CI
-static constexpr int    ROLLOUT_STEPS     = DEFAULT_ROLLOUT_STEPS;
-static constexpr int    HORIZON           = DEFAULT_HORIZON;
-static constexpr int    NUM_SCENARIOS     = DEFAULT_BASE_SCENARIOS;
-static constexpr double DT                = DEFAULT_DT;
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;
+static const int    HORIZON = DEFAULT_HORIZON;
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS;
+static const double    DT = DEFAULT_DT;
 static constexpr double SWITCH_PROB       = 0.1;
 static constexpr double RARE_PROB         = 0.05;
 static constexpr int    NUM_DISCS         = 1;
@@ -234,7 +234,6 @@ static ExperimentConfig make_strategy_config(const StrategyDef& strat) {
     cfg.rollout.method_name = strat.name;
 
     cfg.dro.enabled = (strat.enable_dro);
-    cfg.dro.injection_mode = strat.injection_mode;
     cfg.dro.solver.base_radius = DRO_RHO_BASE;
 
     cfg.mpc.safe_horizon_enabled = strat.safe_horizon;

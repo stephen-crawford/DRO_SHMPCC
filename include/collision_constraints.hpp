@@ -2,12 +2,6 @@
  * @file collision_constraints.hpp
  * @brief Linearized collision avoidance constraints.
  *
- * Implements Section 7: Linearized Collision Constraints
- *
- * The key equations are:
- * - Eq. 17: Direction vector computation
- * - Eq. 18: Linearized constraint formulation
- *
  * Constraints are linearized around a reference trajectory to enable QP/SQP solving.
  */
 
@@ -112,6 +106,32 @@ CollisionConstraint halfspace_to_collision_constraint(
 );
 
 /**
+ * @brief A stored half-space re-anchored about an ARBITRARY current state.
+ *
+ * value  = a^T c_d(x) - b            (signed clearance at x; the row's constant)
+ * gradient = d/d(p_x, p_y, theta) of a^T c_d  =  a^T J_d(theta)
+ */
+struct DiscConstraintRow {
+    double value = 0.0;
+    Eigen::RowVector3d gradient = Eigen::RowVector3d::Zero();
+};
+
+/**
+ * @brief Re-anchor a fixed collision half-space about the CURRENT state.
+ *
+ * An SQP row is only a valid first-order model if its constant and its gradient are
+ * taken at the SAME point. The normal `a` is deliberately frozen at construction
+ * (that is what keeps the row affine, and the half-space stays conservative for any
+ * c by Cauchy-Schwarz), but the ANCHOR must track the iterate: the constraint value
+ * at zero step is a^T c_d(x), evaluated on the exact nonlinear disc centre
+ * c_d(x) = (x, y) + l_d (cos theta, sin theta).
+ */
+DiscConstraintRow linearize_constraint_at_state(
+    const CollisionConstraint& constraint,
+    const EgoState& state
+);
+
+/**
  * @brief Compute linearized collision constraints for all scenarios.
  *
  * Following Section 7:
@@ -190,21 +210,6 @@ std::vector<CollisionConstraint> filter_constraints_by_clearance(
  * of s_i IMPLIES the matching half-space of s_j on the reachable ball, so
  * Theta_{s_i} ⊆ Theta_{s_j} and s_j is redundant.
  *
- * SOUNDNESS: dominance is certified by an EXACT closed-form bounded-domain half-space
- * implication test (see scenario_dominates / halfspace_implies_on_ball in the .cpp),
- * evaluated on the ACTUAL constructed (a, b) pairs for EVERY ego disc. It is a
- * conservative sufficient condition — it may leave some true redundancies un-pruned,
- * but it never certifies a containment that does not hold, so pruning cannot drop an
- * active (non-redundant) scenario. A comparison is only treated as dominance when it
- * is well posed (identical obstacle-ID sets, full horizon coverage, no obstacle
- * coincident with a disc center); otherwise the pair is kept. The certified relation
- * is genuine containment on a fixed ball, hence transitive, so the greedy pairwise
- * elimination is order-independent for safety. This REPLACES the earlier a-priori
- * distance + fixed-angle heuristic, which could over-prune.
- *
- * Injected worst-case scenarios (Scenario::is_injected) are NEVER pruned, so the
- * DRO injection path survives the reduction intact.
- *
  * @param scenarios         Sampled scenario set (may include is_injected scenarios).
  * @param reference_trajectory Reference ego trajectory (half-spaces linearized here).
  * @param combined_radius   Ego + obstacle radius + safety margin R (must match the
@@ -217,6 +222,14 @@ std::vector<CollisionConstraint> filter_constraints_by_clearance(
  *                          that over-estimates the true reachable displacement. The
  *                          large default reduces pruning to essentially-collinear
  *                          closer obstacles (always safe).
+ * @param reachable_radius_growth_per_step  Optional linear growth, so the ball used at
+ *                          step k has radius `reachable_radius + k * growth`. The
+ *                          planned and reference trajectories share x_0 exactly, so the
+ *                          reachable displacement is ~0 at k=0 and grows with k;
+ *                          a single horizon-end scalar over-estimates every earlier
+ *                          step. The caller derives the growth from the actual speed
+ *                          bound (2 * v_max * dt per step). Default 0 reproduces the
+ *                          previous constant-ball behaviour exactly.
  * @return The non-dominated scenario subset (injected scenarios always retained).
  */
 std::vector<Scenario> prune_dominated_scenarios(
@@ -225,22 +238,12 @@ std::vector<Scenario> prune_dominated_scenarios(
     double combined_radius = 1.0,
     int num_discs = 1,
     double vehicle_length = 0.0,
-    double reachable_radius = 1.0e6
+    double reachable_radius = 1.0e6,
+    double reachable_radius_growth_per_step = 0.0
 );
 
 /**
- * @brief Douglas-Rachford projection for collision avoidance.
- *
- * Projects a position onto the collision-free region outside a circle
- * of given radius centered at the obstacle. Uses the DR splitting
- * method from the Python reference (utils/math_tools_impl.py).
-/**
  * @brief Project a warmstart trajectory to satisfy collision constraints.
- *
- * For each timestep, if the warmstart position violates any collision
- * constraint, project it away from the obstacle using Douglas-Rachford.
- * This ensures the solver warmstart is feasible, preventing solver
- * failures. Reference: Python GaussianConstraints._project_warmstart_to_gaussian_safety
  *
  * @param trajectory Warmstart trajectory (modified in-place)
  * @param constraints Collision constraints to satisfy (radii already baked into b)
@@ -257,4 +260,4 @@ int project_warmstart_to_safety(
 
 }  // namespace dro_mpc
 
-#endif  // SCENARIO_MPC_COLLISION_CONSTRAINTS_HPP
+#endif  // DRO_MPC_COLLISION_CONSTRAINTS_HPP

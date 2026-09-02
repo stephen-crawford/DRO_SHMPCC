@@ -63,7 +63,7 @@ int main() {
     };
     for (const auto& k : cfgs) {
         ExperimentConfig w = base;
-        w.dro.enabled = true; w.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
+        w.dro.enabled = true;
         w.dro.solver.radius_calibration.use_calibrated_radius = k.calib; w.dro.solver.radius_calibration.risk_measure = k.rm; w.dro.solver.radius_calibration.use_primal_ot = k.ot;
         double wc = coll_rate(w, N);
         std::printf("%-42s %8.3f %+8.1fpp\n", k.name, wc, 100.0*(base_c - wc));

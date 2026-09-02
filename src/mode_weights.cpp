@@ -12,15 +12,12 @@ namespace dro_mpc {
 namespace {
 
 /**
- * @brief Compute frequency-based weights (Eq. 6).
- *
- * w_m = n_m / sum_j n_j
- * where n_m is the number of times mode m was observed.
+ * @brief Compute weights
  */
 std::map<std::string, double> compute_frequency_weights(
     const ModeHistory& mode_history,
     const std::vector<std::string>& modes,
-    double dirichlet_alpha = 0.0
+    double dirichlet_alpha = 0.5
 ) {
     auto counts = mode_history.get_mode_counts();
     std::map<std::string, double> weights;
@@ -37,8 +34,7 @@ std::map<std::string, double> compute_frequency_weights(
 
 std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
-    const ModeBeliefConfig& belief,
-    int /*current_timestep*/
+    const ModeBeliefConfig& belief
 ) {
     std::vector<std::string> modes;
     for (const auto& [mode_id, _] : mode_history.available_modes) {

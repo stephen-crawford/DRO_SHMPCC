@@ -38,9 +38,9 @@ using namespace dro_mpc;
 // ============================================================================
 
 static constexpr int ROLLOUTS_PER_CONDITION = 300;
-static constexpr int ROLLOUT_STEPS = 200;
-static constexpr int NUM_SCENARIOS = 40;
-static constexpr int HORIZON = DEFAULT_HORIZON;
+static const int    ROLLOUT_STEPS = 200;
+static const int    NUM_SCENARIOS = 40;
+static const int    HORIZON = DEFAULT_HORIZON;
 static constexpr double DRO_RHO = 0.1;
 
 static const std::string OUT_DIR = "paper_figures/";
@@ -191,7 +191,6 @@ ExperimentConfig make_sweep_config(
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = PATH_COMPLETE_FRAC;
     cfg.dro.enabled = (strat.enable_dro);
-    cfg.dro.injection_mode = strat.injection_mode;
     cfg.dro.solver.base_radius = DRO_RHO;
     cfg.mpc.safe_horizon_enabled = strat.safe_horizon;
     cfg.mpc.constraints.safe_horizon_min = 3;

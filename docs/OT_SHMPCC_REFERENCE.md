@@ -455,7 +455,7 @@ flowchart LR
     subgraph EgoDynamics["EgoDynamics Class"]
         PROP[propagate<br/>Single RK4 step]
         ROLL[rollout<br/>N-step propagation]
-        JAC[get_jacobians<br/>Finite-difference A_k, B_k]
+        JAC[get_jacobians<br/>Analytic RK4-variational A_k, B_k]
     end
 
     subgraph ModeFactory["Obstacle Mode Factory"]
@@ -496,7 +496,7 @@ All modes use process noise matrix $G$ with scaling factor 0.5 matching the Pyth
 |---|---|
 | `propagate(state, input)` | RK4 integration over dt |
 | `rollout(initial, inputs)` | Propagate N steps, returns N+1 states |
-| `get_jacobians(state, input)` | Returns `(A_k, B_k)` Jacobians for SQP linearization |
+| `get_jacobians(state, input)` | Returns `(A_k, B_k)` for SQP linearization; exact derivative of the RK4 map (variational equations), not Euler |
 | `create_obstacle_mode_models(dt)` | Factory: creates all 6 standard modes |
 
 ---

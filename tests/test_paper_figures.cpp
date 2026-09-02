@@ -53,10 +53,10 @@ namespace fs = std::filesystem;
 
 static const std::string OUTPUT_DIR = "paper_figures/";
 
-static constexpr int    HORIZON         = DEFAULT_HORIZON;   // 15
-static constexpr double DT              = DEFAULT_DT;        // 0.1
-static constexpr int    NUM_SCENARIOS   = DEFAULT_BASE_SCENARIOS; // 40
-static constexpr int    ROLLOUT_STEPS   = DEFAULT_ROLLOUT_STEPS;  // 200
+static const int    HORIZON = DEFAULT_HORIZON;   // 15
+static const double    DT = DEFAULT_DT;        // 0.1
+static const int    NUM_SCENARIOS = DEFAULT_BASE_SCENARIOS; // 40
+static const int    ROLLOUT_STEPS = DEFAULT_ROLLOUT_STEPS;  // 200
 static constexpr int    NUM_DISCS       = 1;
 static constexpr double VEHICLE_LENGTH  = 1.5;
 static constexpr int    SAFE_HORIZON_MIN = 3;
@@ -213,7 +213,6 @@ static ExperimentConfig make_base_config(double switch_prob, double rare_prob,
     cfg.environment.path_completion_termination = true;
     cfg.environment.path_completion_fraction = 0.95;
     cfg.dro.enabled = false;
-    cfg.dro.injection_mode = InjectionMode::NONE;
     cfg.dro.solver.base_radius = 0.1;
     return cfg;
 }
@@ -229,15 +228,12 @@ static ExperimentConfig make_method_config(MethodType method, double switch_prob
             break;
         case MethodType::WDRO_SAMPLING:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
             break;
         case MethodType::WDRO_INJECTION:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
         case MethodType::WDRO_COMBINED:
             cfg.dro.enabled = true;
-            cfg.dro.injection_mode = InjectionMode::TOP_RISK_INJECT;
             break;
     }
     return cfg;
@@ -294,7 +290,7 @@ static void run_fig40_risk_lift() {
     dro_cfg.base_radius = RHO_BASE;
     dro_cfg.min_radius = 0.01;
     dro_cfg.max_radius = 0.5;
-    dro_cfg.adaptive_radius = true;
+    dro_cfg.radius_calibration.use_calibrated_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
     WassersteinDRO dro_probe(dro_cfg);
 
@@ -543,7 +539,6 @@ static void run_fig43_geometry_ablation() {
         ExperimentConfig cfg = make_base_config(SWITCH_PROB, RARE_PROB);
         cfg.rollout.method_name = var.name;
         cfg.dro.enabled = (var.enable_dro);
-        cfg.dro.injection_mode = var.enable_dro ? InjectionMode::QSTAR_SAMPLE : InjectionMode::NONE;
         cfg.dro.solver.ground_cost_type = var.ground_cost;
 
         Metrics met;
@@ -632,7 +627,6 @@ static void run_fig44_rho_sweep() {
         ExperimentConfig cfg = make_base_config(SWITCH_PROB, RARE_PROB);
         cfg.rollout.method_name = "WDRO-sampling";
         cfg.dro.enabled = true;
-        cfg.dro.injection_mode = InjectionMode::QSTAR_SAMPLE;
         cfg.dro.solver.base_radius = rho;
 
         Metrics met;
@@ -697,7 +691,7 @@ static void run_fig45_feasibility() {
     dro_cfg.base_radius = RHO_BASE;
     dro_cfg.min_radius = 0.01;
     dro_cfg.max_radius = 0.5;
-    dro_cfg.adaptive_radius = true;
+    dro_cfg.radius_calibration.use_calibrated_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
     WassersteinDRO dro_probe(dro_cfg);
 

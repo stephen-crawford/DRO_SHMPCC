@@ -28,9 +28,13 @@ ReferencePath ReferencePath::create_straight(
     }
 
     double heading = std::atan2(direction.y(), direction.x());
-    direction /= length;
 
     path.points_.reserve(num_points);
+    if (num_points == 1) {
+        path.points_.emplace_back(start, heading, 0.0, 0.0);
+        return path;
+    }
+
     for (int i = 0; i < num_points; ++i) {
         double t = static_cast<double>(i) / (num_points - 1);
         double s = t * length;
@@ -78,6 +82,11 @@ ReferencePath ReferencePath::create_s_curve(
 
     path.total_length_ = s_vals.back();
 
+    if (num_points == 1) {
+        path.points_.emplace_back(Eigen::Vector2d(x_vals[0], y_vals[0]), 0.0, 0.0, s_vals[0]);
+        return path;
+    }
+    
     // Compute headings and curvatures
     for (int i = 0; i < num_points; ++i) {
         double x = x_vals[i];
@@ -89,7 +98,7 @@ ReferencePath ReferencePath::create_s_curve(
         // d2y/dx2 = -A * (2*pi/L)^2 * sin(2*pi*x/L)
         double d2ydx2 = -amplitude * std::pow(2 * M_PI / length, 2) * std::sin(2 * M_PI * x / length);
 
-        // Curvature: k = |d2y/dx2| / (1 + (dy/dx)^2)^(3/2)
+        // Curvature: k = d2y/dx2 / (1 + (dy/dx)^2)^(3/2)
         double curvature = d2ydx2 / std::pow(1 + dydx*dydx, 1.5);
 
         Eigen::Vector2d pos(x_vals[i], y_vals[i]);
