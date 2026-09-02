@@ -136,17 +136,6 @@ public:
     /// Clear all custom mode weights.
     void clear_custom_mode_weights();
 
-    /// Mutable config access (for per-step adjustments like safety_margin).
-    RuntimeConfig& mutable_config() { return config_; }
-
-    /// Inject an extra scenario for the next solve() call.
-    /// Pre-injected scenarios are added after normal sampling and marked
-    /// is_injected=true so they survive pruning. Cleared after solve().
-    void inject_scenario(const Scenario& scenario);
-
-    /// Clear all pre-injected scenarios.
-    void clear_injected_scenarios();
-
     /// Update a mode model's dynamics parameters (b, G) for all obstacles.
     void update_mode_model(const std::string& mode_id,
                            const Eigen::Vector4d& b_new,
@@ -164,17 +153,7 @@ private:
     );
 
     /**
-     * @brief Generate straight-line reference trajectory.
-     */
-    std::vector<EgoState> generate_straight_line_trajectory(
-        const EgoState& start,
-        const Eigen::Vector2d& goal,
-        double reference_velocity
-    );
-
-    /**
      * @brief Solve the scenario-constrained optimization problem.
-     * Uses simple optimization (no CasADi dependency).
      */
     MPCResult solve_optimization(
         const EgoState& ego_state,
