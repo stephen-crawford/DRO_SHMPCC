@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cassert>
 #include <iomanip>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -59,10 +60,26 @@ struct BindYamlDefaults {
         }
     }
 } bind_yaml_defaults;
+
+std::map<std::string, ModeModel> mode_models_for(
+    const std::vector<std::string>& mode_ids,
+    const std::map<std::string, ModeModel>& mode_catalog
+) {
+    std::map<std::string, ModeModel> selected;
+    for (const auto& mode_id : mode_ids) {
+        const auto it = mode_catalog.find(mode_id);
+        if (it != mode_catalog.end()) selected.emplace(mode_id, it->second);
+    }
+    return selected;
+}
 }  // namespace
 
 ExperimentConfig default_experiment_config() {
     return cached_default_experiment_config();
+}
+
+EnvironmentExperimentConfig default_environment_experiment_config() {
+    return cached_default_experiment_config().environment;
 }
 
 // ============================================================================
@@ -99,17 +116,18 @@ CSVWriter::~CSVWriter() {
 }
 
 void CSVWriter::write_header() {
-    ofs_ << "seed,method,scenario,S,eps_wass,sigma,shift_rho,shift_boost,ground_cost,"
+    ofs_ << "seed,plant_seed,predictor_seed,controller_seed,method,scenario,S,eps_wass,sigma,shift_rho,shift_boost,ground_cost,"
          << "collision,collision_step,min_clearance,min_clearance_step,"
          << "total_progress,control_effort,constraint_active_count,"
          << "missed_mode_steps,total_steps,"
          << "avg_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,"
          << "total_dro_injected,avg_safe_horizon,clearance_5pct,"
-         << "mean_contouring_err,mean_velocity_err,mean_lag_err\n";
+         << "mean_contouring_err,mean_velocity_err,mean_lag_err,config_source\n";
 }
 
 void CSVWriter::write_record(const RolloutRecord& rec) {
-    ofs_ << rec.seed << "," << rec.method << "," << rec.scenario << "," << rec.S << ","
+    ofs_ << rec.seed << "," << rec.plant_seed << "," << rec.predictor_seed << ","
+         << rec.controller_seed << "," << rec.method << "," << rec.scenario << "," << rec.S << ","
          << std::fixed << std::setprecision(4)
          << rec.eps_wass << "," << rec.sigma << ","
          << rec.shift_rho << "," << rec.shift_boost << "," << rec.ground_cost << ","
@@ -123,7 +141,8 @@ void CSVWriter::write_record(const RolloutRecord& rec) {
          << rec.total_dro_injected << ","
          << std::setprecision(4) << rec.avg_safe_horizon << "," << rec.clearance_5pct << ","
          << rec.mean_contouring_error() << "," << rec.mean_velocity_error() << ","
-         << (rec.metric_steps > 0 ? std::sqrt(rec.sum_lag_sq / rec.metric_steps) : 0.0) << "\n";
+         << (rec.metric_steps > 0 ? std::sqrt(rec.sum_lag_sq / rec.metric_steps) : 0.0) << ","
+         << rec.config_source << "\n";
 }
 
 void CSVWriter::flush() {
@@ -272,6 +291,57 @@ ObstacleState obstacle_on_s_curve(
     return ObstacleState(pos.x(), pos.y(), v * tangent.x(), v * tangent.y());
 }
 
+std::vector<ObstacleSim> construct_obstacles(
+    const ObstacleExperimentConfig& config,
+    const ObstacleState& environment_default,
+    const ReferencePath& reference_path,
+    const std::map<std::string, ModeModel>& mode_catalog,
+    std::mt19937& rng
+) {
+    const int obstacle_count = std::max(1, config.num_obstacles);
+    std::vector<ObstacleSim> obstacles(obstacle_count);
+    const auto shared_modes = select_obstacle_mode_ids(
+        config.obs_modes, config.rare_mode, mode_catalog,
+        config.randomize_available_modes, config.num_modes, rng);
+
+    for (int i = 0; i < obstacle_count; ++i) {
+        auto available_modes = config.randomize_modes_per_obstacle
+            ? select_obstacle_mode_ids(
+                  config.obs_modes, config.rare_mode, mode_catalog,
+                  config.randomize_available_modes, config.num_modes, rng)
+            : shared_modes;
+        // A configured rare mode must be representable by this obstacle before
+        // the rollout can force it. This also keeps randomized mode sets valid.
+        if (!config.rare_mode.empty() &&
+            mode_catalog.find(config.rare_mode) != mode_catalog.end() &&
+            std::find(available_modes.begin(), available_modes.end(),
+                      config.rare_mode) == available_modes.end()) {
+            available_modes.push_back(config.rare_mode);
+        }
+        ObstacleSim& obstacle = obstacles[i];
+        obstacle.available_modes = available_modes;
+        obstacle.mode_models = mode_models_for(available_modes, mode_catalog);
+        obstacle.current_mode = available_modes.empty()
+            ? "constant_velocity"
+            : available_modes[i % available_modes.size()];
+
+        if (i < static_cast<int>(config.initial_obstacle_states.size())) {
+            obstacle.state = config.initial_obstacle_states[i];
+        } else if (obstacle_count == 1 && config.initial_obstacle_states.empty()) {
+            obstacle.state = environment_default;
+        } else {
+            double fraction = config.default_arc_fraction;
+            if (i < static_cast<int>(config.obs_arc_fractions.size())) {
+                fraction = config.obs_arc_fractions[i];
+            } else if (obstacle_count > 1) {
+                fraction = std::min(0.20 + 0.15 * i, 0.85);
+            }
+            obstacle.state = obstacle_on_s_curve(reference_path, fraction, rng);
+        }
+    }
+    return obstacles;
+}
+
 // ============================================================================
 // Canonical Rollout Runner
 // ============================================================================
@@ -283,13 +353,18 @@ RolloutRecord run_experiment_rollout(
     ExperimentConfig config = config_in;
     config.normalize();
 
-    std::mt19937 rng(seed);
+    const SeedBundle seeds = derive_seeds(seed, 0);
+    std::mt19937 plant_rng(seeds.env);
     RolloutRecord rec;
     rec.seed = seed;
+    rec.plant_seed = seeds.env;
+    rec.predictor_seed = seeds.predictor;
+    rec.controller_seed = seeds.scenario;
+    rec.config_source = config.config_source;
     rec.method = arm_name(config);
     rec.scenario = config.rollout.scenario_tag;
     rec.S = config.mpc.sampling.num_scenarios;
-    rec.eps_wass = config.dro.solver.base_radius;
+    rec.eps_wass = 0.0;
     rec.sigma = 0.0;
     rec.shift_rho = config.obstacles.shift.psi;
     rec.shift_boost = config.obstacles.shift.dangerous_boost;
@@ -298,23 +373,14 @@ RolloutRecord run_experiment_rollout(
     auto mode_models = create_obstacle_mode_models(config.mpc.dt);
 
     RuntimeConfig mpc_cfg = config.to_scenario_mpc_config();
+    mpc_cfg.random_seed = seeds.scenario;
 
-    AdaptiveScenarioMPC controller(mpc_cfg);
-
-    std::map<std::string, ModeModel> obs_mode_models;
-    for (const auto& m : config.obstacles.obs_modes) {
-        if (mode_models.find(m) != mode_models.end())
-            obs_mode_models[m] = mode_models[m];
-    }
-    if (!config.obstacles.rare_mode.empty() &&
-        mode_models.find(config.obstacles.rare_mode) != mode_models.end()) {
-        obs_mode_models[config.obstacles.rare_mode] =
-            mode_models[config.obstacles.rare_mode];
-    }
+    MPCController controller(mpc_cfg);
 
     const double metrics_v_ref = config.rollout.metrics_v_ref;
     const double dt = config.mpc.dt;
-    EnvironmentSetup env_setup = create_environment(config.environment.type, rng, config.environment);
+    EnvironmentSetup env_setup = create_environment(
+        config.environment.type, plant_rng, config.environment);
     ReferencePath ref_path = config.environment.custom_ref_path.has_value()
         ? config.environment.custom_ref_path.value()
         : env_setup.path;
@@ -327,41 +393,14 @@ RolloutRecord run_experiment_rollout(
     double collision_radius = mpc_cfg.combined_radius();
     double path_progress = 0.0;
 
-    const int n_obs = std::max(1, config.obstacles.num_obstacles);
+    auto obs_sims = construct_obstacles(
+        config.obstacles, env_setup.initial_obs, ref_path, mode_models, plant_rng);
+    const int n_obs = static_cast<int>(obs_sims.size());
     const int per_class = std::max(1, config.obstacles.obstacles_per_class);
-    std::vector<ObstacleSim> obs_sims(n_obs);
-
-    std::vector<std::string> all_modes = config.obstacles.obs_modes;
-    if (!config.obstacles.rare_mode.empty()) {
-        all_modes.push_back(config.obstacles.rare_mode);
-    }
 
     for (int i = 0; i < n_obs; ++i) {
         int obs_class = i / per_class;
-        controller.initialize_obstacle(i, obs_class, obs_mode_models);
-
-        if (i < static_cast<int>(config.obstacles.initial_obstacle_states.size())) {
-            obs_sims[i].state = config.obstacles.initial_obstacle_states[i];
-        } else {
-            if (n_obs == 1 && config.obstacles.initial_obstacle_states.empty() &&
-                i == 0) {
-                obs_sims[i].state = env_setup.initial_obs;
-            } else {
-                double frac = config.obstacles.default_arc_fraction;
-                if (i < static_cast<int>(config.obstacles.obs_arc_fractions.size())) {
-                    frac = config.obstacles.obs_arc_fractions[i];
-                } else if (n_obs > 1) {
-                    frac = std::min(0.20 + 0.15 * i, 0.85);
-                }
-                obs_sims[i].state = obstacle_on_s_curve(ref_path, frac, rng);
-            }
-        }
-
-        obs_sims[i].current_mode = config.obstacles.obs_modes.empty()
-            ? "constant_velocity"
-            : config.obstacles.obs_modes[i % config.obstacles.obs_modes.size()];
-        obs_sims[i].available_modes = all_modes;
-        obs_sims[i].mode_models = obs_mode_models;
+        controller.initialize_obstacle(i, obs_class, obs_sims[i].mode_models);
     }
 
     for (int t = 0; t < 5; ++t) {
@@ -386,18 +425,19 @@ RolloutRecord run_experiment_rollout(
         for (int oi = 0; oi < n_obs; ++oi) {
             if (!switch_allowed) {
             } else if (!config.obstacles.rare_mode.empty() &&
-                       config.obstacles.rare_switch_prob > 0) {
+                       config.obstacles.rare_switch_prob > 0 &&
+                       obs_sims[oi].mode_models.count(config.obstacles.rare_mode) != 0) {
                 std::uniform_real_distribution<double> u(0, 1);
-                if (u(rng) < config.obstacles.rare_switch_prob) {
+                if (u(plant_rng) < config.obstacles.rare_switch_prob) {
                     obs_sims[oi].current_mode = config.obstacles.rare_mode;
                 } else {
-                    obs_sims[oi].maybe_switch(config.obstacles.switch_prob, rng);
+                    obs_sims[oi].maybe_switch(config.obstacles.switch_prob, plant_rng);
                 }
             } else {
-                obs_sims[oi].maybe_switch(config.obstacles.switch_prob, rng);
+                obs_sims[oi].maybe_switch(config.obstacles.switch_prob, plant_rng);
             }
 
-            apply_distribution_shift(config.obstacles.shift, obs_sims[oi], rng);
+            apply_distribution_shift(config.obstacles.shift, obs_sims[oi], plant_rng);
 
             int obs_class = oi / per_class;
             controller.update_mode_observation(
@@ -405,7 +445,7 @@ RolloutRecord run_experiment_rollout(
 
             if (config.rollout.step_callback) {
                 config.rollout.step_callback(
-                    step, oi, obs_sims[oi], controller, rng);
+                    step, oi, obs_sims[oi], controller, plant_rng);
             }
         }
 
@@ -418,46 +458,11 @@ RolloutRecord run_experiment_rollout(
 
         auto mpc_result = controller.solve(
             ego, obstacles, goal, metrics_v_ref, path_progress, path_length);
+        rec.eps_wass = mpc_result.ambiguity_radius_used;
         rec.solve_times_raw.push_back(mpc_result.solve_time);
         rec.total_dro_injected += mpc_result.num_dro_injected;
         if (mpc_result.safe_horizon > 0)
             safe_horizons.push_back(mpc_result.safe_horizon);
-
-        for (int oi = 0; oi < n_obs; ++oi) {
-            bool collision_this_obs = false;
-            double min_dist_this_obs = 1e9;
-
-            if (config.mpc.ego.num_discs > 1) {
-                double theta = ego.theta;
-                Eigen::Vector2d dir(std::cos(theta), std::sin(theta));
-                double step_offset =
-                    config.mpc.ego.length / (config.mpc.ego.num_discs - 1);
-                for (int d = 0; d < config.mpc.ego.num_discs; ++d) {
-                    double offset =
-                        -config.mpc.ego.length / 2.0 + d * step_offset;
-                    Eigen::Vector2d disc_pos = ego.position() + offset * dir;
-                    double dist_d =
-                        (disc_pos - obs_sims[oi].state.position()).norm();
-                    min_dist_this_obs = std::min(min_dist_this_obs, dist_d);
-                    if (dist_d < collision_radius) collision_this_obs = true;
-                }
-            } else {
-                double dist =
-                    (ego.position() - obs_sims[oi].state.position()).norm();
-                min_dist_this_obs = dist;
-                if (dist < collision_radius) collision_this_obs = true;
-            }
-
-            clearances.push_back(min_dist_this_obs);
-            if (min_dist_this_obs < rec.min_clearance) {
-                rec.min_clearance = min_dist_this_obs;
-                rec.min_clearance_step = step;
-            }
-            if (collision_this_obs && !rec.collision) {
-                rec.collision = true;
-                rec.collision_step = step;
-            }
-        }
 
         constraint_active_total +=
             static_cast<int>(mpc_result.active_scenarios.size());
@@ -534,8 +539,44 @@ RolloutRecord run_experiment_rollout(
         }
 
         for (int oi = 0; oi < n_obs; ++oi) {
-            obs_sims[oi].step(dt, rng, config.obstacles.process_noise,
+            obs_sims[oi].step(dt, plant_rng, config.obstacles.process_noise,
                               config.obstacles.speed_cap);
+        }
+
+        // Evaluate the outcome at t + 1, after both actors have advanced.
+        // This makes collision and completion accounting agree with the state
+        // passed to the next controller solve.
+        path_progress = ref_path.find_closest_point(ego.position(), path_progress);
+        for (int oi = 0; oi < n_obs; ++oi) {
+            bool collision_this_obs = false;
+            double min_dist_this_obs = std::numeric_limits<double>::infinity();
+            if (config.mpc.ego.num_discs > 1) {
+                const Eigen::Vector2d direction(
+                    std::cos(ego.theta), std::sin(ego.theta));
+                const double disc_spacing = config.mpc.ego.length /
+                    static_cast<double>(config.mpc.ego.num_discs - 1);
+                for (int disc = 0; disc < config.mpc.ego.num_discs; ++disc) {
+                    const double offset = -0.5 * config.mpc.ego.length +
+                        disc * disc_spacing;
+                    const double distance = (ego.position() + offset * direction -
+                        obs_sims[oi].state.position()).norm();
+                    min_dist_this_obs = std::min(min_dist_this_obs, distance);
+                    collision_this_obs = collision_this_obs || distance < collision_radius;
+                }
+            } else {
+                min_dist_this_obs =
+                    (ego.position() - obs_sims[oi].state.position()).norm();
+                collision_this_obs = min_dist_this_obs < collision_radius;
+            }
+            clearances.push_back(min_dist_this_obs);
+            if (min_dist_this_obs < rec.min_clearance) {
+                rec.min_clearance = min_dist_this_obs;
+                rec.min_clearance_step = step + 1;
+            }
+            if (collision_this_obs && !rec.collision) {
+                rec.collision = true;
+                rec.collision_step = step + 1;
+            }
         }
         rec.total_steps++;
 
@@ -599,16 +640,14 @@ EnvironmentSetup create_environment(
     EnvironmentSetup setup;
     std::uniform_real_distribution<double> jitter(-0.3, 0.3);
 
-    auto path = path_cfg.custom_ref_path.has_value()
-        ? path_cfg.custom_ref_path.value()
-        : ReferencePath::create_s_curve(
-              path_cfg.s_curve_length, path_cfg.s_curve_amplitude,
-              path_cfg.s_curve_points);
+    const ReferencePath path = build_environment_reference_path(env, path_cfg);
     setup.path = path;
     setup.obs_modes = {
         "constant_velocity", "turn_left", "turn_right", "decelerating"};
+    const PathPoint path_start = path.get_point_at(0.0);
     setup.initial_ego = path_cfg.custom_initial_ego.value_or(
-        EgoState(0.0, 0.0, 0.0, path_cfg.ego_initial_v));
+        EgoState(path_start.position.x(), path_start.position.y(),
+                 path_start.heading, path_cfg.ego_initial_v));
     setup.goal = path.get_position_at(path.total_length());
     setup.name = environment_name(env);
 
@@ -676,16 +715,21 @@ RolloutResult run_single_rollout_env(
     ExperimentConfig cfg,
     unsigned seed,
     const EnvironmentSetup& env_setup,
-    SamplingBaseline baseline,
+    SamplingBaseline,
     int forced_safe_horizon
 ) {
-    cfg.obstacles.obs_modes = env_setup.obs_modes;
-    cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+    // An explicit YAML/in-memory mode list takes precedence over an
+    // environment's legacy suggestion.
+    if (cfg.obstacles.obs_modes.empty()) {
+        cfg.obstacles.obs_modes = env_setup.obs_modes;
+    }
+    if (cfg.obstacles.initial_obstacle_states.empty()) {
+        cfg.obstacles.initial_obstacle_states = {env_setup.initial_obs};
+    }
     cfg.environment.custom_initial_ego = env_setup.initial_ego;
     if (env_setup.path.total_length() > 0.0) {
         cfg.environment.custom_ref_path = env_setup.path;
     }
-    cfg.sampling.baseline = baseline;
     cfg.mpc.constraints.forced_safe_horizon = forced_safe_horizon;
     if (forced_safe_horizon >= 0) {
         cfg.mpc.safe_horizon_enabled = true;

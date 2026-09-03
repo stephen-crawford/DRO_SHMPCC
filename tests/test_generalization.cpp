@@ -28,7 +28,7 @@
 
 #include "experiment_harness.hpp"
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "reference_path.hpp"
 #include "dynamics.hpp"
 

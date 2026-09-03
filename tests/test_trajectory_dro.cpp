@@ -18,7 +18,7 @@
  *     (d) Solve the Kantorovich dual over trajectory particles:
  *           sup_{Q in B_rho(P_hat)} sum_s q_s * r_s
  *         where P_hat = (1/S, ..., 1/S) is the empirical distribution
- *     (e) Either resample from Q* or inject the highest-risk trajectory
+ *     (e) Resample from Q*
  *
  * This is mode-agnostic: it works even when the obstacle model has no discrete
  * modes, directly capturing the geometry of the trajectory distribution.
@@ -26,7 +26,7 @@
  * Experiments:
  *   A: Method comparison across environments (Oncoming, Intersection)
  *   B: Multi-obstacle stress test
- *   C: Trajectory DRO variant comparison (resampling vs injection)
+ *   C: Trajectory DRO variant comparison
  *   D: Trajectory particle count sweep
  *
  * Outputs CSV files to paper_figures/.
@@ -49,7 +49,7 @@
 
 #include "experiment_harness.hpp"
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "scenario_sampler.hpp"
 #include "mode_weights.hpp"
 
@@ -378,20 +378,14 @@ struct Metrics {
 enum class TrajDROMethod {
     SHMPCC_BASE,          // No DRO (SHMPCC baseline)
     MODE_DRO_SAMPLE,      // Discrete-mode DRO: resample from q*
-    MODE_DRO_INJECT,      // Discrete-mode DRO: inject worst-case mode
-    TRAJ_DRO_RESAMPLE,    // Trajectory DRO: resample from trajectory q*
-    TRAJ_DRO_INJECT,      // Trajectory DRO: inject worst-case trajectory
-    TRAJ_DRO_COMBINED     // Trajectory DRO: resample + inject adversarial
+    TRAJ_DRO_RESAMPLE     // Trajectory DRO: resample from trajectory q*
 };
 
 static std::string method_name(TrajDROMethod m) {
     switch (m) {
         case TrajDROMethod::SHMPCC_BASE:        return "SHMPCC-Base";
         case TrajDROMethod::MODE_DRO_SAMPLE:    return "Mode-DRO(q*)";
-        case TrajDROMethod::MODE_DRO_INJECT:    return "Mode-DRO(inj)";
         case TrajDROMethod::TRAJ_DRO_RESAMPLE:  return "Traj-DRO(q*)";
-        case TrajDROMethod::TRAJ_DRO_INJECT:    return "Traj-DRO(inj)";
-        case TrajDROMethod::TRAJ_DRO_COMBINED:  return "Traj-DRO(comb)";
     }
     return "?";
 }
@@ -405,8 +399,7 @@ static std::string method_name(TrajDROMethod m) {
  *   1. Samples trajectory particles from the nominal distribution
  *   2. Computes per-trajectory risk
  *   3. Solves trajectory-level Kantorovich dual
- *   4. Either sets custom mode weights (resampling) or injects worst-case
- *      trajectory as an extra scenario
+ *   4. Sets custom mode weights for resampling
  */
 static ExperimentConfig make_config(
     TrajDROMethod method,
@@ -445,20 +438,14 @@ static ExperimentConfig make_config(
             cfg.dro.enabled = true;
             break;
 
-        case TrajDROMethod::MODE_DRO_INJECT:
-            cfg.dro.enabled = true;
-            break;
-
         case TrajDROMethod::TRAJ_DRO_RESAMPLE:
-        case TrajDROMethod::TRAJ_DRO_INJECT:
-        case TrajDROMethod::TRAJ_DRO_COMBINED:
             // Trajectory DRO: base SHMPCC + step callback that performs
-            // trajectory-level DRO using the controller's inject_scenario API.
+            // trajectory-level DRO by setting custom mode weights.
             // We leave enable_dro=false so the controller does normal sampling,
             // then our callback overrides with DRO-reweighted scenarios.
             cfg.rollout.step_callback = [method, rho, num_scenarios](
                 int step, int obs_id, ObstacleSim& obs_sim,
-                AdaptiveScenarioMPC& controller, std::mt19937& rng
+                MPCController& controller, std::mt19937& rng
             ) {
                 // Only act on the first obstacle callback per step
                 if (obs_id != 0) return;
@@ -535,26 +522,7 @@ static ExperimentConfig make_config(
 
                 if (dro_result.worst_trajectory_idx < 0) return;
 
-                // Apply the DRO result based on method variant
-                if (method == TrajDROMethod::TRAJ_DRO_INJECT ||
-                    method == TrajDROMethod::TRAJ_DRO_COMBINED) {
-                    // Inject the worst-case trajectory as an extra scenario
-                    int worst_idx = dro_result.worst_trajectory_idx;
-                    const auto& worst_traj = traj_particles[worst_idx];
-
-                    // Build a scenario containing just this trajectory
-                    Scenario inj_scenario;
-                    inj_scenario.scenario_id = num_scenarios + 100 + step;
-                    inj_scenario.is_injected = true;
-                    inj_scenario.probability = 1.0;
-                    inj_scenario.trajectories[0] = worst_traj;
-                    inj_scenario.trajectories[0].probability = 1.0;
-
-                    controller.inject_scenario(inj_scenario);
-                }
-
-                if (method == TrajDROMethod::TRAJ_DRO_RESAMPLE ||
-                    method == TrajDROMethod::TRAJ_DRO_COMBINED) {
+                if (method == TrajDROMethod::TRAJ_DRO_RESAMPLE) {
                     // Set custom mode weights based on trajectory DRO result.
                     // Aggregate trajectory-level Q* weights back to mode weights:
                     //   q_mode[m] = sum_{s: mode_s == m} q_traj[s]
@@ -629,10 +597,7 @@ static void run_exp_a() {
     const std::vector<TrajDROMethod> METHODS = {
         TrajDROMethod::SHMPCC_BASE,
         TrajDROMethod::MODE_DRO_SAMPLE,
-        TrajDROMethod::MODE_DRO_INJECT,
-        TrajDROMethod::TRAJ_DRO_RESAMPLE,
-        TrajDROMethod::TRAJ_DRO_INJECT,
-        TrajDROMethod::TRAJ_DRO_COMBINED
+        TrajDROMethod::TRAJ_DRO_RESAMPLE
     };
     const int N_ROLLOUTS = 500;
     const double SWITCH_PROB = 0.2;
@@ -701,8 +666,7 @@ static void run_exp_b() {
     const std::vector<TrajDROMethod> METHODS = {
         TrajDROMethod::SHMPCC_BASE,
         TrajDROMethod::MODE_DRO_SAMPLE,
-        TrajDROMethod::TRAJ_DRO_RESAMPLE,
-        TrajDROMethod::TRAJ_DRO_INJECT
+        TrajDROMethod::TRAJ_DRO_RESAMPLE
     };
     const int N_ROLLOUTS = 500;
     const double SWITCH_PROB = 0.2;
@@ -762,10 +726,7 @@ static void run_exp_c() {
     const std::vector<TrajDROMethod> METHODS = {
         TrajDROMethod::SHMPCC_BASE,
         TrajDROMethod::MODE_DRO_SAMPLE,
-        TrajDROMethod::MODE_DRO_INJECT,
-        TrajDROMethod::TRAJ_DRO_RESAMPLE,
-        TrajDROMethod::TRAJ_DRO_INJECT,
-        TrajDROMethod::TRAJ_DRO_COMBINED
+        TrajDROMethod::TRAJ_DRO_RESAMPLE
     };
     const int N_ROLLOUTS = 1000;
     const double SWITCH_PROB = 0.2;
@@ -836,8 +797,7 @@ static void run_exp_d() {
     const std::vector<double> RHOS = {0.01, 0.05, 0.1, 0.2, 0.5};
     const std::vector<TrajDROMethod> METHODS = {
         TrajDROMethod::MODE_DRO_SAMPLE,
-        TrajDROMethod::TRAJ_DRO_RESAMPLE,
-        TrajDROMethod::TRAJ_DRO_INJECT
+        TrajDROMethod::TRAJ_DRO_RESAMPLE
     };
     const int N_ROLLOUTS = 500;
     const double SWITCH_PROB = 0.2;

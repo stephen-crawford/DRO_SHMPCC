@@ -5,7 +5,7 @@
 //  (B) Ambiguity-radius behavior: a TIGHT rho must keep q* close to nominal (graded /
 //      full support). q* = e_argmax only when the transport budget rho is SLACK. Report
 //      the transport cost D and sweep rho to find where collapse begins.
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "dynamics.hpp"
 #include <cstdio>
 #include <map>
@@ -26,7 +26,7 @@ int main() {
     std::vector<EgoState> ego_ref; for (int k=0;k<=15;++k) ego_ref.emplace_back(k*0.34, 0.0, 0.0, 1.5);
 
     DROConfig cfg;  // default: Bonferroni VaR, calibrated radius, primal OT
-    WassersteinDRO dro(cfg);
+    DRO dro(cfg);
     DROResult r = dro.compute_worst_case_weights(nominal, obs, mm, ego_ref, 15, 0.5, 0.35, 0.2);
 
     // (A) risk vector, sorted
@@ -52,7 +52,7 @@ int main() {
 
     std::printf("    rho     support(#modes>1e-3)   q*[danger]   ||q*-nominal||_1\n");
     for (double rho : {0.02,0.05,0.10,0.15,0.20,0.30,0.50}) {
-        WassersteinDRO d2(cfg); d2.set_rho_override(rho);
+        DRO d2(cfg); d2.set_rho_override(rho);
         DROResult rr = d2.compute_worst_case_weights(nominal, obs, mm, ego_ref, 15, 0.5, 0.35, 0.2);
         int sup=0; double l1=0; for (auto& m : modes){ double q=rr.worst_case_weights[m]; if(q>1e-3)++sup; l1+=std::abs(q-nominal[m]); }
         std::printf("    %-6.2f  %-20d  %-11.3f  %.3f\n", rho, sup, rr.worst_case_weights[rk.front().first], l1);

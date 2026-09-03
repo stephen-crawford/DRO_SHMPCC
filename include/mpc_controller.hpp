@@ -57,25 +57,25 @@ public:
     /**
      * @brief Initialize mode history for a new obstacle.
      * @param obstacle_id Unique obstacle identifier
-     * @param obstacle_class Obstacle class identifier
+    * @param obstacle_class_id Obstacle class identifier
      * @param available_modes Optional custom modes (uses defaults if empty)
      */
     void initialize_obstacle(
         int obstacle_id,
-        int obstacle_class,
+        int obstacle_class_id,
         const std::map<std::string, ModeModel>& available_modes = {}
     );
 
     /**
      * @brief Record a mode observation for an obstacle.
      * @param obstacle_id Obstacle identifier
-     * @param obstacle_class Obstacle class identifier
+    * @param obstacle_class_id Obstacle class identifier
      * @param observed_mode Observed mode ID
      * @param timestep Optional timestep (uses iteration count if -1)
      */
     void update_mode_observation(
         int obstacle_id,
-        int obstacle_class,
+        int obstacle_class_id,
         const std::string& observed_mode,
         int timestep = -1
     );
@@ -120,6 +120,11 @@ public:
     /// Get current scenarios
     const std::vector<Scenario>& scenarios() const { return scenarios_; }
 
+    /// Per-obstacle DRO diagnostics produced by the most recent solve.
+    const std::map<int, DROResult>& last_dro_results() const {
+        return last_dro_results_;
+    }
+
     /// Get DRO module (for diagnostics)
     const DRO& dro() const { return dro_; }
 
@@ -148,6 +153,13 @@ private:
      */
     void initialize_reference_trajectory(
         const EgoState& ego_state,
+        const Eigen::Vector2d& goal,
+        double reference_velocity
+    );
+
+    /// Build the cold-start numerical trajectory used by the MPC linearization.
+    std::vector<EgoState> generate_straight_line_trajectory(
+        const EgoState& start,
         const Eigen::Vector2d& goal,
         double reference_velocity
     );
@@ -220,9 +232,10 @@ private:
     ADMMSolver qp_solver_;
     std::map<std::string, ModeModel> default_modes_;
     std::map<int, ModeHistory> mode_histories_;
-    std::map<int, int> obstacle_classes_;  // obstacle_id -> obstacle_class
+    std::map<int, int> obstacle_class_ids_;  // obstacle_id -> obstacle_class_id
     std::vector<Scenario> scenarios_;
     DRO dro_;
+    std::map<int, DROResult> last_dro_results_;
     std::vector<EgoState> reference_trajectory_;
     std::mt19937 rng_;
     std::vector<double> solve_times_;
@@ -233,8 +246,6 @@ private:
     /// Custom per-obstacle mode weights (set externally, e.g. from OT predictor).
     std::map<int, std::map<std::string, double>> custom_per_obstacle_weights_;
 
-    /// Pre-injected scenarios for the next solve() call.
-    std::vector<Scenario> pre_injected_scenarios_;
 };
 
 }  // namespace dro_mpc

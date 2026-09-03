@@ -51,7 +51,7 @@
 #include "mpc_controller.hpp"
 #include "collision_constraints.hpp"
 #include "dynamics.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 // optimal_transport_predictor.hpp removed (OT types deleted)
@@ -280,12 +280,12 @@ static void run_experiment_a() {
                 RuntimeConfig cfg;
                 cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.solver.use_sqp_solver = true;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = false;
                 cfg.mpc.ego.num_discs = 1;
                 cfg.mpc.ego.length = 1.5;
-                AdaptiveScenarioMPC ctrl(cfg);
+                MPCController ctrl(cfg);
 
                 std::vector<std::string> modes_list = {"constant_velocity", "turn_left", "turn_right", "decelerating"};
                 std::map<std::string, ModeModel> omm;
@@ -654,7 +654,7 @@ static void run_experiment_f() {
     {
         std::mt19937 rng(42424);
         auto mode_mdls = create_obstacle_mode_models(DT);
-        WassersteinDRO dro_check;
+        DRO dro_check;
 
         std::map<std::string, ModeModel> omm;
         for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -814,13 +814,13 @@ static void run_experiment_g() {
             cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
             cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.mpc.safe_horizon_enabled = false;
             cfg.mpc.ego.num_discs = 1;
             cfg.mpc.ego.length = 1.5;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -1215,13 +1215,13 @@ static void run_experiment_l() {
                 cfg.mpc.sampling.num_scenarios = S;
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35;
                 cfg.mpc.constraints.safety_margin = 0.2;
-                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.solver.use_sqp_solver = true;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
                 cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
                 cfg.mpc.ego.num_discs = 1;
 
-                AdaptiveScenarioMPC ctrl(cfg);
+                MPCController ctrl(cfg);
 
                 std::map<std::string, ModeModel> omm;
                 for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -1410,12 +1410,12 @@ static void run_experiment_n() {
             RuntimeConfig cfg;
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = S;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.mpc.safe_horizon_enabled = true;
             cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
             ctrl.initialize_obstacle(0, 0, omm);
@@ -1482,12 +1482,12 @@ static void run_experiment_n() {
             RuntimeConfig cfg;
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.mpc.safe_horizon_enabled = true;
             cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = D; cfg.mpc.ego.length = 4.0;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
             ctrl.initialize_obstacle(0, 0, omm);
@@ -1554,13 +1554,13 @@ static void run_experiment_n() {
             RuntimeConfig cfg;
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.mpc.safe_horizon_enabled = true;
             cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.constraints.forced_safe_horizon = ns;
             cfg.mpc.ego.num_discs = 3; cfg.mpc.ego.length = 4.0;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
             ctrl.initialize_obstacle(0, 0, omm);
@@ -1664,13 +1664,13 @@ static void run_experiment_o() {
                 RuntimeConfig cfg;
                 cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
                 cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-                cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+                cfg.solver.use_sqp_solver = true;
                 cfg.dro.enabled = arm_uses_dro(arm.dro);
                 cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
                 cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
                 cfg.mpc.ego.num_discs = 1;
 
-                AdaptiveScenarioMPC ctrl(cfg);
+                MPCController ctrl(cfg);
 
                 std::map<std::string, ModeModel> omm;
                 for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -1864,12 +1864,12 @@ static void run_experiment_r() {
             RuntimeConfig cfg;
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.mpc.safe_horizon_enabled = false;
             cfg.mpc.ego.num_discs = 1;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];
@@ -2243,13 +2243,13 @@ static void run_experiment_z() {
             RuntimeConfig cfg;
             cfg.mpc.horizon = HORIZON; cfg.mpc.dt = DT; cfg.mpc.sampling.num_scenarios = BASE_SCENARIOS;
             cfg.mpc.ego.radius = 0.5; cfg.obstacle_radius = 0.35; cfg.mpc.constraints.safety_margin = 0.2;
-            cfg.solver.use_sqp_solver = true; cfg.mpc.sampling.ensure_mode_coverage = true;
+            cfg.solver.use_sqp_solver = true;
             cfg.dro.enabled = arm_uses_dro(arm.dro);
             cfg.mpc.safe_horizon_enabled = arm_uses_sh(arm.mpc);
             cfg.mpc.constraints.safe_horizon_mode = SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
             cfg.mpc.ego.num_discs = 1;
 
-            AdaptiveScenarioMPC ctrl(cfg);
+            MPCController ctrl(cfg);
 
             std::map<std::string, ModeModel> omm;
             for (auto& m : modes) omm[m] = mode_mdls[m];

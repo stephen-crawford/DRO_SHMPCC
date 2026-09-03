@@ -15,7 +15,7 @@
 //       inequality this whole family exists to fix.
 //   (D) Determinism: common random numbers make r[m] identical across repeated
 //       calls, so the W1 reweighting does not jitter between solves.
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
 #include <cstdio>
@@ -84,7 +84,7 @@ std::map<std::string, double> risk_for(
     cfg.radius_calibration.risk_measure = measure;
     cfg.radius_calibration.mixture_sequence_samples = mixture_samples;
     cfg.radius_calibration.joint_risk_samples = joint_samples;
-    WassersteinDRO dro(cfg);
+    DRO dro(cfg);
 
     std::map<std::string, double> nominal;
     for (const auto& id : f.ids) nominal[id] = 1.0 / static_cast<double>(f.ids.size());

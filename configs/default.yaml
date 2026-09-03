@@ -34,7 +34,6 @@ max_omega: 0.8
 one_minus_chance_constraint_violation_probability: 0.95
 chance_of_certificate_violation: 0.01
 enforce_certified_scenario_count: false
-ensure_mode_coverage: false
 max_history_length: -1
 markov_jump_system: false
 belief_kind: dirichlet
@@ -52,12 +51,15 @@ alpha_one_sided: 0.95
 calibration_scale: 1.0
 use_primal_ot: true
 risk_measure: surrogate_var_bonferroni
+# -1 follows the active safe horizon; set a positive value to override it.
+risk_horizon: -1
 divergence: wasserstein
 ground_cost: w2_bures
 joint_risk_samples: 8000
+joint_risk_seed: 349247176686
 mixture_sequence_samples: 512
 sigma_floor: 1.0e-6
-use_entropic_allocator: false
+use_entropic_allocator: true
 entropic_tau: 0.05
 
 # --- solver ---
@@ -70,15 +72,23 @@ qp_tolerance: 1.0e-4
 # --- obstacles / ground-truth process ---
 obstacle_radius: 0.35
 num_obstacles: 1
+# Full candidate catalog.  With randomize_available_modes enabled, num_modes
+# are selected reproducibly from this list for each rollout.
 num_modes: 4
-obstacles_per_class: 1
+obstacles_per_class: 0
+obstacle_history: independent_history
 switch_regime: hold
 switch_prob: 0.1
-obs_modes: [constant_velocity, turn_left, turn_right, decelerating]
+randomize_available_modes: false
+randomize_modes_per_obstacle: false
+obs_modes: [constant_velocity, accelerating, decelerating, stop, turn_left, turn_right, turn_left_sharp, turn_right_sharp, lane_change_left, lane_change_right, lane_change_left_fast, lane_change_right_fast]
 rare_mode: lane_change_left
 rare_switch_prob: 0.05
 obs_path_fraction: 0.35
 obs_arc_fractions: [0.20, 0.35, 0.50, 0.65]
+# Optional direct world-frame starts for multi-obstacle tests. Entries are
+# semicolon-separated `x,y` or `x,y,vx,vy`, e.g. [5,1,0.5,0; 9,-2].
+obstacle_initial_states: []
 obstacle_process_noise: 0.02
 obstacle_speed_cap: 2.0
 shift_psi: 0.0
@@ -93,6 +103,19 @@ s_curve_length: 25.0
 s_curve_amplitude: 3.0
 s_curve_points: 200
 ego_initial_v: 1.5
+lane_count: 2
+lane_width: 3.6
+shoulder_width: 1.0
+median_width: 1.5
+road_length: 80.0
+intersection_box_size: 20.0
+corner_radius: 8.0
+ramp_length: 50.0
+merge_length: 30.0
+roundabout_radius: 18.0
+corridor_width: 4.5
+curve_radius: 45.0
+transition_length: 15.0
 
 # --- rollout / metrics ---
 rollout_steps: 200

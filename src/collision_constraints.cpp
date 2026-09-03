@@ -43,19 +43,6 @@ namespace {
  *     c_d(x, y, theta)
  *       = [x, y]^T + ell_d [cos(theta), sin(theta)]^T.
  */
- Eigen::Vector2d constraint_disc_center(
-    const EgoState& state,
-    const CollisionConstraint& constraint
-) {
-    const Eigen::Vector2d heading_direction(
-        std::cos(state.theta),
-        std::sin(state.theta)
-    );
-
-    return state.position()
-           + constraint.disc_offset * heading_direction;
-}
-
 std::optional<CollisionConstraint> compute_single_constraint(
     int k,
     int obstacle_id,
@@ -80,7 +67,8 @@ std::optional<CollisionConstraint> compute_single_constraint(
     }
 
     LinearizedCollisionHalfspace hs = make_collision_halfspace(
-        obstacle_position, reference_disc_center, combined_radius, direction_epsilon);
+        obstacle_position, reference_disc_center, combined_radius,
+        std::nullopt, direction_epsilon);
     hs.horizon_step = k;
     hs.obstacle_id  = obstacle_id;
     hs.scenario_id  = scenario_id;
@@ -134,6 +122,29 @@ std::vector<CollisionConstraint> compute_scenario_constraints(
 
 }  // anonymous namespace
 
+Eigen::Vector2d compute_collision_disc_center(
+    const EgoState& state,
+    const CollisionConstraint& constraint
+) {
+    return linearize_disc_center(state, constraint.disc_offset).center;
+}
+
+DiscCenterLinearization linearize_disc_center(
+    const EgoState& state,
+    double longitudinal_disc_offset
+) {
+    const double theta = state.theta;
+    const double ell = longitudinal_disc_offset;
+    const double cosine = std::cos(theta);
+    const double sine = std::sin(theta);
+
+    DiscCenterLinearization out;
+    out.center = state.position() + ell * Eigen::Vector2d(cosine, sine);
+    out.jacobian << 1.0, 0.0, -ell * sine,
+                    0.0, 1.0,  ell * cosine;
+    return out;
+}
+
 std::vector<CollisionConstraint> compute_linearized_constraints(
     const std::vector<EgoState>& reference_trajectory,
     const std::vector<Scenario>& scenarios,
@@ -168,30 +179,12 @@ std::vector<Eigen::Vector2d> compute_ego_disc_positions( // c_{k, d} = [x_k, y_k
     if (!std::isfinite(vehicle_length) || vehicle_length < 0.0) {
         throw std::invalid_argument("vehicle_length must be finite and nonnegative.");
     }
-    if (num_discs == 1) {
-        return {state.position()};
-    }
-
     std::vector<Eigen::Vector2d> positions;
     positions.reserve(num_discs);
-
-    Eigen::Vector2d center = state.position();
-    double theta = state.theta;
-
-    // Direction vector
-    Eigen::Vector2d direction(std::cos(theta), std::sin(theta));
-
-    // Place discs evenly along vehicle
-    std::vector<double> offsets;
-   
-    double step = vehicle_length / (num_discs - 1);
-    for (int i = 0; i < num_discs; ++i) {
-        offsets.push_back(-vehicle_length / 2 + i * step);
-    }
-
-    for (double offset : offsets) {
-        Eigen::Vector2d pos = center + offset * direction;
-        positions.push_back(pos);
+    for (int disc_index = 0; disc_index < num_discs; ++disc_index) {
+        const double offset = get_disc_longitudinal_offset(
+            disc_index, num_discs, vehicle_length);
+        positions.push_back(linearize_disc_center(state, offset).center);
     }
 
     return positions;
@@ -214,7 +207,7 @@ evaluate_constraint_violation(
         }
 
         const Eigen::Vector2d disc_center =
-            constraint_disc_center(
+            compute_collision_disc_center(
                 ego_trajectory[k],
                 constraint
             );
@@ -256,7 +249,7 @@ filter_constraints_by_clearance(
         }
 
         const Eigen::Vector2d disc_center =
-            constraint_disc_center(
+            compute_collision_disc_center(
                 ego_trajectory[k],
                 constraint
             );
@@ -496,9 +489,25 @@ namespace {
      * Soundness requires reachable_radius to contain every disc center that the
      * optimization problem can admit around each reference disc center.
      */
-    bool scenario_dominates(
-        const Scenario& s1,
-        const Scenario& s2,
+    struct CachedCollisionHalfspace {
+        Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+        double offset = 0.0;
+        bool valid = false;
+    };
+
+    struct CachedScenarioGeometry {
+        // obstacle -> [step][disc]. A missing/invalid entry cannot certify dominance.
+        std::map<int, std::vector<std::vector<CachedCollisionHalfspace>>> halfspaces;
+    };
+
+    struct DominanceGeometryCache {
+        std::vector<std::vector<Eigen::Vector2d>> reference_disc_centers;
+        std::vector<double> reachable_radii;
+        std::vector<CachedScenarioGeometry> scenarios;
+    };
+
+    DominanceGeometryCache build_dominance_geometry_cache(
+        const std::vector<Scenario>& scenarios,
         const std::vector<EgoState>& reference_trajectory,
         double combined_radius,
         int num_discs,
@@ -506,204 +515,81 @@ namespace {
         double reachable_radius,
         double reachable_radius_growth_per_step
     ) {
-        if (reference_trajectory.empty()) {
-            return false;
+        constexpr double coincidence_epsilon = 1e-8;
+        DominanceGeometryCache cache;
+        const int horizon = static_cast<int>(reference_trajectory.size());
+        cache.reference_disc_centers.reserve(horizon);
+        cache.reachable_radii.reserve(horizon);
+        for (int k = 0; k < horizon; ++k) {
+            cache.reference_disc_centers.push_back(compute_ego_disc_positions(
+                reference_trajectory[k], num_discs, vehicle_length));
+            cache.reachable_radii.push_back(
+                reachable_radius + reachable_radius_growth_per_step * k);
         }
-    
-        if (num_discs <= 0) {
-            throw std::invalid_argument(
-                "num_discs must be positive."
-            );
+
+        cache.scenarios.reserve(scenarios.size());
+        for (const Scenario& scenario : scenarios) {
+            CachedScenarioGeometry geometry;
+            for (const auto& [obstacle_id, trajectory] : scenario.trajectories) {
+                auto& obstacle_halfspaces = geometry.halfspaces[obstacle_id];
+                obstacle_halfspaces.resize(horizon);
+                const int steps = std::min(
+                    horizon, static_cast<int>(trajectory.steps.size()));
+                for (int k = 0; k < steps; ++k) {
+                    auto& step_halfspaces = obstacle_halfspaces[k];
+                    step_halfspaces.resize(num_discs);
+                    const Eigen::Vector2d& obstacle = trajectory.steps[k].mean;
+                    if (!obstacle.allFinite()) continue;
+                    for (int d = 0; d < num_discs; ++d) {
+                        const Eigen::Vector2d displacement =
+                            cache.reference_disc_centers[k][d] - obstacle;
+                        const double distance = displacement.norm();
+                        if (distance <= coincidence_epsilon) continue;
+                        auto& halfspace = step_halfspaces[d];
+                        halfspace.normal = displacement / distance;
+                        halfspace.offset = halfspace.normal.dot(obstacle) + combined_radius;
+                        halfspace.valid = true;
+                    }
+                }
+            }
+            cache.scenarios.push_back(std::move(geometry));
         }
-    
-        if (!std::isfinite(vehicle_length) ||
-            vehicle_length < 0.0) {
-            throw std::invalid_argument(
-                "vehicle_length must be finite and nonnegative."
-            );
-        }
-    
-        if (!std::isfinite(combined_radius) ||
-            combined_radius < 0.0) {
-            throw std::invalid_argument(
-                "combined_radius must be finite and nonnegative."
-            );
-        }
-    
-        if (!std::isfinite(reachable_radius) ||
-            reachable_radius < 0.0) {
-            throw std::invalid_argument(
-                "reachable_radius must be finite and nonnegative."
-            );
-        }
-    
-        if (!std::isfinite(reachable_radius_growth_per_step) ||
-            reachable_radius_growth_per_step < 0.0) {
-            throw std::invalid_argument(
-                "reachable_radius_growth_per_step must be finite and nonnegative."
-            );
-        }
-    
-        /*
-         * Require identical obstacle-ID sets.
-         *
-         * To certify Theta_s1 ⊆ Theta_s2, every constraint belonging to s2 must
-         * have a corresponding constraint in s1.
-         */
-        if (s1.trajectories.size() !=
-            s2.trajectories.size()) {
-            return false;
-        }
-    
-        for (const auto& [obstacle_id, trajectory] :
-             s1.trajectories) {
-            (void)trajectory;
-    
-            if (s2.trajectories.find(obstacle_id) ==
-                s2.trajectories.end()) {
+        return cache;
+    }
+
+    bool scenario_dominates(
+        const CachedScenarioGeometry& s1,
+        const CachedScenarioGeometry& s2,
+        const DominanceGeometryCache& cache
+    ) {
+        if (s1.halfspaces.size() != s2.halfspaces.size()) return false;
+        for (const auto& [obstacle_id, halfspaces1] : s1.halfspaces) {
+            const auto s2_it = s2.halfspaces.find(obstacle_id);
+            if (s2_it == s2.halfspaces.end()) return false;
+            const auto& halfspaces2 = s2_it->second;
+            if (halfspaces1.size() != cache.reference_disc_centers.size() ||
+                halfspaces2.size() != cache.reference_disc_centers.size()) {
                 return false;
             }
-        }
-    
-        const int horizon =
-            static_cast<int>(
-                reference_trajectory.size()
-            ) - 1;
-    
-        constexpr double coincidence_epsilon =
-            1e-8;
-    
-        constexpr double implication_tolerance =
-            1e-9;
-    
-        for (int k = 0; k <= horizon; ++k) {
-            /*
-             * Ball radius for THIS step. The planned trajectory and the reference
-             * share x_0 exactly, so the reachable displacement is ~0 at k = 0 and
-             * grows with k; a single horizon-end scalar over-estimates every
-             * earlier step and needlessly blocks pruning there.
-             */
-            const double reachable_radius_k =
-                reachable_radius
-                + reachable_radius_growth_per_step * k;
-    
-            /*
-             * Reconstruct exactly the same reference disc centers used by the
-             * collision-constraint builder.
-             */
-            const std::vector<Eigen::Vector2d>
-                reference_disc_centers =
-                    compute_ego_disc_positions(
-                        reference_trajectory[k],
-                        num_discs,
-                        vehicle_length
-                    );
-    
-            for (const auto& [obstacle_id, trajectory1] :
-                 s1.trajectories) {
-                const ObstacleTrajectory& trajectory2 =
-                    s2.trajectories.at(obstacle_id);
-    
-                /*
-                 * Both scenario trajectories must cover the full relevant
-                 * horizon. Missing data cannot establish containment.
-                 */
-                if (k >= static_cast<int>(
-                             trajectory1.steps.size()) ||
-                    k >= static_cast<int>(
-                             trajectory2.steps.size())) {
+            for (size_t k = 0; k < halfspaces1.size(); ++k) {
+                const auto& step1 = halfspaces1[k];
+                const auto& step2 = halfspaces2[k];
+                const auto& disc_centers = cache.reference_disc_centers[k];
+                if (step1.size() != disc_centers.size() ||
+                    step2.size() != disc_centers.size()) {
                     return false;
                 }
-    
-                const Eigen::Vector2d& obstacle1 =
-                    trajectory1.steps[k].mean; // obstacle position pos_obs for scenario 1 at step k
-    
-                const Eigen::Vector2d& obstacle2 =
-                    trajectory2.steps[k].mean; // obstacle position pos_obs for scenario 2 at step k
-    
-                if (!obstacle1.allFinite() ||
-                    !obstacle2.allFinite()) {
-                    return false;
-                }
-    
-                for (const Eigen::Vector2d&
-                         reference_disc_center :
-                     reference_disc_centers) {
-                    /*
-                     * Outward normals used by CollisionConstraint:
-                     *
-                     *     a_q =
-                     *       (c_bar - obstacle_q)
-                     *       / ||c_bar - obstacle_q||.
-                     */
-                    const Eigen::Vector2d displacement1 =
-                        reference_disc_center - obstacle1;
-    
-                    const Eigen::Vector2d displacement2 =
-                        reference_disc_center - obstacle2;
-    
-                    const double distance1 =
-                        displacement1.norm();
-    
-                    const double distance2 =
-                        displacement2.norm();
-    
-                    /*
-                     * At coincidence, the tangent direction is undefined.
-                     * Unless the constraint builder provides and stores the same
-                     * explicit fallback normal, containment cannot be certified.
-                     */
-                    if (distance1 <= coincidence_epsilon ||
-                        distance2 <= coincidence_epsilon) {
-                        return false;
-                    }
-    
-                    const Eigen::Vector2d normal1 =
-                        displacement1 / distance1;
-    
-                    const Eigen::Vector2d normal2 =
-                        displacement2 / distance2;
-    
-                    /*
-                     * Reconstruct the actual half-spaces:
-                     *
-                     *     normal_q^T p >= offset_q,
-                     *
-                     * with
-                     *
-                     *     offset_q =
-                     *       normal_q^T obstacle_q
-                     *       + combined_radius.
-                     */
-                    const double offset1 =
-                        normal1.dot(obstacle1)
-                        + combined_radius;
-    
-                    const double offset2 =
-                        normal2.dot(obstacle2)
-                        + combined_radius;
-    
-                    /*
-                     * Certify
-                     *
-                     *     Ball(c_bar, reachable_radius)
-                     *       ∩ H_1
-                     *       ⊆ H_2.
-                     */
-                    if (!certifies_halfspace_implication_on_ball(
-                            normal1,
-                            offset1,
-                            normal2,
-                            offset2,
-                            reference_disc_center,
-                            reachable_radius_k,
-                            implication_tolerance)) {
+                for (size_t d = 0; d < disc_centers.size(); ++d) {
+                    if (!step1[d].valid || !step2[d].valid ||
+                        !certifies_halfspace_implication_on_ball(
+                            step1[d].normal, step1[d].offset,
+                            step2[d].normal, step2[d].offset,
+                            disc_centers[d], cache.reachable_radii[k], 1e-9)) {
                         return false;
                     }
                 }
             }
         }
-    
         return true;
     }
     
@@ -775,49 +661,43 @@ namespace {
     
         const int scenario_count =
             static_cast<int>(scenarios.size());
+
+        // Every ordered comparison uses the same reference discs and each
+        // scenario's frozen obstacle half-spaces. Build them once instead of
+        // reconstructing O(N * obstacles * discs) geometry for every pair.
+        const DominanceGeometryCache geometry_cache =
+            build_dominance_geometry_cache(
+                scenarios, reference_trajectory, combined_radius, num_discs,
+                vehicle_length, reachable_radius,
+                reachable_radius_growth_per_step);
     
         std::set<int> dominated_indices;
     
         for (int i = 0; i < scenario_count; ++i) {
-            /*
-             * A scenario already known to be dominated is not reused as a
-             * dominator. Injected scenarios are excluded from this pruning pass.
-             */
-            if (dominated_indices.count(i) != 0 ||
-                scenarios[i].is_injected) {
+            // A scenario already known to be dominated is not reused as a dominator.
+            if (dominated_indices.count(i) != 0) {
                 continue;
             }
     
             for (int j = i + 1;
                  j < scenario_count;
                  ++j) {
-                if (dominated_indices.count(j) != 0 ||
-                    scenarios[j].is_injected) {
+                if (dominated_indices.count(j) != 0) {
                     continue;
                 }
     
                 const bool i_dominates_j =
                     scenario_dominates(
-                        scenarios[i],
-                        scenarios[j],
-                        reference_trajectory,
-                        combined_radius,
-                        num_discs,
-                        vehicle_length,
-                        reachable_radius,
-                        reachable_radius_growth_per_step
+                        geometry_cache.scenarios[i],
+                        geometry_cache.scenarios[j],
+                        geometry_cache
                     );
     
                 const bool j_dominates_i =
                     scenario_dominates(
-                        scenarios[j],
-                        scenarios[i],
-                        reference_trajectory,
-                        combined_radius,
-                        num_discs,
-                        vehicle_length,
-                        reachable_radius,
-                        reachable_radius_growth_per_step
+                        geometry_cache.scenarios[j],
+                        geometry_cache.scenarios[i],
+                        geometry_cache
                     );
     
                 if (i_dominates_j) {
@@ -908,7 +788,7 @@ namespace {
         }
     
         const Eigen::Vector2d disc_center =
-            constraint_disc_center(state, constraint);
+            compute_collision_disc_center(state, constraint);
     
         if (!disc_center.allFinite()) {
             throw std::runtime_error(
@@ -1083,24 +963,20 @@ AffineDiscConstraint linearize_disc_halfspace(
     double longitudinal_disc_offset
 ) {
     const double ell = longitudinal_disc_offset;
+    const EgoState reference_state(
+        reference_px, reference_py, reference_heading, 0.0);
+    const auto disc = linearize_disc_center(reference_state, ell);
 #ifndef NDEBUG
     // The reference pose + offset MUST reconstruct halfspace.reference_disc_center,
     // or the affine offset below is built about an inconsistent linearization point.
     {
-        const Eigen::Vector2d reconstructed_center(
-            reference_px + ell * std::cos(reference_heading),
-            reference_py + ell * std::sin(reference_heading));
-        assert((reconstructed_center - halfspace.reference_disc_center).norm() <= 1e-6 &&
+        assert((disc.center - halfspace.reference_disc_center).norm() <= 1e-6 &&
                "linearize_disc_halfspace: (reference pose, offset) inconsistent with "
                "halfspace.reference_disc_center");
     }
 #endif
-    // c_d(x) ≈ c_bar + J_d (x - x_bar),  J_d = [[1,0,-ℓ sinθ],[0,1,ℓ cosθ]].
-    Eigen::Matrix<double, 2, 3> J;
-    J << 1.0, 0.0, -ell * std::sin(reference_heading),
-         0.0, 1.0,  ell * std::cos(reference_heading);
     AffineDiscConstraint out;
-    out.coefficients = halfspace.normal.transpose() * J;   // n^T J_d  (row 1x3)
+    out.coefficients = halfspace.normal.transpose() * disc.jacobian;   // n^T J_d  (row 1x3)
     const Eigen::Vector3d xbar(reference_px, reference_py, reference_heading);
     // normal^T c_d <= ub  =>  (n^T J) x <= ub - n^T c_bar + (n^T J) x_bar.
     out.upper_bound = halfspace.upper_bound
@@ -1113,22 +989,11 @@ DiscConstraintRow linearize_constraint_at_state(
     const CollisionConstraint& constraint,
     const EgoState& state
 ) {
-    const double ell = constraint.disc_offset;
-    const double theta = state.theta;
-    const double c = std::cos(theta);
-    const double s = std::sin(theta);
-
-    // Exact nonlinear disc centre at this state -- the same expression
-    // constraint_disc_center() uses, so the QP anchor and the feasibility check
-    // agree on what "clearance" means.
-    const Eigen::Vector2d disc_center = state.position() + ell * Eigen::Vector2d(c, s);
+    const auto disc = linearize_disc_center(state, constraint.disc_offset);
 
     DiscConstraintRow row;
-    row.value = constraint.evaluate(disc_center);
-    // d(a^T c_d)/d(p_x, p_y, theta) = a^T J_d,  J_d = [[1,0,-l sin th],[0,1, l cos th]].
-    row.gradient << constraint.a.x(),
-                    constraint.a.y(),
-                    constraint.a.dot(Eigen::Vector2d(-ell * s, ell * c));
+    row.value = constraint.evaluate(disc.center);
+    row.gradient = constraint.a.transpose() * disc.jacobian;
     return row;
 }
 

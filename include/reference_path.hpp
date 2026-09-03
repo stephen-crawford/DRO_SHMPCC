@@ -86,6 +86,12 @@ public:
         int num_points = 100
     );
 
+    /// Create a path through ordered waypoints, with arc length and tangent
+    /// headings computed from the polyline. At least two points are required.
+    static ReferencePath create_polyline(
+        const std::vector<Eigen::Vector2d>& waypoints
+    );
+
     /**
      * @brief Get point on path at arc length s.
      * @param s Arc length parameter [0, total_length]
@@ -154,6 +160,9 @@ private:
     std::vector<PathPoint> points_;
     double total_length_;
     PathType path_type_;
+
+    double find_closest_point_projection(
+        const Eigen::Vector2d& position, double min_s) const;
 
     /// Interpolate between two points
     PathPoint interpolate(const PathPoint& p1, const PathPoint& p2, double t) const;

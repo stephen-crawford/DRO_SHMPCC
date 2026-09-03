@@ -21,7 +21,7 @@
 //   (F) A mode missing from mode_models must NOT get a zero row -- that would be
 //       free transport into and out of it. It is backfilled at diam(D), the largest
 //       value that keeps the triangle inequality.
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
 #include <cstdio>
@@ -79,7 +79,7 @@ std::vector<std::vector<double>> ground_cost(
 {
     DROConfig cfg;
     cfg.ground_cost_type = type;
-    WassersteinDRO dro(cfg);
+    DRO dro(cfg);
     dro.set_observation_count(200);
 
     std::map<std::string, double> nominal;
@@ -315,7 +315,7 @@ int main() {
 
         DROConfig cfg;
         cfg.ground_cost_type = DROGroundCostType::W2_BURES;
-        WassersteinDRO dro(cfg);
+        DRO dro(cfg);
         dro.set_observation_count(200);
         std::map<std::string, double> nominal;
         for (const auto& id : aids) nominal[id] = 1.0 / static_cast<double>(aids.size());

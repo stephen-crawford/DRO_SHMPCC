@@ -58,6 +58,51 @@ inline std::vector<double> split_csv_d(const std::string& v) {
     for (const auto& s : split_csv(v)) out.push_back(std::stod(s));
     return out;
 }
+inline std::vector<ObstacleState> parse_obstacle_states(const std::string& v) {
+    std::vector<ObstacleState> states;
+    std::stringstream groups(v);
+    std::string group;
+    while (std::getline(groups, group, ';')) {
+        group = trim(group);
+        while (group.size() >= 2 && group.front() == '[' && group.back() == ']') {
+            group = trim(group.substr(1, group.size() - 2));
+        }
+        if (group.empty()) continue;
+        const auto values = split_csv_d(group);
+        if (values.size() != 2 && values.size() != 4) {
+            throw std::invalid_argument(
+                "each obstacle start must be x,y or x,y,vx,vy");
+        }
+        const double vx = values.size() == 4 ? values[2] : 0.0;
+        const double vy = values.size() == 4 ? values[3] : 0.0;
+        states.emplace_back(values[0], values[1], vx, vy);
+    }
+    return states;
+}
+
+inline std::string strip_comment(const std::string& line) {
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '\'' && !in_double_quote) in_single_quote = !in_single_quote;
+        if (line[i] == '"' && !in_single_quote) in_double_quote = !in_double_quote;
+        if (line[i] == '#' && !in_single_quote && !in_double_quote)
+            return line.substr(0, i);
+    }
+    return line;
+}
+
+inline size_t find_mapping_colon(const std::string& line) {
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '\'' && !in_double_quote) in_single_quote = !in_single_quote;
+        if (line[i] == '"' && !in_single_quote) in_double_quote = !in_double_quote;
+        if (line[i] == ':' && !in_single_quote && !in_double_quote)
+            return i;
+    }
+    return std::string::npos;
+}
 
 inline MPCType parse_mpc(const std::string& v) {
     std::string l = lower(v);
@@ -87,6 +132,13 @@ inline ModeSwitchConfiguration parse_switch(const std::string& v) {
     std::string l = lower(v);
     if (l == "hold" || l == "hold_over_horizon") return ModeSwitchConfiguration::HOLD_OVER_HORIZON;
     return ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM;
+}
+inline ObstacleHistoryConfiguration parse_obstacle_history(const std::string& v) {
+    const std::string l = lower(v);
+    return (l == "shared" || l == "shared_history" ||
+            l == "shared_history_classes")
+        ? ObstacleHistoryConfiguration::SHARED
+        : ObstacleHistoryConfiguration::INDEPENDENT;
 }
 inline SafeHorizonTruncationRule parse_sh(const std::string& v) {
     std::string l = lower(v);
@@ -160,12 +212,14 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
     int lineno = 0;
     while (std::getline(in, line)) {
         ++lineno;
-        auto hash = line.find('#');
-        if (hash != std::string::npos) line = line.substr(0, hash);
+        line = strip_comment(line);
         line = trim(line);
         if (line.empty()) continue;
-        auto colon = line.find(':');
-        if (colon == std::string::npos) continue;
+        auto colon = find_mapping_colon(line);
+        if (colon == std::string::npos) {
+            if (strict) throw std::runtime_error("malformed YAML entry");
+            continue;
+        }
 
         const std::string key = trim(line.substr(0, colon));
         std::string val = trim(line.substr(colon + 1));
@@ -201,10 +255,15 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
                                                            cfg.mpc.ego.dynamics.max_omega = std::stod(val);
             else if (k == "belief_kind")                   cfg.mpc.sampling.belief_kind = parse_belief(val);
             else if (k == "self_persistence_prior")        cfg.mpc.sampling.mode_belief.self_persistence_prior = std::stod(val);
-            else if (k == "markov_jump_system")            cfg.mpc.sampling.markov_jump_system = to_bool(val);
+            else if (k == "markov_jump_system") {
+                const bool enabled = to_bool(val);
+                cfg.mpc.sampling.markov_jump_system = enabled;
+                cfg.obstacles.switch_regime = enabled
+                    ? ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM
+                    : ModeSwitchConfiguration::HOLD_OVER_HORIZON;
+            }
             else if (k == "enforce_certified_scenario_count" || k == "enforce_scenario_count")
                                                            cfg.mpc.sampling.enforce_certified_scenario_count = to_bool(val);
-            else if (k == "ensure_mode_coverage")          cfg.mpc.sampling.ensure_mode_coverage = to_bool(val);
             else if (k == "max_history_length")            cfg.mpc.sampling.max_history_length = std::stoi(val);
             else if (k == "one_minus_chance_constraint_violation_probability" || k == "confidence_level")
                                                            cfg.mpc.sampling.one_minus_chance_constraint_violation_probability = std::stod(val);
@@ -213,6 +272,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "dro_enabled")                   cfg.dro.enabled = to_bool(val);
             else if (k == "fixed_rho")                     cfg.dro.fixed_rho = std::stod(val);
             else if (k == "risk_measure")                  cfg.dro.solver.radius_calibration.risk_measure = parse_risk(val);
+            else if (k == "risk_horizon")                  cfg.dro.solver.radius_calibration.risk_horizon = std::stoi(val);
             else if (k == "divergence")                    cfg.dro.solver.radius_calibration.divergence = parse_divergence(val);
             else if (k == "ground_cost")                   cfg.dro.solver.ground_cost_type = parse_ground(val);
             else if (k == "confidence_beta")               cfg.dro.solver.radius_calibration.confidence_beta = std::stod(val);
@@ -227,6 +287,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "entropic_tau")                  cfg.dro.solver.radius_calibration.entropic_tau = std::stod(val);
             else if (k == "sigma_floor")                   cfg.dro.solver.radius_calibration.sigma_floor = std::stod(val);
             else if (k == "joint_risk_samples")            cfg.dro.solver.radius_calibration.joint_risk_samples = std::stoi(val);
+            else if (k == "joint_risk_seed")               cfg.dro.solver.radius_calibration.joint_risk_seed = std::stoull(val);
             else if (k == "mixture_sequence_samples")      cfg.dro.solver.radius_calibration.mixture_sequence_samples = std::stoi(val);
             else if (k == "use_sqp_solver")                cfg.solver.use_sqp_solver = to_bool(val);
             else if (k == "sqp_max_iterations")            cfg.solver.sqp_max_iterations = std::stoi(val);
@@ -235,14 +296,24 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "qp_tolerance")                  cfg.solver.qp_tolerance = std::stod(val);
             else if (k == "obstacle_radius")               cfg.obstacle_radius = std::stod(val);
             else if (k == "switch_prob")                   cfg.obstacles.switch_prob = std::stod(val);
-            else if (k == "switch_regime")                 cfg.obstacles.switch_regime = parse_switch(val);
+            else if (k == "switch_regime") {
+                cfg.obstacles.switch_regime = parse_switch(val);
+                cfg.mpc.sampling.markov_jump_system =
+                    (cfg.obstacles.switch_regime == ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM);
+            }
+            else if (k == "obstacle_history" || k == "history_configuration")
+                                                           cfg.obstacles.history = parse_obstacle_history(val);
             else if (k == "num_obstacles")                 cfg.obstacles.num_obstacles = std::stoi(val);
             else if (k == "num_modes")                     cfg.obstacles.num_modes = std::stoi(val);
             else if (k == "obstacles_per_class")           cfg.obstacles.obstacles_per_class = std::stoi(val);
             else if (k == "obs_modes")                     cfg.obstacles.obs_modes = split_csv(val);
+            else if (k == "randomize_available_modes")     cfg.obstacles.randomize_available_modes = to_bool(val);
+            else if (k == "randomize_modes_per_obstacle")  cfg.obstacles.randomize_modes_per_obstacle = to_bool(val);
             else if (k == "rare_mode")                     cfg.obstacles.rare_mode = val;
             else if (k == "rare_switch_prob")              cfg.obstacles.rare_switch_prob = std::stod(val);
             else if (k == "obs_arc_fractions")             cfg.obstacles.obs_arc_fractions = split_csv_d(val);
+            else if (k == "obstacle_initial_states" || k == "obstacle_starts")
+                                                           cfg.obstacles.initial_obstacle_states = parse_obstacle_states(val);
             else if (k == "obs_path_fraction")             cfg.obstacles.default_arc_fraction = std::stod(val);
             else if (k == "obstacle_process_noise")        cfg.obstacles.process_noise = std::stod(val);
             else if (k == "obstacle_speed_cap")            cfg.obstacles.speed_cap = std::stod(val);
@@ -256,6 +327,19 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "s_curve_amplitude")             cfg.environment.s_curve_amplitude = std::stod(val);
             else if (k == "s_curve_points")                cfg.environment.s_curve_points = std::stoi(val);
             else if (k == "ego_initial_v")                 cfg.environment.ego_initial_v = std::stod(val);
+            else if (k == "lane_count")                    cfg.environment.lane_count = std::stoi(val);
+            else if (k == "lane_width")                    cfg.environment.lane_width = std::stod(val);
+            else if (k == "shoulder_width")                cfg.environment.shoulder_width = std::stod(val);
+            else if (k == "median_width")                  cfg.environment.median_width = std::stod(val);
+            else if (k == "road_length")                   cfg.environment.road_length = std::stod(val);
+            else if (k == "intersection_box_size")         cfg.environment.intersection_box_size = std::stod(val);
+            else if (k == "corner_radius")                 cfg.environment.corner_radius = std::stod(val);
+            else if (k == "ramp_length")                   cfg.environment.ramp_length = std::stod(val);
+            else if (k == "merge_length")                  cfg.environment.merge_length = std::stod(val);
+            else if (k == "roundabout_radius")             cfg.environment.roundabout_radius = std::stod(val);
+            else if (k == "corridor_width")                cfg.environment.corridor_width = std::stod(val);
+            else if (k == "curve_radius")                  cfg.environment.curve_radius = std::stod(val);
+            else if (k == "transition_length")             cfg.environment.transition_length = std::stod(val);
             else if (k == "rollout_steps")                 cfg.rollout.rollout_steps = std::stoi(val);
             else if (k == "scenario_tag")                  cfg.rollout.scenario_tag = val;
             else if (k == "method_name")                   cfg.rollout.method_name = val;
@@ -281,13 +365,14 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
 inline ExperimentConfig load_experiment_config(const std::string& path = "", bool strict = false) {
     ExperimentConfig cfg;
     const std::string def = default_config_path();
-    try {
+    std::ifstream default_file(def);
+    if (default_file) {
         apply_yaml_file(cfg, def, strict);
-    } catch (const std::exception&) {
-        // C++ in-class initializers already match the intended defaults.
+        cfg.config_source = def;
     }
     if (!path.empty() && path != def) {
         apply_yaml_file(cfg, path, strict);
+        cfg.config_source = path;
     }
     cfg.normalize();
     return cfg;

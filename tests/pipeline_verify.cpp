@@ -2,7 +2,7 @@
 // Controlled head-on scenario with a non-uniform mode history so the belief, risk, and
 // reweighting are all non-trivial and checkable.
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 #include "collision_constraints.hpp"
@@ -50,7 +50,7 @@ int main() {
     check(std::abs(nsum-1.0)<1e-9, "nominal belief normalized to 1");
     // risk scores (Bonferroni VaR) vs plain VaR
     auto risk_of = [&](DRORiskMeasure rm){ DROConfig c; c.radius_calibration.risk_measure=rm;
-        WassersteinDRO d(c); return d.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2); };
+        DRO d(c); return d.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2); };
     DROResult bonf = risk_of(DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
     DROResult var  = risk_of(DRORiskMeasure::SURROGATE_VAR);
     double rmin=1e9,rmax=-1e9; std::string danger; for(auto&kv:bonf.risk_per_mode){ if(kv.second>rmax){rmax=kv.second;danger=kv.first;} rmin=std::min(rmin,kv.second);}
@@ -73,14 +73,14 @@ int main() {
     std::map<int,ModeHistory> histories{{0,hist}};
     const int S=400;  // large S to check the empirical distribution converges to q*
     std::map<int,std::map<std::string,double>> qmap{{0,bonf.worst_case_weights}};
-    auto scen_q = sample_scenarios_with_weights(obstacles,histories,qmap,15,S,false,&rng);
+    auto scen_q = sample_scenarios(obstacles, histories, &qmap, 15, S, {}, nullptr, &rng);
     std::map<std::string,int> cnt; for(auto&sc:scen_q){auto it=sc.trajectories.find(0); if(it!=sc.trajectories.end())cnt[it->second.mode_id]++;}
     double emp_danger = cnt[danger]/(double)scen_q.size();
     check((int)scen_q.size()==S, "sampler returned S scenarios");
     check(std::abs(emp_danger - q_danger) < 0.06, "empirical mode freq of dangerous mode matches q* (sampling uses q*)");
     // and it differs from nominal sampling
     std::map<int,std::map<std::string,double>> pmap{{0,nominal}};
-    auto scen_p = sample_scenarios_with_weights(obstacles,histories,pmap,15,S,false,&rng);
+    auto scen_p = sample_scenarios(obstacles, histories, &pmap, 15, S, {}, nullptr, &rng);
     std::map<std::string,int> cntp; for(auto&sc:scen_p){auto it=sc.trajectories.find(0); if(it!=sc.trajectories.end())cntp[it->second.mode_id]++;}
     double empp_danger = cntp[danger]/(double)scen_p.size();
     check(emp_danger > empp_danger + 0.03, "q*-sampling over-represents dangerous mode vs nominal sampling");
@@ -100,7 +100,7 @@ int main() {
     std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
     RuntimeConfig cfg; cfg.dro.enabled=true;
     cfg.mpc.sampling.num_scenarios=40; cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
-    AdaptiveScenarioMPC ctrl(cfg);
+    MPCController ctrl(cfg);
     ctrl.set_reference_path(path);
     EgoState ego(0,0,0,1.5); Eigen::Vector2d goal(25,0);
     MPCResult res = ctrl.solve(ego, obstacles, goal, 1.5, 0.0, path.total_length());
@@ -111,12 +111,12 @@ int main() {
     std::printf("=== DIAGNOSIS: raw-LP q* collapses to ONE mode (no diversity) vs entropic ===\n");
     auto scenario_support = [&](DROResult& r)->int{
         std::map<int,std::map<std::string,double>> qm{{0,r.worst_case_weights}};
-        std::mt19937 rr(7); auto sc=sample_scenarios_with_weights(obstacles,histories,qm,15,S,false,&rr);
+        std::mt19937 rr(7); auto sc=sample_scenarios(obstacles, histories, &qm, 15, S, {}, nullptr, &rr);
         std::map<std::string,int> c; for(auto&s:sc){auto it=s.trajectories.find(0); if(it!=s.trajectories.end())c[it->second.mode_id]++;}
         int nz=0; for(auto&kv:c) if(kv.second>0)++nz; return nz; };
     int raw_support = scenario_support(bonf);
     DROConfig ec; ec.radius_calibration.risk_measure=DRORiskMeasure::SURROGATE_VAR_BONFERRONI; ec.radius_calibration.use_entropic_allocator=true; ec.radius_calibration.entropic_tau=0.05;
-    WassersteinDRO ed(ec);
+    DRO ed(ec);
     DROResult ent = ed.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2);
     int ent_support = scenario_support(ent);
     std::printf("    distinct modes appearing in the S sampled scenarios:\n");

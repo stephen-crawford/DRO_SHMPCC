@@ -19,7 +19,7 @@
  *   K ∈ ℝ^{d×d} symmetric distance kernel, K_ij = dist(i,j); paper uses (i−j)².
  *
  * Worst-case solvers: TV by exact water-filling; Wasserstein by the Kantorovich
- * dual (self-contained, matches wasserstein_dro.cpp); KL/JS/Hellinger by the
+ * dual (self-contained, matches dro.cpp); KL/JS/Hellinger by the
  * unified φ-divergence nested-bisection dual (per-coordinate closed forms below).
  */
 #ifndef DRO_MPC_SCHUURMANS_AMBIGUITY_HPP

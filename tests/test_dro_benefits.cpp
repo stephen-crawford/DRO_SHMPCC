@@ -28,7 +28,7 @@
 
 #include "experiment_harness.hpp"
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 
 using namespace dro_mpc;
 namespace fs = std::filesystem;

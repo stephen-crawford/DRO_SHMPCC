@@ -46,7 +46,7 @@ namespace dro_mpc {
 
 // Forward declarations (controller lives in mpc_controller.hpp; only referenced
 // by pointer/reference in callback signatures here).
-class AdaptiveScenarioMPC;
+class MPCController;
 
 // ############################################################################
 // # 1. OBSTACLE CONFIGURATIONS
@@ -93,18 +93,29 @@ struct ObstacleExperimentConfig {
     ModeSwitchConfiguration switch_regime =
         ModeSwitchConfiguration::HOLD_OVER_HORIZON;
     double switch_prob = 0.1;
+    /// Number of regular modes selected from obs_modes when randomization is on.
     int num_modes = 4;
     int num_obstacles = 1;
-    int obstacles_per_class = 1;
+    /// <= 0 derives classes from `history`; a positive YAML value is preserved.
+    int obstacles_per_class = 0;
 
     std::vector<std::string> obs_modes = {
         "constant_velocity", "turn_left", "turn_right", "decelerating"
     };
-    std::string rare_mode = "lane_change_left";
+    /// Select a reproducible random subset of `obs_modes` for each rollout.
+    /// The rollout seed drives the selection; false preserves the YAML order/list.
+    bool randomize_available_modes = false;
+    /// When true, each obstacle receives its own random subset; otherwise the
+    /// selected set is shared by every obstacle in the rollout.
+    bool randomize_modes_per_obstacle = false;
+    /// Empty disables rare-mode forcing. The canonical default is supplied by YAML.
+    std::string rare_mode;
     double rare_switch_prob = 0.05;
 
     std::vector<double> obs_arc_fractions;               // Empty => auto placement
-    std::vector<ObstacleState> initial_obstacle_states;  // Overrides arc fracs
+    /// Explicit world-frame starts, one per obstacle. Each state overrides the
+    /// corresponding arc placement; YAML accepts `x,y` or `x,y,vx,vy` entries.
+    std::vector<ObstacleState> initial_obstacle_states;
     DistributionShiftConfig shift;
 
     double default_arc_fraction = 0.35;
@@ -112,11 +123,13 @@ struct ObstacleExperimentConfig {
     double speed_cap = 2.0;
 
     void apply_layout() {
+        num_modes = std::max(1, num_modes);
         if (num_obstacles <= 1) {
             num_obstacles = 1;
-            obstacles_per_class = 1;
+            if (obstacles_per_class <= 0) obstacles_per_class = 1;
             return;
         }
+        if (obstacles_per_class > 0) return;
         switch (history) {
             case ObstacleHistoryConfiguration::INDEPENDENT:
                 obstacles_per_class = 1;
@@ -204,6 +217,27 @@ struct EnvironmentExperimentConfig {
     double s_curve_amplitude = 3.0;
     int s_curve_points = 200;
     double ego_initial_v = 1.5;
+
+    // Shared road geometry (metres). Lane count selects the driven carriageway.
+    int lane_count = 2;
+    double lane_width = 3.6;
+    double shoulder_width = 1.0;
+    double median_width = 1.5;
+    double road_length = 80.0;
+
+    // Intersection and turning layouts.
+    double intersection_box_size = 20.0;
+    double corner_radius = 8.0;
+
+    // Ramp and roundabout layouts.
+    double ramp_length = 50.0;
+    double merge_length = 30.0;
+    double roundabout_radius = 18.0;
+
+    // Corridor / S-curve layouts.
+    double corridor_width = 4.5;
+    double curve_radius = 45.0;
+    double transition_length = 15.0;
 };
 
 // Loaded from configs/default.yaml at process start (see experiment_harness.cpp).
@@ -266,10 +300,6 @@ inline std::string baseline_name(SamplingBaseline b) {
     }
 }
 
-struct SamplingExperimentConfig {
-    SamplingBaseline baseline = SamplingBaseline::STANDARD;
-};
-
 struct RolloutExperimentConfig {
     int rollout_steps = 200;
     std::string scenario_tag = "baseline";
@@ -277,15 +307,15 @@ struct RolloutExperimentConfig {
     double metrics_v_ref = 1.5;
 
     /// Called after mode observation, before solve.
-    std::function<void(int, int, ObstacleSim&, AdaptiveScenarioMPC&, std::mt19937&)>
+    std::function<void(int, int, ObstacleSim&, MPCController&, std::mt19937&)>
         step_callback;
 };
 
 struct SeedBundle {
-    unsigned master;
-    unsigned env;
-    unsigned predictor;
-    unsigned scenario;
+    unsigned master = 0;
+    unsigned env = 0;        ///< Plant/environment and ground-truth obstacle stream.
+    unsigned predictor = 0;  ///< Reserved predictor-estimation stream.
+    unsigned scenario = 0;   ///< Controller scenario-sampling stream.
 };
 
 /**
@@ -302,13 +332,13 @@ struct SeedBundle {
  *   cfg.rollout.rollout_steps = 200;
  */
 struct ExperimentConfig {
+    std::string config_source = "in_memory";
     MPCConfig mpc;
     DROControllerConfig dro;
     SolverSettings solver{};
     double obstacle_radius = 0.35;
     ObstacleExperimentConfig obstacles;
     EnvironmentExperimentConfig environment;
-    SamplingExperimentConfig sampling;
     RolloutExperimentConfig rollout;
 
     /// Apply layout rules; sync belief / fixed rho; auto-name the method.
@@ -319,6 +349,7 @@ struct ExperimentConfig {
         mpc.sampling.sync_belief();
         mpc.sampling.markov_jump_system =
             (obstacles.switch_regime == ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM);
+        dro.apply_fixed_rho();
         if (rollout.method_name.empty()) {
             rollout.method_name =
                 dro_configuration_name(
@@ -453,10 +484,15 @@ private:
 // ############################################################################
 
 struct RolloutRecord {
-    unsigned seed = 0;
+    unsigned seed = 0;             ///< Master seed supplied to the rollout.
+    unsigned plant_seed = 0;       ///< Derived plant/environment RNG seed.
+    unsigned predictor_seed = 0;   ///< Derived predictor RNG seed (reserved).
+    unsigned controller_seed = 0;  ///< Derived controller scenario RNG seed.
+    std::string config_source = "in_memory";
     std::string method;
     std::string scenario = "baseline";
     int S = 0;
+    /// Ambiguity radius used by the final controller solve (zero when DRO is off).
     double eps_wass = 0.0;
     double sigma = 0.0;
     double shift_rho = 0.0;
@@ -581,14 +617,46 @@ ObstacleState obstacle_on_s_curve(
     std::mt19937& rng
 );
 
+/**
+ * @brief Build ground-truth obstacle simulators from one obstacle configuration.
+ *
+ * Explicit `initial_obstacle_states` take priority, followed by configured arc
+ * fractions, then deterministic multi-obstacle arc placement. The returned
+ * simulators already contain their selected mode sets and matching dynamics.
+ */
+std::vector<ObstacleSim> construct_obstacles(
+    const ObstacleExperimentConfig& config,
+    const ObstacleState& environment_default,
+    const ReferencePath& reference_path,
+    const std::map<std::string, ModeModel>& mode_catalog,
+    std::mt19937& rng
+);
+
 double percentile(std::vector<double> v, double p);
+
+EnvironmentExperimentConfig default_environment_experiment_config();
+
+/// Build the nominal ego route for an environment geometry without creating a
+/// controller or obstacle simulator. Shared by the rollout and topology tests.
+ReferencePath build_environment_reference_path(
+    EnvironmentType environment,
+    const EnvironmentExperimentConfig& config
+);
+
+/// Road centerlines forming the visible environment layout. The first entry is
+/// the ego route; subsequent entries describe cross streets, mainlines, or
+/// other connected road geometry used by topology visualizations.
+std::vector<ReferencePath> build_environment_road_centerlines(
+    EnvironmentType environment,
+    const EnvironmentExperimentConfig& config
+);
 
 RolloutRecord run_experiment_rollout(
     const ExperimentConfig& config,
     unsigned seed
 );
 
-ReferencePath setup_mpcc_path(AdaptiveScenarioMPC& ctrl);
+ReferencePath setup_mpcc_path(MPCController& ctrl);
 
 inline RolloutResult run_configured_rollout(
     ExperimentConfig cfg,
@@ -608,7 +676,7 @@ inline RolloutResult run_multi_obstacle_rollout(
     cfg.obstacles.num_obstacles = num_obstacles;
     cfg.obstacles.obstacles_per_class =
         (num_classes > 0 && num_classes < num_obstacles)
-            ? (num_obstacles / num_classes) : 1;
+            ? ((num_obstacles + num_classes - 1) / num_classes) : 1;
     cfg.obstacles.obs_arc_fractions = arc_fracs;
     cfg.obstacles.history = ObstacleHistoryConfiguration::INDEPENDENT;
     return run_configured_rollout(std::move(cfg), seed);
@@ -617,7 +685,7 @@ inline RolloutResult run_multi_obstacle_rollout(
 EnvironmentSetup create_environment(
     EnvironmentType env,
     std::mt19937& rng,
-    const EnvironmentExperimentConfig& path_cfg = {}
+    const EnvironmentExperimentConfig& path_cfg = default_environment_experiment_config()
 );
 
 RolloutResult run_single_rollout_env(

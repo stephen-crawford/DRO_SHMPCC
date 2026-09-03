@@ -14,7 +14,7 @@ int main() {
     RuntimeConfig cfg;                 // defaults: max_velocity=4.0, min_velocity=0.0
     const double tol = 1e-6;
 
-    AdaptiveScenarioMPC controller(cfg);
+    MPCController controller(cfg);
     ReferencePath path = ReferencePath::create_straight({0.0, 0.0}, {60.0, 0.0}, 200);
     controller.set_reference_path(path);
 

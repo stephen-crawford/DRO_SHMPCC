@@ -3,7 +3,7 @@
 // observed interactions n. For each n it prints rho and the resulting worst-case
 // risk + Q* under both radius rules, on the canonical 6-mode scenario (ego driving
 // toward the obstacle so the risk vector is nonzero and differentiated).
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
 
@@ -35,7 +35,7 @@ static DROResult run(bool calibrated, int n_obs,
     DROConfig cfg;                       // defaults: rho_base=0.1, rho_min=0.01, rho_max=0.5
     cfg.radius_calibration.use_calibrated_radius = calibrated;
     cfg.radius_calibration.confidence_beta = 0.05;          // 95% coverage
-    WassersteinDRO dro(cfg);
+    DRO dro(cfg);
     dro.set_observation_count(n_obs);
     return dro.compute_worst_case_weights(nominal, obs, mm, ego, 15, 0.5, 0.35, 0.2);
 }

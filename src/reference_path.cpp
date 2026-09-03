@@ -135,10 +135,37 @@ ReferencePath ReferencePath::create_circle(
             heading = angle - M_PI / 2;
             curvature = -1.0 / radius;
         }
+        heading = std::atan2(std::sin(heading), std::cos(heading));
 
         path.points_.emplace_back(pos, heading, curvature, s);
     }
 
+    return path;
+}
+
+ReferencePath ReferencePath::create_polyline(
+    const std::vector<Eigen::Vector2d>& waypoints
+) {
+    ReferencePath path;
+    path.path_type_ = PathType::CUSTOM;
+    if (waypoints.empty()) return path;
+    if (waypoints.size() == 1) {
+        path.points_.emplace_back(waypoints.front(), 0.0, 0.0, 0.0);
+        return path;
+    }
+
+    path.points_.reserve(waypoints.size());
+    double arc_length = 0.0;
+    for (size_t i = 0; i < waypoints.size(); ++i) {
+        Eigen::Vector2d tangent;
+        if (i == 0) tangent = waypoints[1] - waypoints[0];
+        else if (i + 1 == waypoints.size()) tangent = waypoints[i] - waypoints[i - 1];
+        else tangent = waypoints[i + 1] - waypoints[i - 1];
+        const double heading = std::atan2(tangent.y(), tangent.x());
+        if (i > 0) arc_length += (waypoints[i] - waypoints[i - 1]).norm();
+        path.points_.emplace_back(waypoints[i], heading, 0.0, arc_length);
+    }
+    path.total_length_ = arc_length;
     return path;
 }
 
@@ -178,40 +205,50 @@ double ReferencePath::get_heading_at(double s) const {
 }
 
 double ReferencePath::find_closest_point(const Eigen::Vector2d& position) const {
-    if (points_.empty()) {
-        return 0;
-    }
-
-    double min_dist = std::numeric_limits<double>::max();
-    double best_s = 0;
-
-    for (const auto& p : points_) {
-        double dist = (position - p.position).norm();
-        if (dist < min_dist) {
-            min_dist = dist;
-            best_s = p.s;
-        }
-    }
-
-    return best_s;
+    return find_closest_point_projection(position, 0.0);
 }
 
 double ReferencePath::find_closest_point(const Eigen::Vector2d& position, double min_s) const {
+    return find_closest_point_projection(position, min_s);
+}
+
+double ReferencePath::find_closest_point_projection(
+    const Eigen::Vector2d& position, double min_s) const {
     if (points_.empty()) {
-        return min_s;
+        return std::max(0.0, min_s);
     }
 
+    min_s = std::clamp(min_s, 0.0, total_length_);
     double min_dist = std::numeric_limits<double>::max();
     double best_s = min_s;
 
-    for (const auto& p : points_) {
-        if (p.s < min_s) {
+    if (points_.size() == 1) {
+        return points_.front().s >= min_s ? points_.front().s : min_s;
+    }
+
+    for (size_t i = 1; i < points_.size(); ++i) {
+        const PathPoint& p0 = points_[i - 1];
+        const PathPoint& p1 = points_[i];
+        const double ds = p1.s - p0.s;
+        if (ds <= 0.0 || p1.s < min_s) {
             continue;
         }
-        double dist = (position - p.position).norm();
-        if (dist < min_dist) {
-            min_dist = dist;
-            best_s = p.s;
+
+        const double t_min = std::clamp((min_s - p0.s) / ds, 0.0, 1.0);
+        const Eigen::Vector2d segment = p1.position - p0.position;
+        const double segment_norm_sq = segment.squaredNorm();
+        double t = t_min;
+        if (segment_norm_sq > 1e-18) {
+            t = std::clamp(
+                segment.dot(position - p0.position) / segment_norm_sq,
+                t_min, 1.0);
+        }
+
+        const Eigen::Vector2d foot = p0.position + t * segment;
+        const double distance_sq = (position - foot).squaredNorm();
+        if (distance_sq < min_dist) {
+            min_dist = distance_sq;
+            best_s = p0.s + t * ds;
         }
     }
 
@@ -243,7 +280,9 @@ PathPoint ReferencePath::interpolate(const PathPoint& p1, const PathPoint& p2, d
     double diff = h2 - h1;
     while (diff > M_PI) diff -= 2 * M_PI;
     while (diff < -M_PI) diff += 2 * M_PI;
-    result.heading = h1 + t * diff;
+    const double interpolated_heading = h1 + t * diff;
+    result.heading = std::atan2(
+        std::sin(interpolated_heading), std::cos(interpolated_heading));
 
     return result;
 }

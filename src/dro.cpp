@@ -60,7 +60,7 @@ double cvar_clamped_gaussian(double mu, double sigma, double alpha) {
         return mu + cvar_coefficient(alpha) * sigma;
     }
     const double t = -mu / sigma;
-    const double val = (sigma * normal_pdf(t) - (-mu) * (1.0 - normal_cdf(t))) / (1.0 - alpha);
+    const double val = (sigma * pdf(t) - (-mu) * (1.0 - cdf(t))) / (1.0 - alpha);
     return std::max(val, 0.0);
 }
 
@@ -98,7 +98,7 @@ double empirical_cvar(std::vector<double>& v, double alpha) {
 double gaussian_upper_partial_mean(double mu, double sigma, double q) {
     if (sigma <= 0.0) return std::max(mu - q, 0.0);
     const double t = (mu - q) / sigma;
-    return (mu - q) * normal_cdf(t) + sigma * normal_pdf(t);
+    return (mu - q) * cdf(t) + sigma * pdf(t);
 }
 
 // VaR_alpha of an equally-weighted Gaussian mixture: the unique q solving
@@ -122,7 +122,7 @@ double mixture_var(const std::vector<double>& mu, const std::vector<double>& sig
         const double m = 0.5 * (lo + hi);
         double F = 0.0;
         for (size_t s = 0; s < K; ++s) {
-            F += (sigma[s] > 0.0) ? normal_cdf((m - mu[s]) / sigma[s])
+            F += (sigma[s] > 0.0) ? cdf((m - mu[s]) / sigma[s])
                                   : (m >= mu[s] ? 1.0 : 0.0);
         }
         F /= static_cast<double>(K);
@@ -161,6 +161,27 @@ Eigen::Vector2d safe_unit(const Eigen::Vector2d& v, double eps = 1e-12) {
 namespace dro_mpc {
 
 namespace {
+
+double transport_diameter(const std::vector<std::vector<double>>& costs) {
+    double diameter = 0.0;
+    for (const auto& row : costs) {
+        for (double cost : row) diameter = std::max(diameter, cost);
+    }
+    return diameter;
+}
+
+void update_support_diagnostics(DROResult& result, int mode_count) {
+    double floor = std::numeric_limits<double>::infinity();
+    int support = 0;
+    for (const auto& [_, weight] : result.worst_case_weights) {
+        floor = std::min(floor, weight);
+        if (weight > 0.0) ++support;
+    }
+    result.qstar_support_floor = std::isfinite(floor) ? floor : 0.0;
+    result.qstar_support_size = support;
+    result.satisfies_full_support =
+        support == mode_count && result.qstar_support_floor > 0.0;
+}
 
 // One row of the entropic plan: Pi_i: = p_i * softmax_j((r_j - lambda D_ij)/tau).
 // Computed in log-space (subtract the row max) so large (r - lambda D)/tau does not
@@ -258,10 +279,43 @@ EntropicOTResult solve_entropic_ot(
     return out;
 }
 
-WassersteinDRO::WassersteinDRO(const DROConfig& config)
+DRO::DRO(const DROConfig& config)
     : config_(config) {}
 
-DROResult WassersteinDRO::compute_worst_case_weights(
+void DRO::set_rho_override(double rho) {
+    rho_override_ = std::max(0.0, rho);
+}
+
+void DRO::clear_rho_override() {
+    rho_override_.reset();
+}
+
+void DRO::set_observation_count(int count) {
+    observation_count_ = std::max(0, count);
+}
+
+double DRO::resolve_ambiguity_radius(
+    AmbiguityDivergence divergence,
+    int mode_count,
+    double transport_diameter_value
+) const {
+    if (rho_override_.has_value()) return *rho_override_;
+
+    const auto& calibration = config_.radius_calibration;
+    const double lower = std::max(0.0, config_.min_radius);
+    const double upper = std::max(lower, config_.max_radius);
+    if (!calibration.use_calibrated_radius) {
+        return std::clamp(config_.base_radius, lower, upper);
+    }
+
+    const double theoretical_radius = schuurmans::ambiguity_radius(
+        divergence, std::max(1, mode_count), std::max(1, observation_count_),
+        std::clamp(calibration.confidence_beta, 1e-6, 0.5),
+        std::max(0.0, transport_diameter_value));
+    return std::clamp(calibration.calibration_scale * theoretical_radius, lower, upper);
+}
+
+DROResult DRO::compute_worst_case_weights(
     const std::map<std::string, double>& nominal_weights,
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
@@ -296,78 +350,49 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     }
 
     // Compute transport cost matrix D[i][j]
-    result.transport_cost_matrix = compute_transport_cost_matrix(
+    result.transport_cost_matrix = compute_ground_cost_transport_matrix(
         obs_state, mode_models, mode_ids, horizon
     );
 
     // Compute risk vector r[m]
     double safety_threshold = ego_r + obs_r + margin;
-    int effective_risk_horizon = (risk_horizon > 0) ? risk_horizon : horizon;
+    const int requested_risk_horizon =
+        (risk_horizon > 0) ? risk_horizon : horizon;
+    const int configured_risk_horizon =
+        config_.radius_calibration.risk_horizon;
+    const int effective_risk_horizon = std::min(
+        horizon,
+        configured_risk_horizon > 0
+            ? configured_risk_horizon : requested_risk_horizon);
 
-    const bool have_transition =
-        (transition != nullptr &&
-         transition->rows() == static_cast<Eigen::Index>(mode_ids.size()) &&
-         transition->cols() == static_cast<Eigen::Index>(mode_ids.size()));
-    const Eigen::MatrixXd* chain = have_transition ? transition : nullptr;
-    const auto risk_measure = config_.radius_calibration.risk_measure;
+    result.risk_per_mode = compute_risk_vector(RiskVectorRequest{
+        obs_state, mode_models, mode_ids, ego_linearization_traj,
+        effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
+        transition
+    });
 
-    if (risk_measure == DRORiskMeasure::MIXTURE_VAR ||
-        risk_measure == DRORiskMeasure::MIXTURE_CVAR) {
-        result.risk_per_mode = compute_risk_vector_mixture(
-            obs_state, mode_models, mode_ids, ego_linearization_traj,
-            effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
-            chain
-        );
-    } else if (risk_measure == DRORiskMeasure::JOINT_VAR ||
-               risk_measure == DRORiskMeasure::JOINT_CVAR) {
-        result.risk_per_mode = compute_risk_vector_joint(
-            obs_state, mode_models, mode_ids, ego_linearization_traj,
-            effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
-            chain
-        );
-    } else if (have_transition) {
-        result.risk_per_mode = compute_risk_vector_switching(
-            obs_state, mode_models, mode_ids, ego_linearization_traj,
-            effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
-            *transition
-        );
-    } else {
-        result.risk_per_mode = compute_risk_vector(
-            obs_state, mode_models, mode_ids, ego_linearization_traj,
-            effective_risk_horizon, safety_threshold, num_discs, vehicle_length
-        );
-    }
+    const int mode_count = static_cast<int>(mode_ids.size());
+    const AmbiguityDivergence divergence = config_.radius_calibration.divergence;
+    const double rho = resolve_ambiguity_radius(
+        divergence, mode_count, transport_diameter(result.transport_cost_matrix));
+    result.rho_used = rho;
 
-    // Set ambiguity radius 
-    if (config_.radius_calibration.divergence != AmbiguityDivergence::WASSERSTEIN) {
-        const int M = static_cast<int>(mode_ids.size());
-        std::vector<double> phat(M), xi(M);
-        for (int i = 0; i < M; ++i) {
+    // Schuurmans--Patrinos φ-divergence sets share a common configured-radius
+    // lifecycle with Wasserstein, but use their native worst-case solver.
+    if (divergence != AmbiguityDivergence::WASSERSTEIN) {
+        std::vector<double> phat(mode_count), xi(mode_count);
+        for (int i = 0; i < mode_count; ++i) {
             auto it = nominal_weights.find(mode_ids[i]);
             phat[i] = (it != nominal_weights.end()) ? it->second : 0.0;
             xi[i]   = result.risk_per_mode.count(mode_ids[i]) ? result.risk_per_mode[mode_ids[i]] : 0.0;
         }
-        const int m = std::max(1, observation_count_);
-        const double beta = std::clamp(config_.radius_calibration.confidence_beta, 1e-6, 0.5);
-        double kmax = 0.0;
-        for (const auto& row : result.transport_cost_matrix)
-            for (double v : row) kmax = std::max(kmax, v);
-        const double r = schuurmans::ambiguity_radius(
-            config_.radius_calibration.divergence, M, m, beta, kmax);
         schuurmans::WorstCase wc = schuurmans::worst_case_expectation(
-            config_.radius_calibration.divergence, phat, xi, r, &result.transport_cost_matrix);
-        for (int i = 0; i < M; ++i) result.worst_case_weights[mode_ids[i]] = wc.p[i];
-        result.rho_used = r;
+            divergence, phat, xi, rho, &result.transport_cost_matrix);
+        for (int i = 0; i < mode_count; ++i) result.worst_case_weights[mode_ids[i]] = wc.p[i];
         result.worst_case_risk = wc.value;
         result.implied_transport_cost = wc.divergence;
         result.recovery_feasible = wc.feasible;
-        double floor_val = std::numeric_limits<double>::infinity(); int support = 0;
-        for (const auto& [_, w] : result.worst_case_weights) {
-            floor_val = std::min(floor_val, w); if (w > 0.0) ++support;
-        }
-        result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
-        result.qstar_support_size = support;
-        result.satisfies_full_support = (support == M) && (result.qstar_support_floor > 0.0);
+        update_support_diagnostics(result, mode_count);
         return result;
     }
 
@@ -391,17 +416,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
             result.implied_transport_cost = ent.transport_cost;
             result.recovery_feasible = true;
             result.optimal_lambda = ent.lambda;
-            double floor_val = std::numeric_limits<double>::infinity();
-            int support = 0;
-            for (const auto& [_, w] : result.worst_case_weights) {
-                floor_val = std::min(floor_val, w);
-                if (w > 0.0) ++support;
-            }
-            result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
-            result.qstar_support_size = support;
-            result.satisfies_full_support =
-                (support == static_cast<int>(result.worst_case_weights.size()))
-                && (result.qstar_support_floor > 0.0);
+            update_support_diagnostics(result, mode_count);
             return result;
         }
     
@@ -420,17 +435,7 @@ DROResult WassersteinDRO::compute_worst_case_weights(
             result.worst_case_weights = std::move(ot.q);
             result.implied_transport_cost = ot.transport_cost;
             result.recovery_feasible = (ot.transport_cost <= rho + 1e-6);
-            double floor_val = std::numeric_limits<double>::infinity();
-            int support = 0;
-            for (const auto& [_, w] : result.worst_case_weights) {
-                floor_val = std::min(floor_val, w);
-                if (w > 0.0) ++support;
-            }
-            result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
-            result.qstar_support_size = support;
-            result.satisfies_full_support =
-                (support == static_cast<int>(result.worst_case_weights.size()))
-                && (result.qstar_support_floor > 0.0);
+            update_support_diagnostics(result, mode_count);
             return result;
         }
         
@@ -444,24 +449,12 @@ DROResult WassersteinDRO::compute_worst_case_weights(
     result.implied_transport_cost = recovery.implied_transport_cost;
     result.recovery_feasible = recovery.feasible;
 
-    if (!result.worst_case_weights.empty()) {
-        double floor_val = std::numeric_limits<double>::infinity();
-        int support = 0;
-        for (const auto& [_, w] : result.worst_case_weights) {
-            floor_val = std::min(floor_val, w);
-            if (w > 0.0) ++support;
-        }
-        result.qstar_support_floor = std::isfinite(floor_val) ? floor_val : 0.0;
-        result.qstar_support_size = support;
-        result.satisfies_full_support =
-            (support == static_cast<int>(result.worst_case_weights.size()))
-            && (result.qstar_support_floor > 0.0);
-    }
+    update_support_diagnostics(result, mode_count);
 
     return result;
 }
 
-Scenario WassersteinDRO::generate_worst_case_scenario(
+Scenario DRO::generate_worst_case_scenario(
     const DROResult& dro_result,
     int obstacle_id,
     const ObstacleState& obs_state,
@@ -482,7 +475,7 @@ Scenario WassersteinDRO::generate_worst_case_scenario(
     // If no risk or mode not found, return empty scenario
     if (worst_mode.empty() || dro_result.worst_case_risk < 1e-12 ||
         mode_models.find(worst_mode) == mode_models.end()) {
-        return Scenario(scenario_id, {}, 0.0);
+        return Scenario(scenario_id, {});
     }
 
     const ModeModel& mode = mode_models.at(worst_mode);
@@ -498,20 +491,20 @@ Scenario WassersteinDRO::generate_worst_case_scenario(
     steps.emplace_back(0, x.head<2>(), cov.block<2, 2>(0, 0));
 
     for (int k = 0; k < horizon; ++k) {
-        x = mode.A * x + mode.b;
-        cov = mode.A * cov * mode.A.transpose() + mode.G * mode.G.transpose();
+        x = mode.propagate(ObstacleState::from_array(x)).to_array();
+        mode.propagate_covariance(cov);
         steps.emplace_back(k + 1, x.head<2>(), cov.block<2, 2>(0, 0));
     }
 
     // Build scenario with a single obstacle trajectory
-    ObstacleTrajectory traj(obstacle_id, worst_mode, steps, max_weight);
+    ObstacleTrajectory traj(obstacle_id, worst_mode, steps);
     std::map<int, ObstacleTrajectory> trajs;
     trajs[obstacle_id] = traj;
 
-    return Scenario(scenario_id, trajs, max_weight);
+    return Scenario(scenario_id, trajs);
 }
 
-Scenario WassersteinDRO::generate_adversarial_scenario(
+Scenario DRO::generate_adversarial_scenario(
     const DROResult& dro_result,
     int obstacle_id,
     const ObstacleState& obs_state,
@@ -533,7 +526,7 @@ Scenario WassersteinDRO::generate_adversarial_scenario(
 
     if (worst_mode.empty() || dro_result.worst_case_risk < 1e-12 ||
         mode_models.find(worst_mode) == mode_models.end()) {
-        return Scenario(scenario_id, {}, 0.0);
+        return Scenario(scenario_id, {});
     }
 
     const ModeModel& mode = mode_models.at(worst_mode);
@@ -583,14 +576,14 @@ Scenario WassersteinDRO::generate_adversarial_scenario(
         steps.emplace_back(k, adv_pos, covs[k]);
     }
 
-    ObstacleTrajectory traj(obstacle_id, worst_mode, steps, max_weight);
+    ObstacleTrajectory traj(obstacle_id, worst_mode, steps);
     std::map<int, ObstacleTrajectory> trajs;
     trajs[obstacle_id] = traj;
 
-    return Scenario(scenario_id, trajs, max_weight);
+    return Scenario(scenario_id, trajs);
 }
 
-int WassersteinDRO::effective_support(const DROResult& dro_result, double threshold) {
+int DRO::effective_support(const DROResult& dro_result, double threshold) {
     int count = 0;
     for (const auto& [mode, w] : dro_result.worst_case_weights) {
         if (w > threshold) ++count;
@@ -602,7 +595,7 @@ int WassersteinDRO::effective_support(const DROResult& dro_result, double thresh
 // Private methods
 // ============================================================================
 
-std::vector<std::vector<double>> WassersteinDRO::compute_transport_cost_matrix(
+std::vector<std::vector<double>> DRO::compute_ground_cost_transport_matrix(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
@@ -719,7 +712,62 @@ std::vector<std::vector<double>> WassersteinDRO::compute_transport_cost_matrix(
     return D;
 }
 
-std::map<std::string, double> WassersteinDRO::compute_risk_vector(
+std::map<std::string, double> DRO::compute_risk_vector(
+    const RiskVectorRequest& request
+) {
+    if (request.ego_linearization_trajectory.empty()) {
+        throw std::invalid_argument("Risk-vector request requires an ego trajectory.");
+    }
+    if (request.horizon < 0 || request.num_discs <= 0 ||
+        !std::isfinite(request.safety_radius) || request.safety_radius < 0.0 ||
+        !std::isfinite(request.vehicle_length) || request.vehicle_length < 0.0) {
+        throw std::invalid_argument("Risk-vector request contains invalid geometry.");
+    }
+
+    const auto& cfg = config_.radius_calibration;
+    const Eigen::Index mode_count = static_cast<Eigen::Index>(request.mode_ids.size());
+    const bool has_transition = request.transition != nullptr &&
+        request.transition->rows() == mode_count && request.transition->cols() == mode_count;
+    const Eigen::MatrixXd* transition = has_transition ? request.transition : nullptr;
+
+    switch (cfg.risk_measure) {
+        case DRORiskMeasure::MIXTURE_VAR:
+        case DRORiskMeasure::MIXTURE_CVAR:
+            return compute_risk_vector_mixture(
+                request.obstacle_state, request.mode_models, request.mode_ids,
+                request.ego_linearization_trajectory, request.horizon,
+                request.safety_radius, request.num_discs, request.vehicle_length,
+                transition);
+        case DRORiskMeasure::JOINT_VAR:
+        case DRORiskMeasure::JOINT_CVAR:
+            return compute_risk_vector_joint(
+                request.obstacle_state, request.mode_models, request.mode_ids,
+                request.ego_linearization_trajectory, request.horizon,
+                request.safety_radius, request.num_discs, request.vehicle_length,
+                transition);
+        case DRORiskMeasure::BONFERRONI_VAR:
+            return compute_risk_vector_bonferroni(
+                request.obstacle_state, request.mode_models, request.mode_ids,
+                request.ego_linearization_trajectory, request.horizon,
+                request.safety_radius, request.num_discs, request.vehicle_length);
+        default:
+            // With a Markov chain, surrogate risk must cover the joint
+            // mode-sequence/noise law rather than silently holding a mode fixed.
+            if (transition != nullptr) {
+                return compute_risk_vector_joint(
+                    request.obstacle_state, request.mode_models, request.mode_ids,
+                    request.ego_linearization_trajectory, request.horizon,
+                    request.safety_radius, request.num_discs, request.vehicle_length,
+                    transition);
+            }
+            return compute_surrogate_risk_vector(
+                request.obstacle_state, request.mode_models, request.mode_ids,
+                request.ego_linearization_trajectory, request.horizon,
+                request.safety_radius, request.num_discs, request.vehicle_length);
+    }
+}
+
+std::map<std::string, double> DRO::compute_surrogate_risk_vector(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
@@ -732,26 +780,6 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     std::map<std::string, double> risk;
 
     const double alpha = config_.radius_calibration.alpha_one_sided;
-
-    // JOINT_VAR / JOINT_CVAR: true risk measure of the joint-horizon Euclidean
-    // violation. Dispatch out to the Monte Carlo estimator; the surrogate path
-    // below is not used at all.
-    if (config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_VAR ||
-        config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_CVAR) {
-        return compute_risk_vector_joint(obs_state, mode_models, mode_ids,
-                                         ego_linearization_traj, horizon, safety_radius,
-                                         num_discs, vehicle_length);
-    }
-
-    // BONFERRONI_VAR: PROPER Bonferroni VaR on the TRUE per-step Euclidean violation
-    // (Monte Carlo on each step's marginal Gaussian). Dispatch out; the linearised
-    // surrogate path below is not used.
-    if (config_.radius_calibration.risk_measure == DRORiskMeasure::BONFERRONI_VAR) {
-        return compute_risk_vector_bonferroni(obs_state, mode_models, mode_ids,
-                                              ego_linearization_traj, horizon, safety_radius,
-                                              num_discs, vehicle_length);
-    }
-
 
     // Bonferroni: inflate the per-step level to alpha' = 1 - (1-alpha)/(N_s*D) so
     // the union over the N_s*D (step, disc) violation events is controlled at alpha.
@@ -848,7 +876,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector(
     return risk;
 }
 
-double WassersteinDRO::surrogate_traj_violation(
+double DRO::surrogate_traj_violation(
     const std::vector<Eigen::Vector2d>& means,
     const std::vector<Eigen::Matrix2d>& covs,
     const std::vector<EgoState>& ego_traj,
@@ -892,7 +920,7 @@ double WassersteinDRO::surrogate_traj_violation(
     return max_risk;
 }
 
-std::pair<double, double> WassersteinDRO::surrogate_traj_gaussian(
+std::pair<double, double> DRO::surrogate_traj_gaussian(
     const std::vector<Eigen::Vector2d>& means,
     const std::vector<Eigen::Matrix2d>& covs,
     const std::vector<EgoState>& ego_traj,
@@ -938,7 +966,7 @@ std::pair<double, double> WassersteinDRO::surrogate_traj_gaussian(
     return { best_mu, best_sigma };
 }
 
-std::map<std::string, double> WassersteinDRO::compute_risk_vector_mixture(
+std::map<std::string, double> DRO::compute_risk_vector_mixture(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
@@ -1015,8 +1043,8 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_mixture(
                     continue;
                 }
                 const ModeModel& m = it->second;
-                x = m.A * x + m.b;
-                cov = m.A * cov * m.A.transpose() + m.G * m.G.transpose();
+                x = m.propagate(ObstacleState::from_array(x)).to_array();
+                m.propagate_covariance(cov);
                 means.emplace_back(x.head<2>());
                 covs.emplace_back(cov.block<2, 2>(0, 0));
             }
@@ -1035,7 +1063,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_mixture(
     return risk;
 }
 
-std::map<std::string, double> WassersteinDRO::compute_risk_vector_bonferroni(
+std::map<std::string, double> DRO::compute_risk_vector_bonferroni(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
@@ -1120,7 +1148,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_bonferroni(
     return risk;
 }
 
-std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
+std::map<std::string, double> DRO::compute_risk_vector_joint(
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<std::string>& mode_ids,
@@ -1213,7 +1241,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
                 const int nk = static_cast<int>(mk->G.cols());
                 Eigen::VectorXd w(nk);
                 for (int i = 0; i < nk; ++i) w(i) = gauss(rng);
-                x = mk->A * x + mk->b + mk->G * w;
+                x = mk->propagate(ObstacleState::from_array(x), &w).to_array();
 
                 const Eigen::Vector2d p = x.head<2>();
                 for (const auto& c_d : disc_centres[k]) {
@@ -1233,7 +1261,7 @@ std::map<std::string, double> WassersteinDRO::compute_risk_vector_joint(
     return risk;
 }
 
-std::vector<Eigen::Vector2d> WassersteinDRO::propagate_mode_mean(
+std::vector<Eigen::Vector2d> DRO::propagate_mode_mean(
     const ObstacleState& obs_state,
     const ModeModel& mode,
     int horizon
@@ -1245,14 +1273,14 @@ std::vector<Eigen::Vector2d> WassersteinDRO::propagate_mode_mean(
     means.push_back(x.head<2>());
 
     for (int k = 0; k < horizon; ++k) {
-        x = mode.A * x + mode.b;
+        x = mode.propagate(ObstacleState::from_array(x)).to_array();
         means.push_back(x.head<2>());
     }
 
     return means;
 }
 
-std::vector<Eigen::Matrix2d> WassersteinDRO::propagate_mode_covariance(
+std::vector<Eigen::Matrix2d> DRO::propagate_mode_covariance(
     const ModeModel& mode,
     int horizon
 ) {
@@ -1270,7 +1298,7 @@ std::vector<Eigen::Matrix2d> WassersteinDRO::propagate_mode_covariance(
     return covs;
 }
 
-double WassersteinDRO::gaussian_w2_2d(
+double DRO::gaussian_w2_2d(
     const Eigen::Vector2d& mu1, const Eigen::Matrix2d& cov1,
     const Eigen::Vector2d& mu2, const Eigen::Matrix2d& cov2
 ) {
@@ -1367,7 +1395,7 @@ const std::vector<Eigen::Vector2d>& slice_directions() {
 
 }  // namespace
 
-double WassersteinDRO::sliced_w1_gaussian_2d(
+double DRO::sliced_w1_gaussian_2d(
     const Eigen::Vector2d& mu1, const Eigen::Matrix2d& cov1,
     const Eigen::Vector2d& mu2, const Eigen::Matrix2d& cov2
 ) {
@@ -1385,7 +1413,7 @@ double WassersteinDRO::sliced_w1_gaussian_2d(
     return (M_PI / 2.0) * acc / kSlicedW1Directions;
 }
 
-Eigen::Matrix2d WassersteinDRO::matrix_sqrt_2x2(const Eigen::Matrix2d& M) {
+Eigen::Matrix2d DRO::matrix_sqrt_2x2(const Eigen::Matrix2d& M) {
     // Closed-form 2x2 matrix square root:
     // sqrt(M) = (M + sqrt(det(M)) * I) / sqrt(tr(M) + 2*sqrt(det(M)))
 
@@ -1407,7 +1435,7 @@ Eigen::Matrix2d WassersteinDRO::matrix_sqrt_2x2(const Eigen::Matrix2d& M) {
     return result;
 }
 
-std::pair<double, double> WassersteinDRO::solve_kantorovich_dual(
+std::pair<double, double> DRO::solve_kantorovich_dual(
     const std::map<std::string, double>& nominal_weights,
     const std::map<std::string, double>& risk_vector,
     const std::vector<std::vector<double>>& D,
@@ -1482,7 +1510,7 @@ std::pair<double, double> WassersteinDRO::solve_kantorovich_dual(
     return {best_lambda, best_val};
 }
 
-double WassersteinDRO::evaluate_dual(
+double DRO::evaluate_dual(
     double lambda,
     const std::map<std::string, double>& nominal_weights,
     const std::map<std::string, double>& risk_vector,
@@ -1514,7 +1542,7 @@ double WassersteinDRO::evaluate_dual(
 // Feasible-by-construction Q* recovery via dual-guided bracketing + plan mixing
 // ============================================================================
 
-TransportPlan WassersteinDRO::build_plan(
+TransportPlan DRO::build_plan(
     double lambda,
     TiePolicy tie_policy,
     const std::map<std::string, double>& nominal_weights,
@@ -1590,7 +1618,7 @@ TransportPlan WassersteinDRO::build_plan(
     return plan;
 }
 
-std::pair<TransportPlan, TransportPlan> WassersteinDRO::bracket_plans(
+std::pair<TransportPlan, TransportPlan> DRO::bracket_plans(
     const std::map<std::string, double>& nominal_weights,
     const std::map<std::string, double>& risk_vector,
     const std::vector<std::vector<double>>& D,
@@ -1644,7 +1672,7 @@ std::pair<TransportPlan, TransportPlan> WassersteinDRO::bracket_plans(
     return {plan_lo, plan_hi};
 }
 
-void WassersteinDRO::refine_bracket(
+void DRO::refine_bracket(
     TransportPlan& plan_lo,
     TransportPlan& plan_hi,
     const std::map<std::string, double>& nominal_weights,
@@ -1681,7 +1709,7 @@ void WassersteinDRO::refine_bracket(
     }
 }
 
-WorstCaseRecoveryResult WassersteinDRO::mix_plans_to_radius(
+WorstCaseRecoveryResult DRO::mix_plans_to_radius(
     const TransportPlan& plan_lo,
     const TransportPlan& plan_hi,
     const std::vector<std::string>& mode_ids,
@@ -1724,7 +1752,7 @@ WorstCaseRecoveryResult WassersteinDRO::mix_plans_to_radius(
     return result;
 }
 
-WorstCaseRecoveryResult WassersteinDRO::recover_feasible_qstar(
+WorstCaseRecoveryResult DRO::recover_feasible_qstar(
     const std::map<std::string, double>& nominal_weights,
     const std::map<std::string, double>& risk_vector,
     const std::vector<std::vector<double>>& D,

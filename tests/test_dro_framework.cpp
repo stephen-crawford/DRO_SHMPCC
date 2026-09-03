@@ -34,7 +34,7 @@
 #include "mpc_controller.hpp"
 #include "collision_constraints.hpp"
 #include "dynamics.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 
@@ -122,13 +122,12 @@ static RolloutResult run_rollout(
     config.obstacle_radius = 0.35;
     config.mpc.constraints.safety_margin = 0.2;
     config.solver.use_sqp_solver = true;
-    config.mpc.sampling.ensure_mode_coverage = true;
     config.dro.enabled = enable_dro;
     config.mpc.ego.num_discs = num_discs;
     config.mpc.safe_horizon_enabled = safe_horizon_enabled;
     config.mpc.constraints.safe_horizon_min = 3;
 
-    AdaptiveScenarioMPC controller(config);
+    MPCController controller(config);
 
     // Setup obstacle
     int obs_id = 0;
@@ -743,7 +742,7 @@ static int test_h6_ot_ground_cost() {
         ego_ref.emplace_back(k * 0.15, 0.0, 0.0, 1.5);
     }
 
-    WassersteinDRO dro;
+    DRO dro;
     std::map<std::string, double> nominal;
     for (const auto& [id, _] : mode_models) {
         nominal[id] = 1.0 / mode_models.size();

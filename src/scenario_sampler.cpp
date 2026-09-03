@@ -14,7 +14,7 @@ namespace {
  * @brief Generate a stationary (hold-position) trajectory for an unobserved obstacle.
  *
  * Used during cold start: the obstacle has no observed modes yet, so we
- * predict it stays at its current position with small growing uncertainty.
+ * predict it stays at its current position with bounded Lyapunov uncertainty.
  */
 ObstacleTrajectory make_stationary_trajectory(
     int obstacle_id,
@@ -25,16 +25,30 @@ ObstacleTrajectory make_stationary_trajectory(
     steps.reserve(horizon + 1);
 
     Eigen::Vector2d pos = initial_state.position();
-    Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
-    const double sigma_growth = 0.01;  // small per-step uncertainty growth
+    Eigen::Matrix2d position_covariance = Eigen::Matrix2d::Zero();
+    const Eigen::Matrix2d hold_transition = 0.98 * Eigen::Matrix2d::Identity();
+    const Eigen::Matrix2d hold_process_noise = 0.01 * Eigen::Matrix2d::Identity();
 
-    steps.emplace_back(0, pos, cov);
-    for (int k = 1; k <= horizon; ++k) {
-        cov += sigma_growth * Eigen::Matrix2d::Identity();
-        steps.emplace_back(k, pos, cov);
+    // Solve P = A P A^T + Q by fixed-point iteration. The stable hold
+    // predictor gives cold-start uncertainty a finite Lyapunov limit.
+    for (int i = 0; i < 1000; ++i) {
+        Eigen::Matrix2d next = hold_transition * position_covariance * hold_transition.transpose()
+                             + hold_process_noise;
+        if ((next - position_covariance).norm() < 1e-12) {
+            position_covariance = next;
+            break;
+        }
+        position_covariance = next;
     }
 
-    return ObstacleTrajectory(obstacle_id, "stationary", steps, 1.0);
+    steps.emplace_back(0, pos, position_covariance);
+    for (int k = 1; k <= horizon; ++k) {
+        position_covariance = hold_transition * position_covariance * hold_transition.transpose()
+                    + hold_process_noise;
+        steps.emplace_back(k, pos, position_covariance);
+    }
+
+    return ObstacleTrajectory(obstacle_id, "stationary", steps);
 }
 
 /**
@@ -68,24 +82,24 @@ ObstacleTrajectory sample_obstacle_trajectory(
     steps.reserve(horizon + 1);
 
     Eigen::Vector4d x = initial_state.to_array();
-    Eigen::Matrix4d cov = Eigen::Matrix4d::Zero();
+    Eigen::Matrix4d state_covariance = Eigen::Matrix4d::Zero();
 
     // Initial step
-    steps.emplace_back(0, x.head<2>(), cov.block<2, 2>(0, 0));
+    steps.emplace_back(0, x.head<2>(), state_covariance.block<2, 2>(0, 0));
 
     for (int k = 0; k < horizon; ++k) {
         // Propagate with sampled noise
         Eigen::VectorXd noise = noise_samples.row(k).transpose();
-        x = mode.A * x + mode.b + mode.G * noise;
+        x = mode.propagate(ObstacleState::from_array(x), &noise).to_array();
 
         // Update covariance (for uncertainty representation)
-        cov = mode.A * cov * mode.A.transpose() + mode.G * mode.G.transpose();
+        mode.propagate_covariance(state_covariance);
 
-        steps.emplace_back(k + 1, x.head<2>(), cov.block<2, 2>(0, 0));
+        steps.emplace_back(k + 1, x.head<2>(), state_covariance.block<2, 2>(0, 0));
     }
 
     return ObstacleTrajectory(
-        obstacle_id, sampled_mode_id, steps, mode_weights.at(sampled_mode_id)
+        obstacle_id, sampled_mode_id, steps
     );
 }
 
@@ -106,18 +120,14 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
     steps.reserve(horizon + 1);
 
     Eigen::Vector4d x = initial_state.to_array();
-    Eigen::Matrix4d cov = Eigen::Matrix4d::Zero();
+    Eigen::Matrix4d state_covariance = Eigen::Matrix4d::Zero();
 
     // Initial step
-    steps.emplace_back(0, x.head<2>(), cov.block<2, 2>(0, 0));
+    steps.emplace_back(0, x.head<2>(), state_covariance.block<2, 2>(0, 0));
 
     // Draw mode_0 from the SAME one-step predictive belief pi_1 = T^T pi_0 that the
-    // sequence-probability accumulation below uses for the first step (via
-    // predict_mode_belief). predict_before_first_sample=true is REQUIRED here: with the
-    // default (false) mode_0 would be drawn from the raw belief pi_0 while its stored
-    // probability used pi_1, misaligning the sampling law and the recorded trajectory_prob
-    // by exactly one step. (The DRO risk-vector path in dro.cpp deliberately
-    // uses false + a point-mass belief and stores no sequence probability, so it is exempt.)
+    // predict_before_first_sample=true keeps the first draw consistent with the
+    // predictive belief used by this Markov sampler.
     auto sequence = sample_mode_sequence(
         mode_belief,
         transition_matrix,
@@ -127,36 +137,18 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         /*predict_before_first_sample=*/true
     );
 
-    std::map<std::string, int> mode_to_idx;
-    for (int i = 0; i < static_cast<int>(modes.size()); ++i) {
-        mode_to_idx[modes[i]] = i;
-    }
-
     // Track which mode was used most (for trajectory labeling)
     std::map<std::string, int> mode_counts;
     for (const auto& mode_id : modes) {
         mode_counts[mode_id] = 0;
     }
 
-    double trajectory_prob = 1.0;
     std::normal_distribution<double> normal_dist(0.0, 1.0);
-
-    // First-step probability under the one-step predictive belief pi_1 = T^T pi_0.
-    // This MUST match the seed used by sample_mode_sequence above (predict_before_first_
-    // sample=true) so trajectory_prob is the true likelihood of the sampled sequence.
-    ModeDistribution step_belief = predict_mode_belief(
-        mode_belief, transition_matrix, modes
-    );
 
     for (int k = 0; k < horizon; ++k) {
         const std::string& mode_id = sequence[k];
         const ModeModel& mode = available_modes.at(mode_id);
         mode_counts[mode_id]++;
-
-        auto belief_it = step_belief.find(mode_id);
-        if (belief_it != step_belief.end()) {
-            trajectory_prob *= belief_it->second;
-        }
 
         // Sample noise
         int noise_dim = mode.noise_dim();
@@ -166,21 +158,11 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         }
 
         // Propagate
-        x = mode.A * x + mode.b + mode.G * noise;
-        cov = mode.A * cov * mode.A.transpose() + mode.G * mode.G.transpose();
+        x = mode.propagate(ObstacleState::from_array(x), &noise).to_array();
+        mode.propagate_covariance(state_covariance);
 
-        steps.emplace_back(k + 1, x.head<2>(), cov.block<2, 2>(0, 0));
+        steps.emplace_back(k + 1, x.head<2>(), state_covariance.block<2, 2>(0, 0));
 
-        // Next conditional distribution is the sampled mode's transition row.
-        if (k + 1 < horizon) {
-            auto idx_it = mode_to_idx.find(mode_id);
-            if (idx_it != mode_to_idx.end()) {
-                step_belief.clear();
-                for (int j = 0; j < static_cast<int>(modes.size()); ++j) {
-                    step_belief[modes[j]] = transition_matrix(idx_it->second, j);
-                }
-            }
-        }
     }
 
     // Label trajectory with most frequent mode
@@ -193,7 +175,7 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         }
     }
 
-    return ObstacleTrajectory(obstacle_id, dominant_mode, steps, trajectory_prob);
+    return ObstacleTrajectory(obstacle_id, dominant_mode, steps);
 }
 
 }  // anonymous namespace
@@ -201,9 +183,11 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
 std::vector<Scenario> sample_scenarios(
     const std::map<int, ObstacleState>& obstacles,
     const std::map<int, ModeHistory>& mode_histories,
+    const std::map<int, std::map<std::string, double>>* per_obstacle_distribution,
     int horizon,
     int num_scenarios,
     const ModeBeliefConfig& mode_belief,
+    const std::map<int, Eigen::MatrixXd>* per_obstacle_transitions,
     std::mt19937* rng
 ) {
     // Create local RNG if not provided
@@ -221,6 +205,7 @@ std::vector<Scenario> sample_scenarios(
         bool stationary = true;
         ModeDistribution weights;
         const std::map<std::string, ModeModel>* available_modes = nullptr;
+        Eigen::MatrixXd transition;
     };
     std::map<int, ObsPlan> plans;
 
@@ -232,13 +217,28 @@ std::vector<Scenario> sample_scenarios(
             continue;
         }
         const ModeHistory& mode_history = hist_it->second;
-        ModeDistribution weights = compute_mode_weights(mode_history, mode_belief);
+        ModeDistribution weights;
+        if (per_obstacle_distribution != nullptr) {
+            auto distribution_it = per_obstacle_distribution->find(obs_id);
+            if (distribution_it != per_obstacle_distribution->end()) {
+                weights = distribution_it->second;
+            }
+        }
+        if (weights.empty()) {
+            weights = compute_mode_weights(mode_history, mode_belief);
+        }
         if (weights.empty()) {
             plans[obs_id] = plan;  // cold start -> stationary
             continue;
         }
         plan.weights = std::move(weights);
         plan.available_modes = &mode_history.available_modes;
+        if (per_obstacle_transitions != nullptr) {
+            auto transition_it = per_obstacle_transitions->find(obs_id);
+            if (transition_it != per_obstacle_transitions->end()) {
+                plan.transition = transition_it->second;
+            }
+        }
         plan.stationary = false;
         plans[obs_id] = std::move(plan);
     }
@@ -255,173 +255,21 @@ std::vector<Scenario> sample_scenarios(
                 trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
                 continue;
             }
-            trajectories[obs_id] = sample_obstacle_trajectory(
-                obs_id, obs_state, *plan.available_modes, plan.weights,
-                horizon, *rng
-            );
-        }
-
-        double scenario_prob = 1.0;
-        for (const auto& [_, traj] : trajectories) {
-            scenario_prob *= traj.probability;
-        }
-
-        scenarios.emplace_back(s, trajectories, scenario_prob);
-    }
-
-    return scenarios;
-}
-
-std::vector<Scenario> sample_scenarios_with_weights(
-    const std::map<int, ObstacleState>& obstacles,
-    const std::map<int, ModeHistory>& mode_histories,
-    const std::map<int, std::map<std::string, double>>& per_obstacle_weights,
-    int horizon,
-    int num_scenarios,
-    std::mt19937* rng
-) {
-    std::mt19937 local_rng;
-    if (rng == nullptr) {
-        std::random_device rd;
-        local_rng = std::mt19937(rd());
-        rng = &local_rng;
-    }
-
-    // Caller already computed the categorical (q*, custom, or p̂). Cache the
-    // per-obstacle lookup once; it does not depend on the scenario index.
-    struct ObsPlan {
-        bool stationary = true;
-        ModeDistribution weights;
-        const std::map<std::string, ModeModel>* available_modes = nullptr;
-    };
-    std::map<int, ObsPlan> plans;
-
-    for (const auto& [obs_id, obs_state] : obstacles) {
-        ObsPlan plan;
-        auto weight_it = per_obstacle_weights.find(obs_id);
-        auto hist_it = mode_histories.find(obs_id);
-        if (weight_it == per_obstacle_weights.end() || hist_it == mode_histories.end()
-            || weight_it->second.empty()) {
-            plans[obs_id] = plan;  // stationary
-            continue;
-        }
-        plan.weights = weight_it->second;
-        plan.available_modes = &hist_it->second.available_modes;
-        plan.stationary = false;
-        plans[obs_id] = std::move(plan);
-    }
-
-    std::vector<Scenario> scenarios;
-    scenarios.reserve(num_scenarios);
-
-    for (int s = 0; s < num_scenarios; ++s) {
-        std::map<int, ObstacleTrajectory> trajectories;
-        for (const auto& [obs_id, obs_state] : obstacles) {
-            const ObsPlan& plan = plans[obs_id];
-            if (plan.stationary) {
-                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
-                continue;
-            }
-            trajectories[obs_id] = sample_obstacle_trajectory(
-                obs_id, obs_state, *plan.available_modes, plan.weights,
-                horizon, *rng
-            );
-        }
-        double scenario_prob = 1.0;
-        for (const auto& [_, traj] : trajectories) {
-            scenario_prob *= traj.probability;
-        }
-        scenarios.emplace_back(s, trajectories, scenario_prob);
-    }
-
-    return scenarios;
-}
-
-std::vector<Scenario> sample_scenarios_markov(
-    const std::map<int, ObstacleState>& obstacles,
-    const std::map<int, ModeHistory>& mode_histories,
-    const std::map<int, std::map<std::string, double>>* per_obstacle_belief,
-    int horizon,
-    int num_scenarios,
-    const ModeBeliefConfig& belief_cfg,
-    std::mt19937* rng
-) {
-    std::mt19937 local_rng;
-    if (rng == nullptr) {
-        std::random_device rd;
-        local_rng = std::mt19937(rd());
-        rng = &local_rng;
-    }
-
-    // Per-obstacle belief + transition matrix, built ONCE. Neither depends on the
-    // scenario index, so hoisting them out of the s-loop is exact, not an
-    // approximation -- it only removes redundant work.
-    struct ObsPlan {
-        bool stationary = true;
-        ModeDistribution belief;
-        Eigen::MatrixXd transition;
-        std::vector<std::string> modes;
-    };
-    std::map<int, ObsPlan> plans;
-
-    for (const auto& [obs_id, obs_state] : obstacles) {
-        ObsPlan plan;
-        auto hist_it = mode_histories.find(obs_id);
-        if (hist_it == mode_histories.end()) {
-            plans[obs_id] = plan;  // stationary
-            continue;
-        }
-        const ModeHistory& mode_history = hist_it->second;
-
-        // Initial belief: caller-supplied (e.g. DRO Q*) takes precedence.
-        ModeDistribution belief;
-        if (per_obstacle_belief != nullptr) {
-            auto b_it = per_obstacle_belief->find(obs_id);
-            if (b_it != per_obstacle_belief->end() && !b_it->second.empty()) {
-                belief = b_it->second;
+            if (plan.transition.size() > 0) {
+                std::vector<std::string> modes;
+                for (const auto& [mode_id, _] : *plan.available_modes)
+                    modes.push_back(mode_id);
+                trajectories[obs_id] = sample_trajectory_with_mode_sequence(
+                    obs_id, obs_state, *plan.available_modes, plan.weights,
+                    plan.transition, modes, horizon, *rng);
+            } else {
+                trajectories[obs_id] = sample_obstacle_trajectory(
+                    obs_id, obs_state, *plan.available_modes, plan.weights,
+                    horizon, *rng);
             }
         }
-        const int M = static_cast<int>(mode_history.available_modes.size());
-        if (belief.empty()) {
-            belief = compute_mode_weights(mode_history, belief_cfg);
-        }
-        if (belief.empty()) {
-            plans[obs_id] = plan;  // cold start -> stationary
-            continue;
-        }
 
-        plan.modes.reserve(mode_history.available_modes.size());
-        for (const auto& [mode_id, _] : mode_history.available_modes) {
-            plan.modes.push_back(mode_id);
-        }
-        // alpha and kappa are DERIVED from the stated prior + self-persistence
-        // assumption (see ModeBeliefConfig): kappa is not a free constant.
-        plan.transition = compute_mode_transition_matrix(
-            mode_history, plan.modes,
-            belief_cfg.alpha(M), belief_cfg.kappa(M)
-        );
-        plan.belief = std::move(belief);
-        plan.stationary = false;
-        plans[obs_id] = std::move(plan);
-    }
-
-    std::vector<Scenario> scenarios;
-    scenarios.reserve(num_scenarios);
-
-    for (int s = 0; s < num_scenarios; ++s) {
-        std::map<int, ObstacleTrajectory> trajectories;
-        for (const auto& [obs_id, obs_state] : obstacles) {
-            const ObsPlan& plan = plans[obs_id];
-            if (plan.stationary) {
-                trajectories[obs_id] = make_stationary_trajectory(obs_id, obs_state, horizon);
-                continue;
-            }
-            trajectories[obs_id] = sample_trajectory_with_mode_sequence(
-                obs_id, obs_state, mode_histories.at(obs_id).available_modes,
-                plan.belief, plan.transition, plan.modes, horizon, *rng
-            );
-        }
-        scenarios.emplace_back(s, trajectories, 1.0 / num_scenarios);
+        scenarios.emplace_back(s, trajectories);
     }
 
     return scenarios;

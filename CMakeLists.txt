@@ -12,6 +12,7 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 set(SCENARIO_MPC_SOURCES
     src/collision_constraints.cpp
     src/dynamics.cpp
+    src/environment_geometry.cpp
     src/experiment_harness.cpp
     src/mode_weights.cpp
     src/mpc_controller.cpp
@@ -91,11 +92,20 @@ target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
 add_executable(test_mode_belief tests/test_mode_belief.cpp)
 target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
 
+add_executable(test_mode_catalog tests/test_mode_catalog.cpp)
+target_link_libraries(test_mode_catalog PRIVATE scenario_mpc)
+
+add_executable(test_environment_topologies tests/test_environment_topologies.cpp)
+target_link_libraries(test_environment_topologies PRIVATE scenario_mpc)
+
 add_executable(test_switching_risk tests/test_switching_risk.cpp)
 target_link_libraries(test_switching_risk PRIVATE scenario_mpc)
 
 add_executable(test_ground_cost tests/test_ground_cost.cpp)
 target_link_libraries(test_ground_cost PRIVATE scenario_mpc)
+
+add_executable(test_dro_ambiguity_sets tests/test_dro_ambiguity_sets.cpp)
+target_link_libraries(test_dro_ambiguity_sets PRIVATE scenario_mpc)
 
 add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
 target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)

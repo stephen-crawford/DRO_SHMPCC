@@ -186,9 +186,6 @@ struct ScenarioSamplingSettings {
     double chance_of_certificate_violation = 0.01; // = beta  (certificate confidence = 1 - beta)
 
     bool enforce_certified_scenario_count = false;
-    /// Guarantee at least one i.i.d. scenario per observed mode (breaks i.i.d.
-    /// exchangeability; off by default so the scenario bound still applies).
-    bool ensure_mode_coverage = false;
     int max_history_length = -1;
 
     bool markov_jump_system = false;
@@ -284,10 +281,9 @@ inline std::string risk_measure_name(DRORiskMeasure r) {
 // ============================================================================
 
 /**
- * @brief Calibration knobs for the Wasserstein ambiguity radius rho and the OT
- *        reweighting.
+ * @brief Calibration knobs for the configured ambiguity radius and reweighting.
  *
- * Radius theory (true W1 concentration — see WassersteinDRO::get_adaptive_rho):
+ * Radius theory (true W1 concentration — see DRO::get_adaptive_rho):
  *   The nominal belief p_hat is an empirical categorical over M modes from n
  *   observed interactions. In total variation it concentrates as
  *       P( ||p_hat - p*||_1 >= eps ) <= 2^M exp(-n eps^2 / 2)      (Devroye),
@@ -316,6 +312,10 @@ struct RadiusCalibrationSettings {
 
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
+    /// If positive, overrides the controller-provided risk horizon. Otherwise
+    /// the active safe horizon (or full MPC horizon) is used.
+    int risk_horizon = -1;
+
     AmbiguityDivergence divergence = AmbiguityDivergence::WASSERSTEIN;
 
     /// Monte Carlo sample count / seed for JOINT_VAR / JOINT_CVAR (offline).
@@ -332,7 +332,7 @@ struct RadiusCalibrationSettings {
     double sigma_floor = 1e-6;           //Floor for directional sigma
 
     /// Entropic allocator: keeps q_min > 0 so the certificate L = 1/q_min is finite.
-    bool use_entropic_allocator = false;
+    bool use_entropic_allocator = true;
     double entropic_tau = 0.05;          //Temperature; tau -> 0 recovers the raw LP
 };
 
@@ -397,6 +397,9 @@ struct RuntimeConfig {
     MPCConfig mpc;
     DROControllerConfig dro;
     SolverSettings solver;
+
+    /// Seed for controller-owned random sampling. Zero selects nondeterministic seeding.
+    unsigned random_seed = 0;
 
     /// Obstacle collision radius used with ego.radius for halfspaces.
     double obstacle_radius = 0.35;

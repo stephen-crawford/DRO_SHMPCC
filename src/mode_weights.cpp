@@ -71,21 +71,6 @@ std::map<std::string, double> compute_mode_weights(
     return weights;
 }
 
-std::vector<std::string> sample_mode_sequence(
-    const std::map<std::string, double>& mode_weights,
-    int horizon,
-    std::mt19937& rng
-) {
-    std::vector<std::string> sequence;
-    sequence.reserve(horizon);
-
-    for (int k = 0; k < horizon; ++k) {
-        sequence.push_back(sample_mode_from_weights(mode_weights, rng));
-    }
-
-    return sequence;
-}
-
 std::string sample_mode_from_weights(
     const std::map<std::string, double>& mode_weights,
     std::mt19937& rng

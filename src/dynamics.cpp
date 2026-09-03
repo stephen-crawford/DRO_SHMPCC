@@ -150,59 +150,13 @@ double EgoDynamics::compute_spline_update(
     const ReferencePath& path,
     double dt
 ) {
-    double s = prev_state.s;
-    if (s < 0) return -1.0;  // Not tracking spline
+    (void)dt;
+    if (prev_state.s < 0.0) return -1.0;
 
-    double path_length = path.total_length();
-    double s_clamped = std::clamp(s, 0.0, path_length);
-
-    // Get path geometry at current spline position
-    PathPoint pp = path.get_point_at(s_clamped);
-    double ph = pp.heading;
-    Eigen::Vector2d t_vec(std::cos(ph), std::sin(ph));    // tangent
-    Eigen::Vector2d n_vec(-std::sin(ph), std::cos(ph));   // normal (left)
-
-    // Displacement from current to integrated position
-    Eigen::Vector2d dp = next_state.position() - prev_state.position();
-
-    // Project displacement onto tangent and normal
-    double vt = t_vec.dot(dp);   // tangential component
-    double vn = n_vec.dot(dp);   // normal component
-
-    // Contour error at current position
-    Eigen::Vector2d pos_diff = prev_state.position() - pp.position;
-    double contour_error = n_vec.dot(pos_diff);
-
-    // Path curvature at current position
-    double curvature = std::max(std::abs(pp.curvature), 1e-5);
-    double R = std::min(1.0 / curvature, 1e4);  // Cap radius at 10km
-
-    // s_new = s + R * atan2(vt, R - contour_error - vn)
-    double denominator = std::max(R - contour_error - vn, 1e-6);
-    double theta_update = std::atan2(vt, denominator);
-    theta_update = std::clamp(theta_update, -0.5, 0.5);
-    double ds_curvature = R * theta_update;
-
-    // vt directly represents progress along the path tangent
-    double ds_tangential = vt;
-
-    // Blend both methods (60% tangential, 40% curvature-aware)
-    // Matching Python reference blend weights
-    double ds = 0.6 * ds_tangential + 0.4 * ds_curvature;
-
-    // Clamp update to reasonable range
-    double v = std::max(prev_state.v, 0.0);
-    double ds_max = v * dt * 5.0;
-    double ds_min = (vt > 1e-6) ? -v * dt * 0.1 : 0.0;
-    ds = std::clamp(ds, ds_min, ds_max);
-
-    // Prevent backward progress when not moving forward along path
-    if (vt <= 1e-6) {
-        ds = std::max(ds, 0.0);
-    }
-
-    double s_new = s + ds;
-    return std::max(s_new, 0.0);
+    // Progress is the monotone closest point on the actual discretized path.
+    // This is the same geometric evaluation used by the controller outside
+    // the dynamics rollout, rather than a chord/curvature approximation.
+    return path.find_closest_point(next_state.position(), prev_state.s);
 }
 
 std::vector<EgoState> EgoDynamics::rollout_with_spline(
@@ -260,61 +214,87 @@ std::map<std::string, ModeModel> create_obstacle_mode_models(double dt) {
         "constant_velocity", A_cv, b_cv, G_cv, "Constant velocity motion"
     );
 
-    // Decelerating mode
+    // Longitudinal speed variants.  Scaling velocity preserves the current
+    // travel direction, unlike a fixed world-frame acceleration bias.
+    Eigen::Matrix4d A_acc = A_cv;
+    A_acc(2, 2) = 1.08;
+    A_acc(3, 3) = 1.08;
+    modes["accelerating"] = ModeModel(
+        "accelerating", A_acc, b_cv, G_cv, "Accelerating along current velocity"
+    );
+
     Eigen::Matrix4d A_dec = A_cv;
-    Eigen::Vector4d b_dec;
-    b_dec << 0, 0, -0.5 * dt, -0.5 * dt;  // Deceleration
-
+    A_dec(2, 2) = 0.82;
+    A_dec(3, 3) = 0.82;
     modes["decelerating"] = ModeModel(
-        "decelerating", A_dec, b_dec, G_cv, "Decelerating motion"
+        "decelerating", A_dec, b_cv, G_cv, "Decelerating along current velocity"
     );
 
-    // Left turn mode
-    double omega = 0.3;  // Turn rate [rad/s]
-    double cos_w = std::cos(omega * dt);
-    double sin_w = std::sin(omega * dt);
-
-    Eigen::Matrix4d A_left;
-    A_left << 1, 0, dt * cos_w, -dt * sin_w,
-              0, 1, dt * sin_w, dt * cos_w,
-              0, 0, cos_w, -sin_w,
-              0, 0, sin_w, cos_w;
-    Eigen::Vector4d b_left = Eigen::Vector4d::Zero();
-
-    modes["turn_left"] = ModeModel(
-        "turn_left", A_left, b_left, G_cv, "Left turning motion"
+    Eigen::Matrix4d A_stop = A_cv;
+    A_stop(2, 2) = 0.15;
+    A_stop(3, 3) = 0.15;
+    modes["stop"] = ModeModel(
+        "stop", A_stop, b_cv, G_cv, "Rapidly braking to a stop"
     );
 
-    // Right turn mode
-    Eigen::Matrix4d A_right;
-    A_right << 1, 0, dt * cos_w, dt * sin_w,
-               0, 1, -dt * sin_w, dt * cos_w,
-               0, 0, cos_w, sin_w,
-               0, 0, -sin_w, cos_w;
-    Eigen::Vector4d b_right = Eigen::Vector4d::Zero();
+    const auto add_turn = [&](const std::string& id, double omega) {
+        const double cosine = std::cos(omega * dt);
+        const double sine = std::sin(omega * dt);
+        Eigen::Matrix4d A_turn;
+        A_turn << 1, 0, dt * cosine, -dt * sine,
+                  0, 1, dt * sine,  dt * cosine,
+                  0, 0, cosine,     -sine,
+                  0, 0, sine,       cosine;
+        modes[id] = ModeModel(
+            id, A_turn, b_cv, G_cv,
+            omega > 0.0 ? "Left turning motion" : "Right turning motion");
+    };
+    add_turn("turn_left", 0.3);
+    add_turn("turn_right", -0.3);
+    add_turn("turn_left_sharp", 0.65);
+    add_turn("turn_right_sharp", -0.65);
 
-    modes["turn_right"] = ModeModel(
-        "turn_right", A_right, b_right, G_cv, "Right turning motion"
-    );
-
-    // Lane change left
-    Eigen::Matrix4d A_lc = A_cv;
-    Eigen::Vector4d b_lc_left;
-    b_lc_left << 0, 0.3 * dt, 0, 0;  // Lateral drift left
-
-    modes["lane_change_left"] = ModeModel(
-        "lane_change_left", A_lc, b_lc_left, G_cv, "Lane change left"
-    );
-
-    // Lane change right
-    Eigen::Vector4d b_lc_right;
-    b_lc_right << 0, -0.3 * dt, 0, 0;  // Lateral drift right
-
-    modes["lane_change_right"] = ModeModel(
-        "lane_change_right", A_lc, b_lc_right, G_cv, "Lane change right"
-    );
+    const auto add_lane_change = [&](const std::string& id, double lateral_step) {
+        modes[id] = ModeModel(id, A_cv, b_cv, G_cv,
+                              lateral_step > 0.0 ? "Lane change left" : "Lane change right");
+        modes[id].body_lateral_displacement = lateral_step;
+    };
+    add_lane_change("lane_change_left", 0.3 * dt);
+    add_lane_change("lane_change_right", -0.3 * dt);
+    add_lane_change("lane_change_left_fast", 0.7 * dt);
+    add_lane_change("lane_change_right_fast", -0.7 * dt);
 
     return modes;
+}
+
+std::vector<std::string> select_obstacle_mode_ids(
+    const std::vector<std::string>& regular_candidates,
+    const std::string& rare_mode,
+    const std::map<std::string, ModeModel>& mode_catalog,
+    bool randomize,
+    int requested_regular_modes,
+    std::mt19937& rng
+) {
+    std::vector<std::string> selected;
+    for (const auto& mode_id : regular_candidates) {
+        if (mode_catalog.count(mode_id) != 0 &&
+            std::find(selected.begin(), selected.end(), mode_id) == selected.end()) {
+            selected.push_back(mode_id);
+        }
+    }
+    if (selected.empty() && mode_catalog.count("constant_velocity") != 0) {
+        selected.push_back("constant_velocity");
+    }
+    if (randomize) {
+        std::shuffle(selected.begin(), selected.end(), rng);
+        const int count = std::max(1, requested_regular_modes);
+        selected.resize(std::min(static_cast<size_t>(count), selected.size()));
+    }
+    if (!rare_mode.empty() && mode_catalog.count(rare_mode) != 0 &&
+        std::find(selected.begin(), selected.end(), rare_mode) == selected.end()) {
+        selected.push_back(rare_mode);
+    }
+    return selected;
 }
 
 }  // namespace dro_mpc

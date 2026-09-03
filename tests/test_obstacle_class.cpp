@@ -8,9 +8,9 @@
  * distributions while vehicles maintain separate histories.
  *
  * Architecture:
- *   - ModeHistory tracks observations by obstacle_class (not just obstacle_id)
- *   - AdaptiveScenarioMPC::update_mode_observation() broadcasts to class siblings
- *   - AdaptiveScenarioMPC::initialize_obstacle() copies sibling history for
+ *   - ModeHistory tracks observations by obstacle_class_id (not just obstacle_id)
+ *   - MPCController::update_mode_observation() broadcasts to class siblings
+ *   - MPCController::initialize_obstacle() copies sibling history for
  *     late-joining obstacles
  *   - ExperimentConfig::obstacles_per_class controls grouping in rollouts
  *
@@ -52,7 +52,7 @@ int main() {
     // -------------------------------------------------------
     {
         std::cout << "Test 1: Observations sync within same class... ";
-        AdaptiveScenarioMPC ctrl(cfg);
+        MPCController ctrl(cfg);
 
         // Three obstacles: 0,1 share class 0; obstacle 2 is class 1
         ctrl.initialize_obstacle(0, 0, mode_models);
@@ -88,7 +88,7 @@ int main() {
     // -------------------------------------------------------
     {
         std::cout << "Test 2: Late-joining obstacle inherits class history... ";
-        AdaptiveScenarioMPC ctrl(cfg);
+        MPCController ctrl(cfg);
 
         ctrl.initialize_obstacle(0, 0, mode_models);
 
@@ -117,7 +117,7 @@ int main() {
     // -------------------------------------------------------
     {
         std::cout << "Test 3: Different classes stay independent... ";
-        AdaptiveScenarioMPC ctrl(cfg);
+        MPCController ctrl(cfg);
 
         ctrl.initialize_obstacle(0, 0, mode_models);
         ctrl.initialize_obstacle(1, 1, mode_models);
@@ -147,7 +147,7 @@ int main() {
     // -------------------------------------------------------
     {
         std::cout << "Test 4: Multi-obstacle rollout with class sharing... ";
-        AdaptiveScenarioMPC ctrl(cfg);
+        MPCController ctrl(cfg);
         EgoDynamics dynamics(DT);
 
         int n_obs = 4;

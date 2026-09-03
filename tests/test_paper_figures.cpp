@@ -38,7 +38,7 @@
 
 #include "experiment_harness.hpp"
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "mode_weights.hpp"
 #include "scenario_sampler.hpp"
 #include "dynamics.hpp"
@@ -292,7 +292,7 @@ static void run_fig40_risk_lift() {
     dro_cfg.max_radius = 0.5;
     dro_cfg.radius_calibration.use_calibrated_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
-    WassersteinDRO dro_probe(dro_cfg);
+    DRO dro_probe(dro_cfg);
 
     for (int i = 0; i < NUM_SOLVES; ++i) {
         if ((i + 1) % 100 == 0 || i == 0) {
@@ -693,7 +693,7 @@ static void run_fig45_feasibility() {
     dro_cfg.max_radius = 0.5;
     dro_cfg.radius_calibration.use_calibrated_radius = true;
     dro_cfg.ground_cost_type = DROGroundCostType::W2_BURES;
-    WassersteinDRO dro_probe(dro_cfg);
+    DRO dro_probe(dro_cfg);
 
     int feasible_count = 0;
 

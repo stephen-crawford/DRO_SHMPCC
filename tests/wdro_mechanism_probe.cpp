@@ -3,7 +3,7 @@
 // an obstacle) with the real mode models -> per-mode risk r differs. We inspect, for the
 // default DROConfig the controller uses, whether q* up-weights argmax(r), and how rho and
 // the q* distortion behave vs the ambiguity radius and the observation count.
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "dynamics.hpp"
 #include <cstdio>
 #include <map>
@@ -28,7 +28,7 @@ int main() {
 
     // ---- 1) DEFAULT config (exactly what the controller uses on main) ----
     DROConfig def;   // calibrated radius + Bonferroni VaR + primal OT, all default-on
-    WassersteinDRO d(def);
+    DRO d(def);
     DROResult r = d.compute_worst_case_weights(nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
 
     // rank modes by risk
@@ -52,7 +52,7 @@ int main() {
     std::printf("=== rho sweep (override): q*[danger] and distortion ===\n");
     std::printf("%6s %10s %12s %10s\n","rho","q*[danger]","Qstar_L1","impl_cost");
     for (double rho : {0.02,0.05,0.10,0.15,0.20,0.30,0.50}) {
-        WassersteinDRO d2(def); d2.set_rho_override(rho);
+        DRO d2(def); d2.set_rho_override(rho);
         DROResult rr = d2.compute_worst_case_weights(nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
         double l1b = 0; for (auto& id : mode_ids) l1b += std::abs(rr.worst_case_weights[id]-nominal.at(id));
         std::printf("%6.2f %10.4f %12.4f %10.4f\n", rho, rr.worst_case_weights[danger], l1b, rr.implied_transport_cost);
@@ -62,7 +62,7 @@ int main() {
     std::printf("\n=== calibrated rho vs observation_count_ (default calibrated radius) ===\n");
     std::printf("%6s %10s %12s\n","n_obs","rho_used","q*[danger]");
     for (int n : {1,5,10,25,50,100,200}) {
-        WassersteinDRO d3(def); d3.set_observation_count(n);
+        DRO d3(def); d3.set_observation_count(n);
         DROResult rr = d3.compute_worst_case_weights(nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
         std::printf("%6d %10.4f %12.4f\n", n, rr.rho_used, rr.worst_case_weights[danger]);
     }

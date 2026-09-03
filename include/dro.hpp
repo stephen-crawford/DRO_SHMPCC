@@ -28,7 +28,6 @@ enum class TiePolicy {
     MIN_COST,   // Among tied destinations, pick the one with lowest D[i][j] (less movement)
     MAX_COST    // Among tied destinations, pick the one with highest D[i][j] (more movement)
 };
-transport_cost
 /**
  * @brief A deterministic transport plan at a given lambda.
  */
@@ -76,6 +75,25 @@ struct DROResult {
 };
 
 /**
+ * @brief Standard input to a configured per-mode risk-vector evaluation.
+ *
+ * The estimator is selected solely by DRO::config().radius_calibration
+ * (and therefore by the YAML `risk_measure` setting).  The request contains only
+ * problem data shared by every estimator.
+ */
+struct RiskVectorRequest {
+    const ObstacleState& obstacle_state;
+    const std::map<std::string, ModeModel>& mode_models;
+    const std::vector<std::string>& mode_ids;
+    const std::vector<EgoState>& ego_linearization_trajectory;
+    int horizon = 0;
+    double safety_radius = 0.0;
+    int num_discs = 1;
+    double vehicle_length = 4.0;
+    const Eigen::MatrixXd* transition = nullptr;
+};
+
+/**
  * @brief Result of the entropic (Sinkhorn-style) allocator.
  */
 struct EntropicOTResult {
@@ -114,15 +132,20 @@ EntropicOTResult solve_entropic_ot(
 );
 
 /**
- * @brief Wasserstein DRO for scenario-based MPC.
+ * @brief Configurable distributionally robust optimizer for scenario-based MPC.
  *
- * Computes worst-case mode weights Q* within a W1 ball around nominal P_hat.
- * This shifts probability mass toward the single most dangerous mode direction
- * rather than injecting all extreme modes simultaneously (which over-constrains).
+ * Wasserstein is the default ambiguity set.  The `divergence` configuration may
+ * instead select any of the Schuurmans--Patrinos discrete ambiguity families.
+ * All ambiguity families are exposed through this one interface.
  */
-class WassersteinDRO {
+class DRO {
 public:
-    explicit WassersteinDRO(const DROConfig& config = DROConfig());
+    explicit DRO(const DROConfig& config = DROConfig());
+
+    /// Compute r[m] using the risk estimator selected in the DRO configuration.
+    std::map<std::string, double> compute_risk_vector(
+        const RiskVectorRequest& request
+    );
 
     /**
      * @brief Compute worst-case mode weights via Kantorovich dual.
@@ -248,17 +271,20 @@ public:
     void set_rho_override(double rho);
     void clear_rho_override();
 
+    /// Number of categorical mode observations used for radius calibration.
+    void set_observation_count(int count);
+
     /// Get config (const)
     const DROConfig& config() const { return config_; }
 
 private:
     /**
-     * @brief Compute inter-mode transport cost matrix D[i][j].
+     * @brief Compute the mode ground-cost transport matrix D[i][j].
      *
      * Uses Gaussian W2 distance (Bures metric) averaged over horizon
      * on the 2D position subspace.
      */
-    std::vector<std::vector<double>> compute_transport_cost_matrix(
+    std::vector<std::vector<double>> compute_ground_cost_transport_matrix(
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<std::string>& mode_ids,
@@ -277,7 +303,7 @@ private:
      *
      * Uses k=1..safe_horizon. Uses worst disc position when num_discs > 1.
      */
-    std::map<std::string, double> compute_risk_vector(
+    std::map<std::string, double> compute_surrogate_risk_vector(
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<std::string>& mode_ids,
@@ -349,28 +375,6 @@ private:
         const Eigen::MatrixXd* transition
     );
 
-    /**
-     * @brief Switching-aware per-mode risk for Markov-jump obstacles.
-     *
-     * When the obstacle may change modes DURING the horizon, r[m] is the danger of
-     * STARTING in mode m and evolving under the estimated transition chain: we
-     * Monte-Carlo sample mode sequences from `transition` seeded at mode m,
-     * propagate the obstacle under the switching dynamics, evaluate the same
-     * surrogate violation per sequence, and average (expectation over the chain).
-     * `transition` must be row/col-indexed consistently with `mode_ids`.
-     */
-    std::map<std::string, double> compute_risk_vector_switching(
-        const ObstacleState& obs_state,
-        const std::map<std::string, ModeModel>& mode_models,
-        const std::vector<std::string>& mode_ids,
-        const std::vector<EgoState>& ego_linearization_traj,
-        int horizon,
-        double safety_threshold,
-        int num_discs,
-        double vehicle_length,
-        const Eigen::MatrixXd& transition
-    );
-
     /// Max over (step,disc) of the surrogate clearance violation for one obstacle
     /// mean/covariance trajectory. Shared by the held and switching risk paths.
     double surrogate_traj_violation(
@@ -414,7 +418,7 @@ private:
         int horizon
     );
 
-    /// Propagate mode covariance: Sigma_{k+1} = A*Sigma_k*A^T + G*G^T (2D position subspace)
+    /// Propagate full state covariance, returning its 2D position block at each step.
     std::vector<Eigen::Matrix2d> propagate_mode_covariance(
         const ModeModel& mode,
         int horizon
@@ -530,6 +534,13 @@ private:
         const std::vector<std::string>& mode_ids,
         double rho
     );
+
+    /// Resolve the configured ambiguity radius for any supported family.
+    double resolve_ambiguity_radius(
+        AmbiguityDivergence divergence,
+        int mode_count,
+        double transport_diameter
+    ) const;
 
     DROConfig config_;
     int observation_count_ = 0;

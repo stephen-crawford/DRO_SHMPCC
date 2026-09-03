@@ -141,6 +141,7 @@ struct ModeModel {
     Eigen::Vector4d b;            // Bias/drift vector (4,)
     Eigen::MatrixXd G;            // Process noise matrix (4 x n_noise)
     std::string description;      // Human-readable description
+    double body_lateral_displacement = 0.0;  // Body-frame lateral displacement [m/step]
 
     ModeModel() : A(Eigen::Matrix4d::Identity()), b(Eigen::Vector4d::Zero()),
                   G(Eigen::MatrixXd::Zero(4, 2)) {}
@@ -155,6 +156,14 @@ struct ModeModel {
                            const Eigen::VectorXd* noise = nullptr) const {
         Eigen::Vector4d x = state.to_array();
         Eigen::Vector4d x_next = A * x + b;
+        if (body_lateral_displacement != 0.0) {
+            const double speed = std::hypot(x(2), x(3));
+            const Eigen::Vector2d lateral = speed > 1e-9
+                ? Eigen::Vector2d(-x(3), x(2)) / speed
+                : Eigen::Vector2d(0.0, 1.0);
+            x_next(0) += body_lateral_displacement * lateral(0);
+            x_next(1) += body_lateral_displacement * lateral(1);
+        }
         if (noise != nullptr) {
             x_next += G * (*noise);
         }
@@ -164,6 +173,12 @@ struct ModeModel {
     /// Dimension of process noise
     int noise_dim() const {
         return static_cast<int>(G.cols());
+    }
+
+    /// Propagate full state covariance Sigma_x with the discrete Lyapunov recursion.
+    /// PredictionStep stores only Sigma_x's position block.
+    void propagate_covariance(Eigen::Matrix4d& state_covariance) const {
+        state_covariance = A * state_covariance * A.transpose() + G * G.transpose();
     }
 };
 
@@ -176,24 +191,24 @@ struct ModeModel {
  */
 struct ModeHistory {
     int obstacle_id;                                    // Unique obstacle identifier
-    int obstacle_class = 0;                             // Class identifier (shared across obstacles)
+    int obstacle_class_id = 0;                          // Class identifier (shared across obstacles)
     std::map<std::string, ModeModel> available_modes;   // Mode ID to ModeModel
     std::vector<std::pair<int, std::string>> observed_modes;  // (timestep, mode_id)
-    int max_history = 100;                              // Maximum history length
+    int max_history_length = 100;                       // Maximum history length
 
     ModeHistory() : obstacle_id(0) {}
     ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes,
-                int obstacle_class = 0)
-        : obstacle_id(obstacle_id), obstacle_class(obstacle_class),
+                int obstacle_class_id = 0)
+            : obstacle_id(obstacle_id), obstacle_class_id(obstacle_class_id),
           available_modes(modes) {}
 
     /// Record a mode observation at the given timestep
     void record_observation(int timestep, const std::string& mode_id) {
         observed_modes.emplace_back(timestep, mode_id);
         // Trim history if too long
-        if (static_cast<int>(observed_modes.size()) > max_history) {
+        if (static_cast<int>(observed_modes.size()) > max_history_length) {
             observed_modes.erase(observed_modes.begin(),
-                observed_modes.begin() + (observed_modes.size() - max_history));
+            observed_modes.begin() + (observed_modes.size() - max_history_length));
         }
     }
 
@@ -230,7 +245,7 @@ struct ModeHistory {
 struct PredictionStep {
     int k;                        // Timestep index
     Eigen::Vector2d mean;         // Mean position [x, y]
-    Eigen::Matrix2d covariance;   // Position covariance (2x2)
+    Eigen::Matrix2d covariance;   // Stored position covariance Sigma_pos (2x2)
 
     PredictionStep() : k(0), mean(Eigen::Vector2d::Zero()),
                        covariance(Eigen::Matrix2d::Zero()) {}
@@ -245,14 +260,11 @@ struct ObstacleTrajectory {
     int obstacle_id;                   // Unique obstacle identifier
     std::string mode_id;               // Mode used for this trajectory
     std::vector<PredictionStep> steps; // Prediction steps over horizon
-    double probability = 1.0;          // Probability/weight of this trajectory
 
     ObstacleTrajectory() : obstacle_id(0) {}
     ObstacleTrajectory(int obstacle_id, const std::string& mode_id,
-                       const std::vector<PredictionStep>& steps,
-                       double probability = 1.0)
-        : obstacle_id(obstacle_id), mode_id(mode_id), steps(steps),
-          probability(probability) {}
+                       const std::vector<PredictionStep>& steps)
+        : obstacle_id(obstacle_id), mode_id(mode_id), steps(steps) {}
 
     /// Prediction horizon length
     int horizon() const {
@@ -276,16 +288,10 @@ struct ObstacleTrajectory {
 struct Scenario {
     int scenario_id;                                      // Unique scenario identifier
     std::map<int, ObstacleTrajectory> trajectories;       // obstacle_id -> trajectory
-    double probability = 1.0;                             // Combined probability
-    /// Extra scenario supplied via AdaptiveScenarioMPC::inject_scenario (tests).
-    /// Dominance pruning never drops these.
-    bool is_injected = false;
-
+    
     Scenario() : scenario_id(0) {}
-    Scenario(int scenario_id, const std::map<int, ObstacleTrajectory>& trajectories,
-             double probability = 1.0)
-        : scenario_id(scenario_id), trajectories(trajectories),
-          probability(probability) {}
+    Scenario(int scenario_id, const std::map<int, ObstacleTrajectory>& trajectories)
+        : scenario_id(scenario_id), trajectories(trajectories) {}
 
     /// Number of obstacles in this scenario
     int num_obstacles() const {
@@ -350,6 +356,8 @@ struct MPCResult {
     double constraint_construction_time = 0.0;  // Time for constraint building [s]
     double qp_solve_time = 0.0;                 // Time for QP/SQP solve [s]
     int num_dro_injected = 0;           // Always 0; DRO now resamples from q* only
+    /// Largest ambiguity radius used across obstacles during this solve.
+    double ambiguity_radius_used = 0.0;
 
     MPCResult() : success(false) {}
 

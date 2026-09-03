@@ -148,11 +148,17 @@ void test_disc_offset_matches_positions() {
     auto discs = compute_ego_disc_positions(state, num_discs, length);
     for (int d = 0; d < num_discs; ++d) {
         double ell = get_disc_longitudinal_offset(d, num_discs, length);
-        Eigen::Vector2d expected =
-            state.position()
-            + ell * Eigen::Vector2d(std::cos(state.theta), std::sin(state.theta));
+        const auto linearization = linearize_disc_center(state, ell);
+        Eigen::Vector2d expected = linearization.center;
         expect((discs[d] - expected).norm() < 1e-12,
                "disc placement matches longitudinal offset");
+        CollisionConstraint constraint;
+        constraint.disc_offset = ell;
+        expect((compute_collision_disc_center(state, constraint) - expected).norm() < 1e-12,
+               "constraint evaluation uses the shared disc-center function");
+        expect(std::abs(linearization.jacobian(0, 2) + ell * std::sin(state.theta)) < 1e-12 &&
+               std::abs(linearization.jacobian(1, 2) - ell * std::cos(state.theta)) < 1e-12,
+               "disc-center Jacobian matches heading derivative");
     }
 }
 

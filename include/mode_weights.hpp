@@ -39,20 +39,6 @@ std::map<std::string, double> compute_mode_weights(
 );
 
 /**
- * @brief Sample a mode sequence for the prediction horizon.
- *
- * @param mode_weights Weights for each mode
- * @param horizon Number of timesteps to sample
- * @param rng Random number generator
- * @return List of mode_ids of length horizon
- */
-std::vector<std::string> sample_mode_sequence(
-    const std::map<std::string, double>& mode_weights,
-    int horizon,
-    std::mt19937& rng
-);
-
-/**
  * @brief Sample a MARKOVIAN mode sequence over the horizon.
  *
  * mode_0 is drawn from `initial_belief`; each subsequent mode_k is drawn from the

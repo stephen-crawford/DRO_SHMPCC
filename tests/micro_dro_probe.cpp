@@ -21,7 +21,7 @@
 //   Section 3 -- CRAFTED fractional-split check that no bang-bang plan can match.
 //
 // The calibrated ambiguity radius is probed separately by tests/radius_probe.cpp.
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 #include "primal_ot.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
@@ -58,7 +58,7 @@ int main() {
     std::vector<std::string> mode_ids;
     for (const auto& kv : nominal) mode_ids.push_back(kv.first);
 
-    WassersteinDRO dro;
+    DRO dro;
     std::cout << std::fixed << std::setprecision(6);
 
     // ---------------------------------------------------------------------
@@ -74,7 +74,7 @@ int main() {
     {
         auto risk_of = [&](DRORiskMeasure m) {
             DROConfig cfg; cfg.radius_calibration.risk_measure = m;
-            WassersteinDRO d(cfg);
+            DRO d(cfg);
             return d.compute_worst_case_weights(
                 nominal, obs, mode_models, ego_ref, 15, 0.5, 0.35, 0.2);
         };
@@ -170,7 +170,7 @@ int main() {
 
         DROConfig jv_cfg; jv_cfg.radius_calibration.risk_measure = DRORiskMeasure::JOINT_VAR;
         DROConfig jc_cfg; jc_cfg.radius_calibration.risk_measure = DRORiskMeasure::JOINT_CVAR;
-        WassersteinDRO d_jv(jv_cfg), d_jc(jc_cfg);
+        DRO d_jv(jv_cfg), d_jc(jc_cfg);
         // compute_risk_vector is private; read r[m] off the public result instead.
         // (ego_r=0.5, obs_r=0.35, margin=0.2 => the same R used below.)
         auto rv = d_jv.compute_worst_case_weights(

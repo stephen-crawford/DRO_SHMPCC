@@ -40,7 +40,7 @@
 
 #include "experiment_harness.hpp"
 #include "mpc_controller.hpp"
-#include "wasserstein_dro.hpp"
+#include "dro.hpp"
 
 using namespace dro_mpc;
 namespace fs = std::filesystem;
@@ -278,7 +278,6 @@ static void write_config_file(const std::string& filepath, int total_rollouts,
     ofs << "safety_margin = 0.2\n";
     ofs << "safe_horizon_min = 3\n";
     ofs << "safe_horizon_mode = PRACTICAL\n";
-    ofs << "ensure_mode_coverage = true\n";
     ofs << "use_sqp_solver = true\n\n";
 
     ofs << "[environment]\n";

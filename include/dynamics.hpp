@@ -12,6 +12,7 @@
 #include "config.hpp"
 #include <cmath>
 #include <map>
+#include <random>
 
 namespace dro_mpc {
 
@@ -22,7 +23,7 @@ class ReferencePath;
  * @brief Unicycle dynamics model for ego vehicle.
  *
  * State: x = [x, y, theta, v] (integrated via RK4)
- * Spline: s (arc length, updated algebraically after integration)
+ * Spline: s (arc length, updated by monotone closest-point projection)
  * Input: u = [a, w] (acceleration, angular velocity)
  *
  * Continuous dynamics (RK4-integrated):
@@ -31,10 +32,8 @@ class ReferencePath;
  *     dtheta/dt = w
  *     dv/dt = a
  *
- * Algebraic spline update (after RK4):
- *     s_new = s + R * atan2(vt, R - e_c - vn)
- * where R = 1/curvature, vt/vn are tangential/normal displacement
- * components, and e_c is the contouring error.
+ * Spline update (after RK4): s_new is the closest path arc length at or
+ * ahead of the previous s.
  */
 class EgoDynamics {
 public:
@@ -101,10 +100,10 @@ public:
                                   double dt = -1) const;
 
     /**
-     * @brief Roll out trajectory with algebraic spline update.
+    * @brief Roll out trajectory with monotone closest-point path evaluation.
      *
      * Integrates [x,y,theta,v] via RK4, then updates the spline parameter
-     * s algebraically
+    * s from the actual reference path, without a chord approximation.
      *
      * @param initial_state Starting ego state (with valid s >= 0)
      * @param inputs List of EgoInput for each timestep
@@ -173,6 +172,24 @@ private:
  * @return Map of mode_id to ModeModel
  */
 std::map<std::string, ModeModel> create_obstacle_mode_models(double dt = 0.1);
+
+/**
+ * @brief Resolve the configured obstacle mode set against a model catalog.
+ *
+ * Invalid and duplicate IDs are discarded.  When `randomize` is true, exactly
+ * up to `requested_regular_modes` regular candidates are shuffled and selected
+ * using `rng`; otherwise the YAML order is retained.  A valid `rare_mode` is
+ * always appended when it was not selected, so its dedicated switching rule
+ * can never emit a mode unknown to the simulator or controller.
+ */
+std::vector<std::string> select_obstacle_mode_ids(
+    const std::vector<std::string>& regular_candidates,
+    const std::string& rare_mode,
+    const std::map<std::string, ModeModel>& mode_catalog,
+    bool randomize,
+    int requested_regular_modes,
+    std::mt19937& rng
+);
 
 }  // namespace dro_mpc
 

@@ -4,9 +4,7 @@
 //       bounded-domain half-space implication test on the actual (a, b) per ego disc,
 //       so it is sound (never over-prunes). Checks: a genuinely redundant (farther,
 //       same-side, collinear) scenario is removed; opposite-side scenarios are BOTH
-//       kept (the old distance/alignment heuristic could falsely prune these);
-//       injected scenarios never pruned; and the reduction is non-distorting (the
-//       kept set implies the removed one).
+//       kept
 //   (B) fixed collision half-space construction (compute_linearized_constraints /
 //       make_collision_halfspace): unit normal, boundary at the safety radius, sign.
 //   (C) heading-Jacobian constraint linearization (linearize_disc_halfspace).
@@ -26,16 +24,13 @@ static bool approx(double a, double b, double t = 1e-6) { return std::abs(a - b)
 
 // Build a scenario with one obstacle at the given per-step positions (zero covariance).
 static Scenario make_scenario(int id, int obs_id,
-                              const std::vector<Eigen::Vector2d>& positions,
-                              bool injected = false) {
+                              const std::vector<Eigen::Vector2d>& positions) {
     ObstacleTrajectory traj;
     traj.obstacle_id = obs_id;
     traj.mode_id = "m";
     for (size_t k = 0; k < positions.size(); ++k)
         traj.steps.emplace_back(static_cast<int>(k), positions[k], Eigen::Matrix2d::Zero());
-    Scenario s(id, {{obs_id, traj}}, 1.0);
-    s.is_injected = injected;
-    return s;
+    return Scenario(id, {{obs_id, traj}});
 }
 
 static bool has_scenario(const std::vector<Scenario>& v, int id) {
@@ -68,13 +63,6 @@ int main() {
     {
         auto out = prune_dominated_scenarios({close, other}, ego);
         check(out.size() == 2, "opposite-direction scenarios are BOTH kept (no false prune)");
-    }
-    // Injected scenario is NEVER pruned, even when clearly dominated (very far).
-    Scenario inj_far = make_scenario(4, 0, lat(6.0), /*injected=*/true);
-    {
-        auto out = prune_dominated_scenarios({close, far, inj_far}, ego);
-        check(has_scenario(out, 1) && has_scenario(out, 4) && !has_scenario(out, 2),
-              "injected scenario survives pruning; non-injected dominated one removed");
     }
     // Degenerate inputs.
     {
@@ -139,6 +127,8 @@ int main() {
         hs.normal = Eigen::Vector2d(0.6, 0.8);   // unit
         hs.upper_bound = 2.0;
         const double th = 0.5, ell = 1.3, px = 2.0, py = -1.0;
+        hs.reference_disc_center = linearize_disc_center(
+            EgoState(px, py, th, 0.0), ell).center;
         auto aff = linearize_disc_halfspace(hs, px, py, th, ell);
         const double exp0 = hs.normal.x();
         const double exp1 = hs.normal.y();
@@ -148,7 +138,9 @@ int main() {
         check(approx(aff.coefficients(2), exp2),
               "theta coefficient is n^T [-l sin th, l cos th] (heading Jacobian)");
         // Zero longitudinal offset => the disc is the center => no heading term.
-        auto aff0 = linearize_disc_halfspace(hs, px, py, th, 0.0);
+        auto centered_hs = hs;
+        centered_hs.reference_disc_center = Eigen::Vector2d(px, py);
+        auto aff0 = linearize_disc_halfspace(centered_hs, px, py, th, 0.0);
         check(approx(aff0.coefficients(2), 0.0),
               "zero disc offset => zero theta coefficient (single-disc case)");
     }

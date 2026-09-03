@@ -11,7 +11,7 @@
 
 namespace dro_mpc {
 
-DROMPC::MPCController(const RuntimeConfig& config)
+MPCController::MPCController(const RuntimeConfig& config)
     : config_(config), ego_dynamics_(config.mpc.ego.dynamics, config.mpc.dt) {
     config_.validate();
     default_modes_ = create_obstacle_mode_models(config_.mpc.dt);
@@ -22,43 +22,65 @@ DROMPC::MPCController(const RuntimeConfig& config)
     }
 
     // Initialize random number generator
-    std::random_device rd;
-    rng_ = std::mt19937(rd());
+    if (config_.random_seed != 0) {
+        rng_ = std::mt19937(config_.random_seed);
+    } else {
+        std::random_device rd;
+        rng_ = std::mt19937(rd());
+    }
 }
 
 void MPCController::initialize_obstacle(
     int obstacle_id,
-    int obstacle_class,
+    int obstacle_class_id,
     const std::map<std::string, ModeModel>& available_modes
 ) {
     const auto& modes = available_modes.empty() ? default_modes_ : available_modes;
 
-    ModeHistory history(obstacle_id, modes, obstacle_class);
-    history.max_history = (config_.mpc.sampling.max_history_length > 0) ? config_.mpc.sampling.max_history_length : config_.mpc.horizon * 10;
+    ModeHistory history(obstacle_id, modes, obstacle_class_id);
+    history.max_history_length = (config_.mpc.sampling.max_history_length > 0) ? config_.mpc.sampling.max_history_length : config_.mpc.horizon * 10;
 
-    // Copy observations from any existing sibling of the same class
-    for (const auto& [other_id, other_cls] : obstacle_classes_) {
-        if (other_cls == obstacle_class && other_id != obstacle_id) {
+    // Reconstruct the class aggregate from every existing sibling. Histories are
+    // normally synchronized, so deduplicate observations that were broadcast.
+    std::vector<std::pair<int, std::string>> class_observations;
+    for (const auto& [other_id, other_class_id] : obstacle_class_ids_) {
+        if (other_class_id == obstacle_class_id && other_id != obstacle_id) {
             auto it = mode_histories_.find(other_id);
             if (it != mode_histories_.end()) {
-                history.observed_modes = it->second.observed_modes;
-                break;
+                class_observations.insert(
+                    class_observations.end(),
+                    it->second.observed_modes.begin(),
+                    it->second.observed_modes.end());
             }
         }
     }
+    std::sort(class_observations.begin(), class_observations.end());
+    class_observations.erase(
+        std::unique(class_observations.begin(), class_observations.end()),
+        class_observations.end());
+    if (static_cast<int>(class_observations.size()) > history.max_history_length) {
+        class_observations.erase(
+            class_observations.begin(),
+            class_observations.begin() +
+                (class_observations.size() - history.max_history_length));
+    }
+    history.observed_modes = std::move(class_observations);
 
-    obstacle_classes_[obstacle_id] = obstacle_class;
+    obstacle_class_ids_[obstacle_id] = obstacle_class_id;
     mode_histories_[obstacle_id] = history;
 }
 
 void MPCController::update_mode_observation(
     int obstacle_id,
-    int obstacle_class,
+    int obstacle_class_id,
     const std::string& observed_mode,
     int timestep
 ) {
-    if (mode_histories_.find(obstacle_id) == mode_histories_.end()) {
-        initialize_obstacle(obstacle_id, obstacle_class);
+    auto class_it = obstacle_class_ids_.find(obstacle_id);
+    if (mode_histories_.find(obstacle_id) == mode_histories_.end()
+        || class_it == obstacle_class_ids_.end()
+        || class_it->second != obstacle_class_id) {
+        initialize_obstacle(obstacle_id, obstacle_class_id);
     }
 
     if (timestep < 0) {
@@ -66,10 +88,9 @@ void MPCController::update_mode_observation(
     }
 
     // Record observation for all obstacles sharing this class
-    int obs_class = obstacle_classes_.count(obstacle_id)
-        ? obstacle_classes_[obstacle_id] : obstacle_class;
+    const int current_obstacle_class_id = obstacle_class_ids_.at(obstacle_id);
     for (auto& [other_id, hist] : mode_histories_) {
-        if (hist.obstacle_class == obs_class) {
+        if (hist.obstacle_class_id == current_obstacle_class_id) {
             hist.record_observation(timestep, observed_mode);
         }
     }
@@ -85,6 +106,7 @@ MPCResult MPCController::solve(
 ) {
     auto start_time = std::chrono::high_resolution_clock::now();
     iteration_count_++;
+    last_dro_results_.clear();
 
     if (!reference_path_.has_value()) {
         reference_path_ = ReferencePath::create_straight(ego_state.position(), goal);
@@ -108,6 +130,23 @@ MPCResult MPCController::solve(
     initialize_reference_trajectory(ego_with_spline, goal, reference_velocity);
 
     // Step 2: Sample scenarios (DRO reshapes the categorical to q*, then i.i.d. sample)
+    std::map<int, std::map<std::string, double>> sampling_weights;
+    bool used_external_sampling_weights = false;
+    std::map<int, Eigen::MatrixXd> sampling_transitions;
+    if (config_.mpc.sampling.markov_jump_system) {
+        for (const auto& [obs_id, history] : mode_histories_) {
+            std::vector<std::string> modes;
+            for (const auto& [mode_id, _] : history.available_modes)
+                modes.push_back(mode_id);
+            const int mode_count = static_cast<int>(modes.size());
+            if (mode_count > 0) {
+                sampling_transitions[obs_id] = compute_mode_transition_matrix(
+                    history, modes,
+                    config_.mpc.sampling.mode_belief.alpha(mode_count),
+                    config_.mpc.sampling.mode_belief.kappa(mode_count));
+            }
+        }
+    }
 
     // When DRO is enabled: compute worst-case distribution q* and resample all S
     // scenarios from it. 
@@ -118,14 +157,13 @@ MPCResult MPCController::solve(
             : config_.mpc.horizon;
 
         // Compute DRO q* from the nominal p hat
-        std::map<int, DROResult> dro_results;
         for (const auto& [obs_id, obs_state] : obstacles) {
             auto hist_it = mode_histories_.find(obs_id);
             if (hist_it == mode_histories_.end()) continue;
 
             // p hat
             auto nominal_weights = compute_mode_weights(
-                hist_it->second, config_.mpc.sampling.mode_belief, iteration_count_
+                hist_it->second, config_.mpc.sampling.mode_belief
             );
 
             if (nominal_weights.empty()) continue;
@@ -139,8 +177,8 @@ MPCResult MPCController::solve(
             const Eigen::MatrixXd* transition_ptr = nullptr;
             if (config_.mpc.sampling.markov_jump_system) {
                 std::vector<std::string> modes_order;
-                modes_order.reserve(nominal.size());
-                for (const auto& [mid, _] : nominal) modes_order.push_back(mid);
+                modes_order.reserve(nominal_weights.size());
+                for (const auto& [mid, _] : nominal_weights) modes_order.push_back(mid);
                 const int M = static_cast<int>(modes_order.size());
                 obs_transition = compute_mode_transition_matrix(
                     hist_it->second, modes_order,
@@ -149,8 +187,8 @@ MPCResult MPCController::solve(
                 transition_ptr = &obs_transition;
             }
 
-            dro_results[obs_id] = dro_.compute_worst_case_weights(
-                nominal, obs_state, hist_it->second.available_modes,
+            last_dro_results_[obs_id] = dro_.compute_worst_case_weights(
+                nominal_weights, obs_state, hist_it->second.available_modes,
                 reference_trajectory_, config_.mpc.horizon,
                 config_.mpc.ego.radius, config_.obstacle_radius,
                 config_.mpc.constraints.safety_margin,
@@ -163,25 +201,26 @@ MPCResult MPCController::solve(
 
         // Resample ALL S scenarios from q*.
         std::map<int, std::map<std::string, double>> per_obs_weights_dro;
-        for (auto& [obs_id, dro_result] : dro_results) {
+        for (const auto& [obs_id, dro_result] : last_dro_results_) {
             per_obs_weights_dro[obs_id] = dro_result.worst_case_weights;
         }
 
         if (!per_obs_weights_dro.empty()) {
+            sampling_weights = per_obs_weights_dro;
+            used_external_sampling_weights = true;
             if (config_.mpc.sampling.markov_jump_system) {
                 // Seed the Markov chain from Q*: the reweighted belief sets the
                 // initial mode distribution, then the estimated transition
                 // matrix propagates it over the horizon.
-                scenarios_ = sample_scenarios_markov(
+                scenarios_ = sample_scenarios(
                     obstacles, mode_histories_, &per_obs_weights_dro,
-                    config_.mpc.horizon, S, config_.mpc.sampling.mode_belief, &rng_
-                );
+                    config_.mpc.horizon, S, config_.mpc.sampling.mode_belief,
+                    &sampling_transitions, &rng_);
             } else {
-                scenarios_ = sample_scenarios_with_weights(
-                    obstacles, mode_histories_, per_obs_weights_dro,
-                    config_.mpc.horizon, S,
-                    config_.mpc.sampling.ensure_mode_coverage, &rng_
-                );
+                scenarios_ = sample_scenarios(
+                    obstacles, mode_histories_, &per_obs_weights_dro,
+                    config_.mpc.horizon, S, config_.mpc.sampling.mode_belief,
+                    nullptr, &rng_);
             }
         }
     }
@@ -189,25 +228,29 @@ MPCResult MPCController::solve(
     // When custom per-obstacle weights are set (e.g. from OT predictor),
     // use them for scenario sampling (only fires when DRO is off).
     if (scenarios_.empty() && !custom_per_obstacle_weights_.empty()) {
-        scenarios_ = sample_scenarios_with_weights(
-            obstacles, mode_histories_, custom_per_obstacle_weights_,
+        sampling_weights = custom_per_obstacle_weights_;
+        used_external_sampling_weights = true;
+        scenarios_ = sample_scenarios(
+            obstacles, mode_histories_, &sampling_weights,
             config_.mpc.horizon, config_.mpc.sampling.num_scenarios,
-            config_.mpc.sampling.ensure_mode_coverage, &rng_
-        );
+            config_.mpc.sampling.mode_belief,
+            config_.mpc.sampling.markov_jump_system ? &sampling_transitions : nullptr,
+            &rng_);
     }
 
     if (scenarios_.empty()) {
         if (config_.mpc.sampling.markov_jump_system) {
             // Base (non-DRO) Markov path: belief derived from weight_type +
             // the Dirichlet prior, no Q* override.
-            scenarios_ = sample_scenarios_markov(
+            scenarios_ = sample_scenarios(
                 obstacles, mode_histories_, nullptr,
-                config_.mpc.horizon, config_.mpc.sampling.num_scenarios, config_.mpc.sampling.mode_belief, &rng_
-            );
+                config_.mpc.horizon, config_.mpc.sampling.num_scenarios,
+                config_.mpc.sampling.mode_belief, &sampling_transitions, &rng_);
         } else {
             scenarios_ = sample_scenarios(
-                obstacles, mode_histories_, config_.mpc.horizon,
-                config_.mpc.sampling.num_scenarios, config_.mpc.sampling.mode_belief, iteration_count_, &rng_
+                obstacles, mode_histories_, nullptr, config_.mpc.horizon,
+                config_.mpc.sampling.num_scenarios,
+                config_.mpc.sampling.mode_belief, nullptr, &rng_
             );
         }
     }
@@ -225,33 +268,36 @@ MPCResult MPCController::solve(
     (void)config_.compute_effective_epsilon(
         S_actual, config_.mpc.constraints.support_cap_nbar);
 
+    auto sample_additional_scenarios = [&](int count) {
+        if (config_.mpc.sampling.markov_jump_system) {
+            const auto* initial_belief =
+                (used_external_sampling_weights && !sampling_weights.empty())
+                    ? &sampling_weights : nullptr;
+            return sample_scenarios(
+                obstacles, mode_histories_, initial_belief,
+                config_.mpc.horizon, count,
+                config_.mpc.sampling.mode_belief, &sampling_transitions, &rng_);
+        }
+        return sample_scenarios(
+            obstacles, mode_histories_,
+            (used_external_sampling_weights && !sampling_weights.empty())
+                ? &sampling_weights : nullptr,
+            config_.mpc.horizon, count, config_.mpc.sampling.mode_belief,
+            nullptr, &rng_
+        );
+    };
+
     if (S_actual < S_required && config_.mpc.sampling.enforce_certified_scenario_count) {
         // Auto-increase: sample additional scenarios
         int additional_count = S_required - S_actual;
-        auto additional = sample_scenarios(
-            obstacles,
-            mode_histories_,
-            config_.mpc.horizon,
-            additional_count,
-            config_.mpc.sampling.mode_belief,
-            iteration_count_,
-            &rng_
-        );
+        auto additional = sample_additional_scenarios(additional_count);
         scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
     } else if (S_actual < 3) {
         // Ensure minimum scenario count even without enforcement
         int additional_count = std::max(
             5, config_.mpc.sampling.num_scenarios - S_actual
         );
-        auto additional = sample_scenarios(
-            obstacles,
-            mode_histories_,
-            config_.mpc.horizon,
-            additional_count,
-            config_.mpc.sampling.mode_belief,
-            iteration_count_,
-            &rng_
-        );
+        auto additional = sample_additional_scenarios(additional_count);
         scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
     }
 
@@ -325,7 +371,11 @@ MPCResult MPCController::solve(
 
     // Record safe horizon and DRO injection count
     result.safe_horizon = effective_horizon;
-    result.num_dro_injected = dro_injected;
+    result.num_dro_injected = 0;
+    for (const auto& [_, dro_result] : last_dro_results_) {
+        result.ambiguity_radius_used = std::max(
+            result.ambiguity_radius_used, dro_result.rho_used);
+    }
     result.constraint_construction_time =
         std::chrono::duration<double>(constraint_end - constraint_start).count();
     result.qp_solve_time =
@@ -446,6 +496,10 @@ MPCResult MPCController::solve_optimization(
             path_progress, path_length, cost_horizon
         );
     }
+    return solve_optimization_sqp(
+        ego_state, goal, reference_velocity, constraints,
+        path_progress, path_length, cost_horizon
+    );
 }
 
 // ============================================================================
@@ -685,6 +739,30 @@ MPCResult MPCController::solve_optimization_sqp(
     result.control_inputs = u_ref;
     result.cost = cost;
 
+    auto populate_active_scenarios = [&constraints](
+        const std::vector<EgoState>& trajectory,
+        MPCResult& mpc_result
+    ) {
+        constexpr double binding_tolerance = 1e-3;
+        for (const auto& constraint : constraints) {
+            if (constraint.scenario_id < 0 ||
+                constraint.k < 0 ||
+                constraint.k >= static_cast<int>(trajectory.size())) {
+                continue;
+            }
+
+            const Eigen::Vector2d disc_center = compute_collision_disc_center(
+                trajectory[constraint.k], constraint);
+            if (constraint.evaluate(disc_center) <= binding_tolerance &&
+                std::find(mpc_result.active_scenarios.begin(),
+                          mpc_result.active_scenarios.end(),
+                          constraint.scenario_id) == mpc_result.active_scenarios.end()) {
+                mpc_result.active_scenarios.push_back(constraint.scenario_id);
+            }
+        }
+    };
+    populate_active_scenarios(x_ref, result);
+
     // If infeasible, try safe fallback
     if (!feasible) {
         auto fallback = generate_safe_fallback(ego_state);
@@ -693,6 +771,7 @@ MPCResult MPCController::solve_optimization_sqp(
         if (final_violation < fb_viol || final_violation < 0.1) {
             result.success = true;  // Approximately feasible
         } else {
+            populate_active_scenarios(fallback.ego_trajectory, fallback);
             return fallback;
         }
     }
@@ -1086,7 +1165,7 @@ MPCStatistics MPCController::get_statistics() const {
 
 void MPCController::reset() {
     mode_histories_.clear();
-    obstacle_classes_.clear();
+    obstacle_class_ids_.clear();
     scenarios_.clear();
     reference_trajectory_.clear();
     solve_times_.clear();
@@ -1103,14 +1182,6 @@ void MPCController::set_custom_mode_weights(
 
 void MPCController::clear_custom_mode_weights() {
     custom_per_obstacle_weights_.clear();
-}
-
-void MPCController::inject_scenario(const Scenario& scenario) {
-    pre_injected_scenarios_.push_back(scenario);
-}
-
-void MPCController::clear_injected_scenarios() {
-    pre_injected_scenarios_.clear();
 }
 
     void MPCController::update_mode_model(
@@ -1136,4 +1207,3 @@ void MPCController::clear_injected_scenarios() {
 }
 
 }  // namespace dro_mpc
-

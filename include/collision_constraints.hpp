@@ -48,6 +48,31 @@ struct AffineDiscConstraint {
 };
 
 /**
+ * @brief Exact disc center and its pose Jacobian at one ego state.
+ *
+ * `jacobian` is d c_d / d(x, y, theta), with state order `[x, y, theta]`.
+ * Keeping the center and Jacobian together guarantees every collision path
+ * uses the same disc geometry when evaluating or linearizing a constraint.
+ */
+struct DiscCenterLinearization {
+    Eigen::Vector2d center = Eigen::Vector2d::Zero();
+    Eigen::Matrix<double, 2, 3> jacobian =
+        Eigen::Matrix<double, 2, 3>::Zero();
+};
+
+/// Evaluate the exact disc center and Jacobian for longitudinal offset `ell`.
+DiscCenterLinearization linearize_disc_center(
+    const EgoState& state,
+    double longitudinal_disc_offset
+);
+
+/// Compute the ego disc center represented by a collision constraint.
+Eigen::Vector2d compute_collision_disc_center(
+    const EgoState& state,
+    const CollisionConstraint& constraint
+);
+
+/**
  * @brief Construct one fixed collision half-space around a numerical reference disc center.
  *
  * `normal = (x_obs - c_bar)/||x_obs - c_bar||`;  the conservative affine constraint is
@@ -78,9 +103,8 @@ double get_disc_longitudinal_offset(
  *     c_d ≈ c_bar + J_d (x - x_bar),
  *     J_d = [[1, 0, -ℓ sin θ̄], [0, 1, ℓ cos θ̄]].
  *
- * The live QP (build_condensed_qp) applies the EQUIVALENT affine row inline from
- * CollisionConstraint::{a, disc_offset, linearization_point} (heading coefficient
- * a·(-ℓ sinθ̄, ℓ cosθ̄)); this function is the standalone reference used by the tests.
+ * Both this function and the live QP use linearize_disc_center(), so collision
+ * evaluation and the affine row share the exact same disc geometry and Jacobian.
  * All four reference arguments must come from the SAME reference state that produced
  * `halfspace.reference_disc_center` (checked by a debug assertion in the impl).
  *
@@ -210,7 +234,7 @@ std::vector<CollisionConstraint> filter_constraints_by_clearance(
  * of s_i IMPLIES the matching half-space of s_j on the reachable ball, so
  * Theta_{s_i} ⊆ Theta_{s_j} and s_j is redundant.
  *
- * @param scenarios         Sampled scenario set (may include is_injected scenarios).
+ * @param scenarios         Sampled scenario set.
  * @param reference_trajectory Reference ego trajectory (half-spaces linearized here).
  * @param combined_radius   Ego + obstacle radius + safety margin R (must match the
  *                          value passed to compute_linearized_constraints).
