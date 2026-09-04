@@ -489,6 +489,10 @@ struct RolloutRecord {
     unsigned predictor_seed = 0;   ///< Derived predictor RNG seed (reserved).
     unsigned controller_seed = 0;  ///< Derived controller scenario RNG seed.
     std::string config_source = "in_memory";
+    /// Solver implementation recorded with the seed bundle for replayability.
+    std::string qp_backend;
+    /// acados/HPIPM build identity, not a source path or machine-specific value.
+    std::string qp_solver_identity;
     std::string method;
     std::string scenario = "baseline";
     int S = 0;

@@ -1,6 +1,6 @@
 # OT-SHMPC Paper: Standalone Export
 
-This directory contains the code used for the **Optimal Transport and Safe-Horizon MPC (OT-SHMPC)** paper: core library, paper experiments, and figure generation. It is intended to be exported as a separate repository.
+This directory contains the code used for ****
 
 ## Dependencies
 
@@ -10,7 +10,7 @@ This directory contains the code used for the **Optimal Transport and Safe-Horiz
 ## Directory layout
 
 ```
-ot_shmpc_paper/
+dro_shmpcc/
 ├── CMakeLists.txt          # Builds library + paper_experiment_runner + tests
 ├── README.md               # This file
 ├── include/                # C++ headers (config, MPC, DRO, OT predictor, etc.)
@@ -18,17 +18,10 @@ ot_shmpc_paper/
 ├── src/
 │   └── experiment_harness.cpp  # ALL rollout logic (obstacle sim, collision, path, OT)
 ├── tests/
-│   ├── paper_experiment_runner.cpp  # Experiment configs A-AB, thin wrappers over harness
-│   ├── test_dro_framework.cpp       # DRO module validation (H1-H6)
-│   ├── test_statistical_power.cpp   # High-power statistical tests (2000 rollouts)
+│   ├── paper_experiment_runner.cpp  # Experiment configs A-H
+│   ├── test_dro_framework.cpp       # DRO module validation 
+│   ├── test_statistical_power.cpp   # Statistical tests (2000 rollouts)
 │   └── test_obstacle_class.cpp      # Obstacle class sharing validation
-├── scripts/
-│   └── generate_results_figures.py  # Reads CSVs, writes figure PNGs
-├── paper_figures/          # Created at run time; CSVs and PNGs go here
-└── docs/
-    ├── PAPER_FIGURES_PIPELINE.md     # Experiment → CSV → figure map, DRO/OT flow
-    ├── OT_MODE_COVERAGE.md           # OT and safe-horizon math
-    └── OT_SHMPCC_REFERENCE.md        # Complete codebase reference
 ```
 
 ## Build

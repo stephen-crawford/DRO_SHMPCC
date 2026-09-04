@@ -9,6 +9,75 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
+# The controller uses acados's dense HPIPM QP interface.  Acados does not
+# install a consistently named package on every platform, so resolve its
+# include/lib layout explicitly and keep the root overrideable for CI.
+set(ACADOS_ROOT "" CACHE PATH
+    "acados installation root (contains include/ and lib/)")
+set(_dro_mpc_acados_hints
+    "${ACADOS_ROOT}"
+    "$ENV{ACADOS_INSTALL_DIR}"
+    "$ENV{ACADOS_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../acados")
+find_path(DRO_MPC_ACADOS_INCLUDE_DIR
+    NAMES acados_c/dense_qp_interface.h
+    HINTS ${_dro_mpc_acados_hints}
+    PATH_SUFFIXES include)
+if(NOT DRO_MPC_ACADOS_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "acados headers were not found. Set ACADOS_ROOT to an installation "
+        "containing include/acados_c/dense_qp_interface.h.")
+endif()
+get_filename_component(DRO_MPC_ACADOS_ROOT "${DRO_MPC_ACADOS_INCLUDE_DIR}" DIRECTORY)
+set(DRO_MPC_ACADOS_LIB_DIR "${DRO_MPC_ACADOS_ROOT}/lib")
+
+find_library(DRO_MPC_ACADOS_LIBRARY NAMES acados
+    HINTS "${DRO_MPC_ACADOS_LIB_DIR}" NO_DEFAULT_PATH)
+find_library(DRO_MPC_HPIPM_LIBRARY NAMES hpipm
+    HINTS "${DRO_MPC_ACADOS_LIB_DIR}" NO_DEFAULT_PATH)
+find_library(DRO_MPC_BLASFEO_LIBRARY NAMES blasfeo
+    HINTS "${DRO_MPC_ACADOS_LIB_DIR}" NO_DEFAULT_PATH)
+find_library(DRO_MPC_QPOASES_LIBRARY NAMES qpOASES_e
+    HINTS "${DRO_MPC_ACADOS_LIB_DIR}" NO_DEFAULT_PATH)
+foreach(_dro_mpc_required_library
+        DRO_MPC_ACADOS_LIBRARY
+        DRO_MPC_HPIPM_LIBRARY
+        DRO_MPC_BLASFEO_LIBRARY)
+    if(NOT ${_dro_mpc_required_library})
+        message(FATAL_ERROR
+            "acados dependency ${_dro_mpc_required_library} was not found in "
+            "${DRO_MPC_ACADOS_LIB_DIR}.")
+    endif()
+endforeach()
+
+set(DRO_MPC_ACADOS_GIT_COMMIT "unknown")
+if(EXISTS "${DRO_MPC_ACADOS_LIB_DIR}/git_commit_hash")
+    file(READ "${DRO_MPC_ACADOS_LIB_DIR}/git_commit_hash" DRO_MPC_ACADOS_GIT_COMMIT)
+    string(STRIP "${DRO_MPC_ACADOS_GIT_COMMIT}" DRO_MPC_ACADOS_GIT_COMMIT)
+endif()
+
+add_library(dro_mpc_acados INTERFACE)
+target_include_directories(dro_mpc_acados INTERFACE
+    "${DRO_MPC_ACADOS_INCLUDE_DIR}"
+    "${DRO_MPC_ACADOS_INCLUDE_DIR}/hpipm/include"
+    "${DRO_MPC_ACADOS_INCLUDE_DIR}/blasfeo/include")
+target_link_libraries(dro_mpc_acados INTERFACE
+    "${DRO_MPC_ACADOS_LIBRARY}"
+    "${DRO_MPC_HPIPM_LIBRARY}"
+    "${DRO_MPC_BLASFEO_LIBRARY}")
+if(DRO_MPC_QPOASES_LIBRARY)
+    target_link_libraries(dro_mpc_acados INTERFACE "${DRO_MPC_QPOASES_LIBRARY}")
+endif()
+
+# libacados itself has dynamic dependencies.  DT_RPATH rather than DT_RUNPATH
+# makes this explicit root available to those indirect dependencies as well.
+if(UNIX AND NOT APPLE)
+    set(CMAKE_BUILD_RPATH "${DRO_MPC_ACADOS_LIB_DIR}")
+    set(CMAKE_INSTALL_RPATH "${DRO_MPC_ACADOS_LIB_DIR}")
+endif()
+
+message(STATUS "Using acados HPIPM dense-QP backend: ${DRO_MPC_ACADOS_ROOT} (${DRO_MPC_ACADOS_GIT_COMMIT})")
+
 set(SCENARIO_MPC_SOURCES
     src/collision_constraints.cpp
     src/dynamics.cpp
@@ -25,9 +94,16 @@ set(SCENARIO_MPC_SOURCES
 
 add_library(scenario_mpc ${SCENARIO_MPC_SOURCES})
 target_include_directories(scenario_mpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(scenario_mpc PUBLIC Eigen3::Eigen)
+target_link_libraries(scenario_mpc PUBLIC Eigen3::Eigen dro_mpc_acados)
 target_compile_definitions(scenario_mpc PUBLIC
-    DRO_MPC_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/configs/default.yaml")
+    DRO_MPC_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/configs/default.yaml"
+    DRO_MPC_ACADOS_GIT_COMMIT="${DRO_MPC_ACADOS_GIT_COMMIT}")
+
+if(UNIX AND NOT APPLE)
+    target_link_options(scenario_mpc INTERFACE
+        "-Wl,-rpath,${DRO_MPC_ACADOS_LIB_DIR}"
+        "-Wl,--disable-new-dtags")
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(scenario_mpc PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
@@ -106,6 +182,12 @@ target_link_libraries(test_ground_cost PRIVATE scenario_mpc)
 
 add_executable(test_dro_ambiguity_sets tests/test_dro_ambiguity_sets.cpp)
 target_link_libraries(test_dro_ambiguity_sets PRIVATE scenario_mpc)
+
+add_executable(test_acados_qp_solver tests/test_acados_qp_solver.cpp)
+target_link_libraries(test_acados_qp_solver PRIVATE scenario_mpc)
+
+add_executable(test_acados_reproducibility tests/test_acados_reproducibility.cpp)
+target_link_libraries(test_acados_reproducibility PRIVATE scenario_mpc)
 
 add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
 target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)

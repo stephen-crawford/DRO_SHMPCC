@@ -32,7 +32,7 @@ void write_svg(const std::vector<std::pair<Case, ReferencePath>>& paths,
                const std::string& filename) {
     constexpr double cell_width = 300.0;
     constexpr double cell_height = 220.0;
-    constexpr int columns = 3;
+    constexpr int columns 
     std::ofstream svg(filename);
     svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"900\" height=\"880\" "
            "viewBox=\"0 0 900 880\">\n"
@@ -158,8 +158,8 @@ void write_bmp(const std::vector<std::pair<Case, ReferencePath>>& paths,
 }  // namespace
 
 int main(int argc, char** argv) {
-    const std::string output = argc > 1 ? argv[1] : "/tmp/environment_topologies.svg";
-    const std::string bitmap_output = argc > 2 ? argv[2] : "/tmp/environment_topologies.bmp";
+    const std::string output = argc > 1 ? argv[1] : "./test/environment_topologies.svg";
+    const std::string bitmap_output = argc > 2 ? argv[2] : "./test/environment_topologies.bmp";
     EnvironmentExperimentConfig config;
     config.road_length = 90.0;
     config.lane_width = 3.6;

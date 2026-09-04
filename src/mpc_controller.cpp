@@ -587,8 +587,7 @@ MPCResult MPCController::solve_optimization_sqp(
 
         QPSettings qp_settings;
         qp_settings.max_iterations = config_.solver.qp_max_iterations;
-        qp_settings.abs_tol = config_.solver.qp_tolerance;
-        qp_settings.adaptive_rho = true;
+        qp_settings.tolerance = config_.solver.qp_tolerance;
 
         QPResult qp_result = qp_solver_.solve(qp, qp_settings);
 
@@ -637,8 +636,6 @@ MPCResult MPCController::solve_optimization_sqp(
         u_ref = best_inputs;
         x_ref = best_traj;
 
-        // Warm-start QP solver for next iteration
-        qp_solver_.warm_start(delta_u * 0.0);  // zero since we re-linearize
     }
 
     // Hard velocity-bound enforcement on the returned plan.
@@ -646,7 +643,7 @@ MPCResult MPCController::solve_optimization_sqp(
     // acceleration to the interval that keeps v_{k+1} in [min_velocity, max_velocity]
     // (intersected with the accel box) guarantees the bound in every downstream
     // rollout -- including the harness, which re-applies these inputs -- regardless
-    // of whether the ADMM QP fully converged the soft velocity rows above. When the
+    // of whether the QP solver fully converged the soft velocity rows above. When the
     // reference speed exceeds the cap the per-step QP row is momentarily infeasible
     // (cannot brake far enough in one dt); this saturation is the hard backstop.
     if (config_.mpc.constraints.enable_velocity_bounds) {
@@ -1170,6 +1167,7 @@ void MPCController::reset() {
     reference_trajectory_.clear();
     solve_times_.clear();
     custom_per_obstacle_weights_.clear();
+    qp_solver_.clear();
     iteration_count_ = 0;
 }
 

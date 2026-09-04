@@ -379,11 +379,11 @@ struct DROControllerConfig {
 // ============================================================================
 
 struct SolverSettings {
-    bool use_sqp_solver = true;        //SQP outer loop over QP subproblems
-    int sqp_max_iterations = 5;        //Maximum SQP outer iterations
-    double sqp_convergence_tol = 1e-3; //Convergence tolerance on ||delta_u||
-    int qp_max_iterations = 200;       //Maximum ADMM iterations per QP
-    double qp_tolerance = 1e-4;        //ADMM absolute tolerance
+    bool use_sqp_solver = true;        // SQP outer loop over QP subproblems.
+    int sqp_max_iterations = 5;        // Maximum SQP outer iterations.
+    double sqp_convergence_tol = 1e-3; // Convergence tolerance on ||delta_u||.
+    int qp_max_iterations = 200;       // acados/HPIPM interior-point iteration cap.
+    double qp_tolerance = 1e-4;        // acados/HPIPM residual tolerance.
 };
 
 // ============================================================================

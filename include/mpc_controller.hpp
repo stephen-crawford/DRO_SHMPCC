@@ -178,7 +178,7 @@ private:
     );
 
     /**
-     * @brief Solve optimization using SQP with ADMM QP subproblems.
+     * @brief Solve optimization using SQP with acados/HPIPM QP subproblems.
      */
     MPCResult solve_optimization_sqp(
         const EgoState& ego_state,
@@ -229,7 +229,7 @@ private:
 
     RuntimeConfig config_;
     EgoDynamics ego_dynamics_;
-    ADMMSolver qp_solver_;
+    AcadosQPSolver qp_solver_;
     std::map<std::string, ModeModel> default_modes_;
     std::map<int, ModeHistory> mode_histories_;
     std::map<int, int> obstacle_class_ids_;  // obstacle_id -> obstacle_class_id

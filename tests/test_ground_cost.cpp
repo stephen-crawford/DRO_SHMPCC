@@ -237,8 +237,16 @@ int main() {
     std::printf("\n(D) shared normalisation: equal covariance trajectories collapse\n"
                 "    W2_BURES and W1_METRIC onto EUCLIDEAN_MEAN\n");
     {
-        // Shipped modes all share one G, so their covariance trajectories agree.
+        // Keep the real per-mode mean offsets but explicitly share A and G.
+        // The expanded catalog may legitimately use different covariance
+        // dynamics, whereas this section isolates the equal-covariance limit.
         auto shared = create_obstacle_mode_models(dt);
+        const Eigen::Matrix4d common_A = shared.begin()->second.A;
+        const Eigen::MatrixXd common_G = shared.begin()->second.G;
+        for (auto& [_, mode] : shared) {
+            mode.A = common_A;
+            mode.G = common_G;
+        }
         std::vector<std::string> sids;
         for (const auto& [id, _] : shared) sids.push_back(id);
 

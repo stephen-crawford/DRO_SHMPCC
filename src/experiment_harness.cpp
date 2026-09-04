@@ -122,7 +122,8 @@ void CSVWriter::write_header() {
          << "missed_mode_steps,total_steps,"
          << "avg_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,"
          << "total_dro_injected,avg_safe_horizon,clearance_5pct,"
-         << "mean_contouring_err,mean_velocity_err,mean_lag_err,config_source\n";
+         << "mean_contouring_err,mean_velocity_err,mean_lag_err,config_source,"
+         << "qp_backend,qp_solver_identity\n";
 }
 
 void CSVWriter::write_record(const RolloutRecord& rec) {
@@ -142,7 +143,8 @@ void CSVWriter::write_record(const RolloutRecord& rec) {
          << std::setprecision(4) << rec.avg_safe_horizon << "," << rec.clearance_5pct << ","
          << rec.mean_contouring_error() << "," << rec.mean_velocity_error() << ","
          << (rec.metric_steps > 0 ? std::sqrt(rec.sum_lag_sq / rec.metric_steps) : 0.0) << ","
-         << rec.config_source << "\n";
+         << rec.config_source << "," << rec.qp_backend << ","
+         << rec.qp_solver_identity << "\n";
 }
 
 void CSVWriter::flush() {
@@ -160,6 +162,17 @@ std::pair<double, double> wilson_ci(int successes, int num_trials, double z) {
     double center = (p_hat + z * z / (2.0 * num_trials)) / denom;
     double half_width = z * std::sqrt((p_hat * (1.0 - p_hat) + z * z / (4.0 * num_trials)) / num_trials) / denom;
     return {std::max(0.0, center - half_width), std::min(1.0, center + half_width)};
+}
+
+double percentile(std::vector<double> values, double p) {
+    if (values.empty()) return 0.0;
+    std::sort(values.begin(), values.end());
+    const double q = std::clamp(p, 0.0, 100.0) / 100.0;
+    const double index = q * static_cast<double>(values.size() - 1);
+    const auto lower = static_cast<std::size_t>(std::floor(index));
+    const auto upper = static_cast<std::size_t>(std::ceil(index));
+    const double fraction = index - static_cast<double>(lower);
+    return values[lower] + fraction * (values[upper] - values[lower]);
 }
 
 BootstrapResult bootstrap_paired_delta(
@@ -361,6 +374,8 @@ RolloutRecord run_experiment_rollout(
     rec.predictor_seed = seeds.predictor;
     rec.controller_seed = seeds.scenario;
     rec.config_source = config.config_source;
+    rec.qp_backend = AcadosQPSolver::backend_name();
+    rec.qp_solver_identity = AcadosQPSolver::backend_identity();
     rec.method = arm_name(config);
     rec.scenario = config.rollout.scenario_tag;
     rec.S = config.mpc.sampling.num_scenarios;
@@ -709,6 +724,13 @@ EnvironmentSetup create_environment(
             break;
     }
     return setup;
+}
+
+ReferencePath setup_mpcc_path(MPCController& controller) {
+    ReferencePath path = ReferencePath::create_s_curve(
+        S_CURVE_LENGTH, S_CURVE_AMPLITUDE, S_CURVE_POINTS);
+    controller.set_reference_path(path);
+    return path;
 }
 
 RolloutResult run_single_rollout_env(

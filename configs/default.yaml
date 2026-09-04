@@ -66,6 +66,8 @@ entropic_tau: 0.05
 use_sqp_solver: true
 sqp_max_iterations: 5
 sqp_convergence_tol: 1.0e-3
+# Both values are passed directly to the deterministic acados/HPIPM dense QP
+# backend (iteration cap and all residual tolerances, respectively).
 qp_max_iterations: 200
 qp_tolerance: 1.0e-4
 

@@ -589,10 +589,10 @@ static int test_h4_multi_disc() {
             steps.emplace_back(k, x.head<2>(), Eigen::Matrix2d::Zero());
             x = mode_models["turn_left"].A * x + mode_models["turn_left"].b;
         }
-        ObstacleTrajectory traj(0, "turn_left", steps, 1.0);
+        ObstacleTrajectory traj(0, "turn_left", steps);
         std::map<int, ObstacleTrajectory> trajs;
         trajs[0] = traj;
-        Scenario sc(0, trajs, 1.0);
+        Scenario sc(0, trajs);
         std::vector<Scenario> scenarios = {sc};
 
         for (int D : {1, 3}) {
