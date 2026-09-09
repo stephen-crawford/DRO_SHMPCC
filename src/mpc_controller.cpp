@@ -654,7 +654,7 @@ MPCResult MPCController::solve_optimization_sqp(
         }
     }
 
-    // Douglas-Rachford projection: ensure warmstart satisfies collision constraints
+    // Cyclic rojection: ensure warmstart satisfies collision constraints
     if (!constraints.empty()) {
         project_warmstart_to_safety(
             x_ref, constraints, /*max_projection_sweeps=*/10, /*tolerance=*/1e-3);

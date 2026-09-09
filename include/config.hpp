@@ -348,9 +348,6 @@ struct RadiusCalibrationSettings {
 
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
-    /// Named alternative to `risk_measure` for risk-fidelity experiments.
-    /// It affects r[m] only: `ground_cost_type` and the ambiguity set remain
-    /// unchanged. INHERIT_RISK_MEASURE preserves the configured estimator.
     DRORiskScoringModel risk_scoring_model =
         DRORiskScoringModel::INHERIT_RISK_MEASURE;
 
