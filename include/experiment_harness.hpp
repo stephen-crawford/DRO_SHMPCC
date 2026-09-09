@@ -15,14 +15,14 @@
  *   1. Obstacle configurations   — mode-switch / history enums, obstacle config,
  *                                   ground-truth ObstacleSim
  *   2. Environment configurations — road / path / initial-state setup
- *   3. Test configurations       — sampling baselines, rollout protocol, the
+ *   3. Experiment configurations — sampling baselines, rollout protocol, the
  *                                   assembled ExperimentConfig + arm builders
- *   4. Test logging              — CSV writer
+ *   4. Artifact output           — reproducibility bundle + trace/SVG/GIF/RViz
  *   5. Results reporting         — RolloutRecord / RolloutResult + statistics
  *   6. Helper functions          — seeds, shift, path/placement, the rollout runner
  *
- * run_experiment_rollout() is THE canonical rollout. paper_experiment_runner and
- * all tests configure an ExperimentConfig and call it — they do NOT duplicate
+ * run_experiment_rollout() is THE canonical rollout. experiment_runner and all
+ * tests configure an ExperimentConfig and call it — they do NOT duplicate
  * obstacle simulation, collision detection, or mode tracking.
  */
 
@@ -39,6 +39,7 @@
 #include <map>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -93,7 +94,9 @@ struct ObstacleExperimentConfig {
     ModeSwitchConfiguration switch_regime =
         ModeSwitchConfiguration::HOLD_OVER_HORIZON;
     double switch_prob = 0.1;
-    /// Number of regular modes selected from obs_modes when randomization is on.
+    /// Requested regular-mode subset size. This is used only when
+    /// `randomize_available_modes` is true; otherwise every valid entry in
+    /// `obs_modes` is available to each obstacle.
     int num_modes = 4;
     int num_obstacles = 1;
     /// <= 0 derives classes from `history`; a positive YAML value is preserved.
@@ -140,6 +143,18 @@ struct ObstacleExperimentConfig {
         }
     }
 };
+
+/// Human-readable record of how `ObstacleExperimentConfig::num_modes` is
+/// interpreted for a rollout. The actual support can still differ per
+/// obstacle when a configured rare mode is appended after random selection.
+inline std::string mode_selection_policy_name(
+    const ObstacleExperimentConfig& config
+) {
+    if (!config.randomize_available_modes) return "configured_list";
+    return config.randomize_modes_per_obstacle
+        ? "random_subset_per_obstacle"
+        : "random_subset_shared";
+}
 
 /**
  * @brief Ground-truth obstacle simulator with mode switching.
@@ -213,6 +228,19 @@ struct EnvironmentExperimentConfig {
     std::optional<EgoState> custom_initial_ego;
     bool path_completion_termination = true;
     double path_completion_fraction = 0.95;
+
+    // MRS-style route input: an explicit sequence of world-frame x,y points
+    // is converted to one C2 polynomial trajectory.  It wins over the
+    // generated environment route but remains below an explicit C++ path.
+    std::vector<Eigen::Vector2d> path_waypoints;
+    bool path_closed_loop = false;
+    double path_sample_spacing = 0.25;
+    double path_control_point_spacing = 4.0;
+
+    // A positive value caps v^2 * |curvature| during trajectory timing.
+    // Zero inherits the configured nominal speed and ego angular-rate limit.
+    double path_max_lateral_acceleration = 0.0;
+
     double s_curve_length = 25.0;
     double s_curve_amplitude = 3.0;
     int s_curve_points = 200;
@@ -253,7 +281,7 @@ extern double OBS_PATH_FRACTION;
 extern std::vector<double> OBS_ARC_FRACS_4;
 
 // ############################################################################
-// # 3. TEST CONFIGURATIONS
+// # 3. EXPERIMENT CONFIGURATIONS
 // ############################################################################
 
 /// Paper-arm label: DRO on vs off. Controller knob is dro.enabled.
@@ -261,43 +289,6 @@ enum class DROConfiguration { BASE, DRO };
 
 inline std::string dro_configuration_name(DROConfiguration d) {
     return d == DROConfiguration::DRO ? "dro" : "base";
-}
-
-/// Historical experiment-table labels. Not a controller knob: when
-/// dro.enabled is true the controller always resamples i.i.d. from q*.
-enum class InjectionMode {
-    NONE,
-    QSTAR_SAMPLE,
-    TOP_RISK_INJECT,
-    DIVERSE_RISK_INJECT,
-    SOFTMAX_RISK,
-    EPSILON_GREEDY_INJ,
-    UNIFORM_COVERAGE
-};
-
-enum class SamplingBaseline {
-    STANDARD,
-    STRATIFIED,
-    TEMPERATURE,
-    EPSILON_GREEDY,
-    RISK_BIASED,
-    UNIFORM_WEIGHT,
-    RECENCY_WEIGHT,
-    ORACLE_FLOOD
-};
-
-inline std::string baseline_name(SamplingBaseline b) {
-    switch (b) {
-        case SamplingBaseline::STANDARD:       return "Standard";
-        case SamplingBaseline::STRATIFIED:     return "Stratified";
-        case SamplingBaseline::TEMPERATURE:    return "Temperature";
-        case SamplingBaseline::EPSILON_GREEDY: return "EpsilonGreedy";
-        case SamplingBaseline::RISK_BIASED:    return "RiskBiased";
-        case SamplingBaseline::UNIFORM_WEIGHT: return "Uniform";
-        case SamplingBaseline::RECENCY_WEIGHT: return "Recency";
-        case SamplingBaseline::ORACLE_FLOOD:   return "Oracle";
-        default: return "unknown";
-    }
 }
 
 struct RolloutExperimentConfig {
@@ -309,6 +300,50 @@ struct RolloutExperimentConfig {
     /// Called after mode observation, before solve.
     std::function<void(int, int, ObstacleSim&, MPCController&, std::mt19937&)>
         step_callback;
+};
+
+/**
+ * @brief Optional self-contained outputs produced by the canonical rollout.
+ *
+ * Set `output_directory` to enable artifact generation.  The harness creates
+ * one deterministic subdirectory per run, containing a resolved configuration
+ * snapshot, seed/backend manifest, a machine-readable trace, and optional
+ * SVG, animated GIF, and RViz-replay data. Empty keeps programmatic and
+ * unit-test rollouts side-effect free.
+ */
+struct ExperimentArtifactConfig {
+    std::string output_directory;
+    std::string run_name;
+    bool write_reproducibility_manifest = true;
+    bool write_trace_csv = true;
+    bool write_visualization_svg = true;
+    /// Native, dependency-free animated playback of the realized rollout.
+    bool write_visualization_gif = false;
+    /// Retain every Nth trace frame in rollout.gif; one preserves every recorded
+    /// execution state, including the initial and final states.
+    int gif_frame_stride = 1;
+    /// Replay-rate multiplier for recorded trace timestamps: one means the GIF
+    /// spans the simulation's elapsed execution time exactly (up to GIF's
+    /// centisecond resolution); two replays twice as fast.
+    double gif_playback_rate = 1.0;
+    /// Write scene.csv and rollout.rviz for the optional ROS 2 RViz replayer.
+    /// RViz replay requires write_trace_csv to remain enabled.
+    bool write_rviz_replay_bundle = false;
+
+    bool enabled() const noexcept { return !output_directory.empty(); }
+
+    void validate() const {
+        if (gif_frame_stride < 1) {
+            throw std::invalid_argument("artifact_gif_frame_stride must be at least one");
+        }
+        if (!std::isfinite(gif_playback_rate) || gif_playback_rate <= 0.0) {
+            throw std::invalid_argument("artifact_gif_playback_rate must be finite and positive");
+        }
+        if (write_rviz_replay_bundle && !write_trace_csv) {
+            throw std::invalid_argument(
+                "artifact_write_rviz_replay requires artifact_write_trace_csv");
+        }
+    }
 };
 
 struct SeedBundle {
@@ -327,7 +362,7 @@ struct SeedBundle {
  *   ExperimentConfig cfg = default_experiment_config();
  *   cfg.dro.enabled = true;
  *   cfg.mpc.type = MPCType::SH_MPCC;
- *   cfg.mpc.sampling.num_scenarios = 40;
+ *   cfg.mpc.sampling.set_manual_sample_count(40);
  *   cfg.obstacles.switch_prob = 0.2;
  *   cfg.rollout.rollout_steps = 200;
  */
@@ -340,16 +375,25 @@ struct ExperimentConfig {
     ObstacleExperimentConfig obstacles;
     EnvironmentExperimentConfig environment;
     RolloutExperimentConfig rollout;
+    ExperimentArtifactConfig artifacts;
 
-    /// Apply layout rules; sync belief / fixed rho; auto-name the method.
+    /// Apply layout rules; sync belief / fixed rho; derive a certified scenario
+    /// count when configured; and auto-name the method.
     /// Does not call mpc.sync_from_type() (would overwrite SH overrides set
     /// after type selection).
     void normalize() {
+        artifacts.validate();
         obstacles.apply_layout();
         mpc.sampling.sync_belief();
         mpc.sampling.markov_jump_system =
             (obstacles.switch_regime == ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM);
         dro.apply_fixed_rho();
+        if (mpc.uses_safe_horizon() &&
+            mpc.sampling.automatically_compute_sample_size) {
+            RuntimeConfig certifier;
+            certifier.mpc = mpc;
+            mpc.sampling.num_scenarios = certifier.compute_required_scenarios();
+        }
         if (rollout.method_name.empty()) {
             rollout.method_name =
                 dro_configuration_name(
@@ -401,7 +445,7 @@ inline ExperimentConfig make_arm_config(
     cfg.dro.enabled = (dro_kind == DROConfiguration::DRO);
     cfg.mpc.type = mpc_kind;
     cfg.mpc.sync_from_type();
-    cfg.mpc.sampling.num_scenarios = num_scenarios;
+    cfg.mpc.sampling.set_manual_sample_count(num_scenarios);
     cfg.obstacles.switch_prob = switch_prob;
     cfg.obstacles.obs_modes = obs_modes;
     cfg.obstacles.rare_mode = rare_mode;
@@ -493,6 +537,9 @@ struct RolloutRecord {
     std::string qp_backend;
     /// acados/HPIPM build identity, not a source path or machine-specific value.
     std::string qp_solver_identity;
+    /// Canonical artifact directory for this rollout; empty when artifacts are
+    /// disabled in ExperimentArtifactConfig.
+    std::string artifact_directory;
     std::string method;
     std::string scenario = "baseline";
     int S = 0;
@@ -502,6 +549,18 @@ struct RolloutRecord {
     double shift_rho = 0.0;
     double shift_boost = 0.0;
     std::string ground_cost;
+    std::string risk_scoring_model;
+    std::string configured_risk_measure;
+    /// Actual algorithm used after any explicit compatibility resolution.
+    std::string effective_risk_measure;
+    /// Whether `num_modes` selected a random subset or the full configured
+    /// list was used; see mode_selection_policy_name().
+    std::string mode_selection_policy;
+    /// YAML `num_modes`: meaningful only for a random-subset policy.
+    int requested_random_mode_count = 0;
+    /// Actual mode support sizes, in obstacle-ID order, after catalog
+    /// filtering and any rare-mode augmentation.
+    std::vector<int> effective_available_mode_counts;
 
     bool collision = false;
     int collision_step = -1;
@@ -532,13 +591,24 @@ struct RolloutRecord {
     int rare_mode_missed = 0;
 
     double avg_solve_ms = 0.0;
+    double avg_dro_risk_ms = 0.0;
     double p50_solve_ms = 0.0;
     double p95_solve_ms = 0.0;
     double max_solve_ms = 0.0;
     std::vector<double> solve_times_raw;
+    std::vector<double> dro_risk_times_raw;
 
-    int total_dro_injected = 0;
-    double avg_safe_horizon = 0.0;
+    /// Safe-Horizon solves for which a certificate was evaluated (excludes
+    /// ordinary MPC solves where no certificate was requested).
+    int safe_horizon_decisions = 0;
+    /// Decisions that met the sample-count, feasibility, and support-cap
+    /// conditions for a full-horizon certificate.
+    int certified_decisions = 0;
+    /// certified_decisions / safe_horizon_decisions, or zero when SH was not
+    /// requested for the rollout.
+    double certificate_rate = 0.0;
+    /// Mean full horizon among valid certificates only; zero if none exists.
+    double avg_certified_horizon = 0.0;
     double clearance_5pct = 0.0;
     int active_constraints = 0;
 };
@@ -655,6 +725,17 @@ std::vector<ReferencePath> build_environment_road_centerlines(
     const EnvironmentExperimentConfig& config
 );
 
+/// Terminal goal for open paths and a wrapped horizon-lookahead target for
+/// periodic paths. This keeps closed-loop rollouts moving along the route
+/// rather than repeatedly aiming for their starting point.
+Eigen::Vector2d rollout_tracking_goal(
+    const ReferencePath& path,
+    double path_progress,
+    double reference_velocity,
+    int horizon,
+    double dt
+);
+
 RolloutRecord run_experiment_rollout(
     const ExperimentConfig& config,
     unsigned seed
@@ -695,9 +776,7 @@ EnvironmentSetup create_environment(
 RolloutResult run_single_rollout_env(
     ExperimentConfig cfg,
     unsigned seed,
-    const EnvironmentSetup& env_setup,
-    SamplingBaseline baseline = SamplingBaseline::STANDARD,
-    int forced_safe_horizon = -1
+    const EnvironmentSetup& env_setup
 );
 
 }  // namespace dro_mpc

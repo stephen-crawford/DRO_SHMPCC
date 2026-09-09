@@ -604,9 +604,9 @@ namespace {
      * as a dominator is later removed by an even stronger scenario, transitivity
      * of actual set containment preserves the validity of the earlier removal.
      *
-     * Injected scenarios are excluded entirely from pruning:
-     *   - they are never removed;
-     *   - they are not used to remove ordinary scenarios.
+     * The supplied scenarios are the complete sampled decision problem.  The
+     * routine only removes half-space-redundant members for this numerical
+     * linearization; it does not add a separate deterministic scenario class.
      */
     std::vector<Scenario> prune_dominated_scenarios(
         const std::vector<Scenario>& scenarios,
@@ -936,6 +936,8 @@ LinearizedCollisionHalfspace make_collision_halfspace(
     if (dist > direction_epsilon) {
         hs.normal = delta / dist;
         hs.used_fallback_normal = false;
+    // A caller may provide a previous valid normal to preserve orientation at
+    // a coincident linearization point.
     } else if (fallback_normal.has_value() &&
                fallback_normal->allFinite() &&
                fallback_normal->norm() > direction_epsilon) {

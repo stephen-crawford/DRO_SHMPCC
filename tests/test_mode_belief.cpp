@@ -40,6 +40,33 @@ static std::map<std::string, ModeModel> make_library() {
 }
 
 // ---------------------------------------------------------------------------
+// 0. Radius calibration must not mistake repeated held-mode reports for fresh
+// IID categorical samples, and -1 must mean an unbounded history window.
+// ---------------------------------------------------------------------------
+static void test_mode_history_radius_evidence() {
+    ModeHistory history(0, make_library(), 0);
+    for (int t = 0; t < 300; ++t) {
+        history.record_observation(t, "constant_velocity");
+    }
+    check(history.observed_modes.size() == 300,
+          "max_history_length=-1 retains the full mode history");
+    check(history.ambiguity_radius_sample_count() == 1,
+          "repeated held-mode reports count as one radius-evidence episode");
+
+    history.record_observation(300, "turn_left");
+    history.record_observation(301, "turn_left");
+    history.record_observation(302, "constant_velocity");
+    check(history.ambiguity_radius_sample_count() == 3,
+          "each contiguous mode episode contributes one conservative evidence sample");
+
+    history.max_history_length = 3;
+    history.record_observation(303, "constant_velocity");
+    check(history.observed_modes.size() == 3 &&
+              history.ambiguity_radius_sample_count() == 2,
+          "a positive history cap retains a rolling window and recomputes evidence safely");
+}
+
+// ---------------------------------------------------------------------------
 // 1. Dirichlet posterior-predictive mean, checked against the closed form.
 // ---------------------------------------------------------------------------
 static void test_dirichlet_posterior_mean() {
@@ -502,6 +529,7 @@ static void test_markov_first_step_sampling() {
 }
 
 int main() {
+    test_mode_history_radius_evidence();
     test_entropic_full_support();
     test_entropic_frontier_monotone();
     test_slack_budget_collapse();

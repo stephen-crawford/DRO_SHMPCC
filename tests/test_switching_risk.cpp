@@ -78,10 +78,13 @@ Eigen::MatrixXd sticky_chain(int M, double theta) {
 
 std::map<std::string, double> risk_for(
     DRORiskMeasure measure, const Fixture& f, const Eigen::MatrixXd* T,
-    int mixture_samples = 512, int joint_samples = 4000)
+    int mixture_samples = 512, int joint_samples = 4000,
+    DRORiskScoringModel scoring_model =
+        DRORiskScoringModel::INHERIT_RISK_MEASURE)
 {
     DROConfig cfg;
     cfg.radius_calibration.risk_measure = measure;
+    cfg.radius_calibration.risk_scoring_model = scoring_model;
     cfg.radius_calibration.mixture_sequence_samples = mixture_samples;
     cfg.radius_calibration.joint_risk_samples = joint_samples;
     DRO dro(cfg);
@@ -148,7 +151,7 @@ int main() {
     {
         Eigen::MatrixXd T = sticky_chain(M, 0.75);
 
-        auto legacy    = risk_for(DRORiskMeasure::SURROGATE_VAR, f, &T);  // E_seq[max VaR]
+        auto joint_var = risk_for(DRORiskMeasure::JOINT_VAR,     f, &T);
         auto mix_var   = risk_for(DRORiskMeasure::MIXTURE_VAR,   f, &T);
         auto mix_cvar  = risk_for(DRORiskMeasure::MIXTURE_CVAR,  f, &T);
         auto joint_cvar= risk_for(DRORiskMeasure::JOINT_CVAR,    f, &T);
@@ -157,14 +160,15 @@ int main() {
         for (const auto& id : f.ids) cvar_ge_var = cvar_ge_var && (mix_cvar.at(id) >= mix_var.at(id) - 1e-12);
         check(cvar_ge_var, "CVaR >= VaR on the same sequence mixture (coherence sanity)");
 
-        bool legacy_understates = true;
+        bool cvar_ge_joint_var = true;
         for (const auto& id : f.ids)
-            legacy_understates = legacy_understates && (legacy.at(id) <= mix_cvar.at(id) + 1e-12);
-        check(legacy_understates,
-              "legacy E_seq[max VaR] <= coherent MIXTURE_CVaR on every mode (understatement)");
+            cvar_ge_joint_var = cvar_ge_joint_var &&
+                (joint_cvar.at(id) >= joint_var.at(id) - 1e-12);
+        check(cvar_ge_joint_var,
+              "joint CVaR is at least joint VaR for every mode");
 
-        std::printf("    mean r  legacy=%.4f  mixture_var=%.4f  mixture_cvar=%.4f  joint_cvar=%.4f\n",
-                    mean_of(legacy), mean_of(mix_var), mean_of(mix_cvar), mean_of(joint_cvar));
+        std::printf("    mean r  joint_var=%.4f  mixture_var=%.4f  mixture_cvar=%.4f  joint_cvar=%.4f\n",
+                    mean_of(joint_var), mean_of(mix_var), mean_of(mix_cvar), mean_of(joint_cvar));
 
         // The mixture is a surrogate for the joint reference; it should not be wildly
         // off. Compared on the SPREAD (max-min), which is all the W1 LP consumes.

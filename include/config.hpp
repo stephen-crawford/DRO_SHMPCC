@@ -1,6 +1,6 @@
 /**
  * @file config.hpp
- * @brief Runtime configuration for Adaptive Scenario-Based MPC — SOURCE OF TRUTH.
+ * @brief Runtime configuration for scenario MPC — SOURCE OF TRUTH.
  *
  * Owns controller settings only:
  *   - Ego vehicle specification (geometry + kinematic limits)
@@ -54,19 +54,6 @@ inline std::string mpc_type_name(MPCType t) {
     }
 }
 
-/// Compatibility alias used by paper-arm helpers.
-using MPCConfiguration = MPCType;
-
-/// @brief Safe-horizon truncation rule: how many stages N_s <= N receive
-/// collision constraints, given S sampled scenarios. Declared before use below.
-enum class SafeHorizonTruncationRule {
-    FIXED_NBAR, // DEFAULT: de Groot's strategy: fixed support cap, independent of the horizon length
-    // ---- Approximations / heuristics (do NOT match de Groot's support bound) ---
-    UNCERTIFIED_PRACTICAL,           //  Heuristic N_safe = min(N, floor(S/(2*n_u))). Ignores eps/beta.Lacks certification guarantee.
-    THEORETICAL_TIGHT,   //  Campi-Garatti tight bound with support dim = N_s*n_u (conservative).
-    THEORETICAL_SIMPLE,  // Calafiore-Campi 2006 bound S >= (2/eps)*(ln(1/beta) + N_s*n_u).
-};
-
 // ============================================================================
 // MPC objective / constraints / ego
 // ============================================================================
@@ -88,11 +75,6 @@ struct MPCConstraintSettings {
     /// Hard box on v_{k+1} in [ego.dynamics.min_velocity, ego.dynamics.max_velocity].
     bool enable_velocity_bounds = true;
 
-    // Safe-horizon knobs — active only for SH_MPC / SH_MPCC
-    int safe_horizon_min = 12;
-    SafeHorizonTruncationRule safe_horizon_mode = SafeHorizonTruncationRule::FIXED_NBAR;
-    int forced_safe_horizon = -1;
-
     /// Drop collision half-spaces whose linearization point is farther than this
     /// from the reference (metres). Does not affect scenario dominance pruning.
     double clearance_filter_distance = 20.0;
@@ -103,8 +85,20 @@ struct MPCConstraintSettings {
     /// iterations, n̂ = |∪_ℓ ω_active^ℓ| (with C ⊆ Ĉ, n ≤ n̂), not just the constraints
     /// active at the final optimum. This is the NON-REMOVED support cap: with a removal
     /// budget R the TOTAL support limit is n̄ + R (removed scenarios join the support,
-    /// de Groot Thm. 5)
-    int support_cap_nbar = 5;
+    /// de Groot Thm. 5).
+    // scenario_module/config/params.yaml uses n_bar: 6 by default.
+    int support_cap_n_bar = 6;
+
+    /// Conservative offline budget R for removed scenarios.  The controller
+    /// does not remove scenarios online; nevertheless, a stated budget raises
+    /// the total certificate cap exactly as in de Groot Thm. 5.
+    int scenario_removal_budget = 0;
+
+    /// Total support cap used by the certificate: n̄ + R.
+    int total_support_cap() const noexcept {
+        return std::max(0, support_cap_n_bar) +
+               std::max(0, scenario_removal_budget);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -162,7 +156,7 @@ enum class NominalBeliefKind {
 
 // Build a ModeBeliefConfig (types.hpp) from the belief kind. The sticky
 // self-persistence prior theta is only wired in for STICKY.
-inline ModeBeliefConfig make_mode_belief(
+inline ModeBeliefConfig make_mode_belief_config(
     NominalBeliefKind kind,
     double self_persistence_prior = 0.8
 ) {
@@ -180,12 +174,36 @@ inline ModeBeliefConfig make_mode_belief(
  * effect when the corresponding flags / kinds are selected.
  */
 struct ScenarioSamplingSettings {
-    int num_scenarios = 40; // Samples per step (default operating point; S-sweeps override this)
+    /// Effective number of sampled scenarios. When automatic sizing is on it
+    /// is derived during RuntimeConfig::normalize(); otherwise it is the
+    /// explicit static sample count from YAML or C++.
+    int num_scenarios = 40;
 
     double one_minus_chance_constraint_violation_probability = 0.95; // = 1 - eps  (safety prob)
     double chance_of_certificate_violation = 0.01; // = beta  (certificate confidence = 1 - beta)
 
-    bool enforce_certified_scenario_count = false;
+    /// Derive S from the certified total support cap n̄ + R.
+    bool automatically_compute_sample_size = true;
+
+    /// Select an explicit static sample count. Prefer this over assigning
+    /// num_scenarios directly when constructing an experiment in C++ so a
+    /// manual sweep cannot be overwritten during normalization.
+    void set_manual_sample_count(int count) {
+        if (count <= 0) {
+            throw std::invalid_argument("num_scenarios must be positive");
+        }
+        num_scenarios = count;
+        automatically_compute_sample_size = false;
+    }
+
+    /// Select reference-style automatic Safe-Horizon sample sizing.
+    void use_automatic_sample_sizing() {
+        automatically_compute_sample_size = true;
+    }
+
+    /// Positive values retain a rolling belief window; -1 retains all mode
+    /// observations.  Zero is rejected so it cannot silently acquire a
+    /// horizon-dependent meaning at runtime.
     int max_history_length = -1;
 
     bool markov_jump_system = false;
@@ -197,7 +215,7 @@ struct ScenarioSamplingSettings {
         const double sticky =
             mode_belief.self_persistence_prior > 0.0
                 ? mode_belief.self_persistence_prior : 0.8;
-        mode_belief = make_mode_belief(belief_kind, sticky);
+        mode_belief = make_mode_belief_config(belief_kind, sticky);
     }
 
     double epsilon() const { return 1.0 - one_minus_chance_constraint_violation_probability; }
@@ -250,7 +268,8 @@ struct MPCConfig {
 // DRO — risk / ground cost
 // ============================================================================
 //
-// DROGroundCostType and DRORiskMeasure are defined in types.hpp.
+// DROGroundCostType, DRORiskMeasure, and DRORiskScoringModel are defined in
+// types.hpp.
 
 inline std::string ground_cost_name(DROGroundCostType g) {
     switch (g) {
@@ -273,6 +292,23 @@ inline std::string risk_measure_name(DRORiskMeasure r) {
         case DRORiskMeasure::JOINT_VAR:                return "joint_var";
         case DRORiskMeasure::JOINT_CVAR:               return "joint_cvar";
         default: return "unknown";
+    }
+}
+
+inline std::string risk_scoring_model_name(DRORiskScoringModel model) {
+    switch (model) {
+        case DRORiskScoringModel::INHERIT_RISK_MEASURE:
+            return "inherit";
+        case DRORiskScoringModel::CERTIFIED_SURROGATE:
+            return "certified_surrogate";
+        case DRORiskScoringModel::EUCLIDEAN_BONFERRONI_VAR:
+            return "euclidean_bonferroni_var";
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_VAR:
+            return "euclidean_joint_var";
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR:
+            return "euclidean_joint_cvar";
+        default:
+            return "unknown";
     }
 }
 
@@ -312,8 +348,14 @@ struct RadiusCalibrationSettings {
 
     DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
-    /// If positive, overrides the controller-provided risk horizon. Otherwise
-    /// the active safe horizon (or full MPC horizon) is used.
+    /// Named alternative to `risk_measure` for risk-fidelity experiments.
+    /// It affects r[m] only: `ground_cost_type` and the ambiguity set remain
+    /// unchanged. INHERIT_RISK_MEASURE preserves the configured estimator.
+    DRORiskScoringModel risk_scoring_model =
+        DRORiskScoringModel::INHERIT_RISK_MEASURE;
+
+    /// -1 follows the controller-provided full risk horizon; a positive value
+    /// overrides it. Zero and values below -1 are invalid configuration.
     int risk_horizon = -1;
 
     AmbiguityDivergence divergence = AmbiguityDivergence::WASSERSTEIN;
@@ -379,7 +421,6 @@ struct DROControllerConfig {
 // ============================================================================
 
 struct SolverSettings {
-    bool use_sqp_solver = true;        // SQP outer loop over QP subproblems.
     int sqp_max_iterations = 5;        // Maximum SQP outer iterations.
     double sqp_convergence_tol = 1e-3; // Convergence tolerance on ||delta_u||.
     int qp_max_iterations = 200;       // acados/HPIPM interior-point iteration cap.
@@ -411,6 +452,12 @@ struct RuntimeConfig {
     double epsilon() const { return mpc.sampling.epsilon(); }
 
     bool enable_dro() const { return dro.enabled; }
+
+    /// This is the number checked
+    /// against the union of support scenarios and used to size S.
+    int support_limit() const noexcept {
+        return mpc.constraints.total_support_cap();
+    }
 
     // ---- de Groot (arXiv:2307.01070) scenario-theoretic sample complexity ----
     // de Groot's Safe-Horizon MPC sizes the sample count S from the NONCONVEX
@@ -447,20 +494,20 @@ struct RuntimeConfig {
         return 1.0 - std::exp(log_inner / static_cast<double>(S - n));
     }
 
-    /// de Groot Algorithm 1, line 2: the smallest sample size S with ε(n_total) ≤ ε,
-    /// found by exponential-search + bisection (ε is monotonically decreasing in S).
-    /// This is the EXACT NSO bound de Groot bisects; it replaces the earlier closed-form
-    /// Alamo/Campi upper bound, which over-estimated S by 15-30% (e.g. n̄=5: exact 781 vs
-    /// closed-form 932 at ε=0.05, β=0.01).
-    
-    int compute_required_scenarios(int nonremoved_support_limit, int num_removal = 0) const {
-        const double eps  = epsilon();
+    /// de Groot Algorithm 1, line 2: the smallest sample size S with epsilon
+    /// at the specified total support cap no larger than the configured risk.
+    int compute_required_scenarios(
+        int nonremoved_support_cap,
+        int removal_budget = 0
+    ) const {
+        const double eps = epsilon();
         const double beta = mpc.sampling.chance_of_certificate_violation;
-        const int n = std::max(0, nonremoved_support_limit) + std::max(0, num_removal);  // total support
+        const int n = std::max(0, nonremoved_support_cap) +
+                      std::max(0, removal_budget);
         int hi = std::max(n + 1, 1);                       // exponential upper bracket
         while (degroot_violation_risk(hi, n, beta) > eps) {
             hi *= 2;
-            if (hi > (1 << 24)) return hi;                 // safety cap (~16.7M)
+            if (hi > (1 << 24)) return hi;                 // safety cap
         }
         int lo = n + 1;
         while (lo < hi) {                                  // bisection (monotone in S)
@@ -471,73 +518,11 @@ struct RuntimeConfig {
         return lo;
     }
 
-    /// Convex Calafiore-Campi bound  S ≥ (2/ε)(ln(1/β) + d), where the support is
-    /// bounded by the DECISION-VARIABLE dimension d. This is a DIFFERENT (convex)
-    /// guarantee than de Groot's nonconvex NSO bound above; it is retained only for
-    /// the THEORETICAL_SIMPLE safe-horizon mode, which uses the convex proxy d=N·n_u.
-    int compute_required_scenarios_simple(int d) const {
-        double eps = epsilon();
-        return static_cast<int>(std::ceil(
-            (2.0 / eps) * (std::log(1.0 / mpc.sampling.chance_of_certificate_violation) + d)
-        ));
-    }
-
-    /// In de Groot, "Safe Horizon MPC" means the constraints bound the JOINT collision
-    /// probability over the planned horizon; the sample requirement is horizon-independent
-    /// in that it depends on the support limit n̄ rather than N explicitly. It does NOT
-    /// say the horizon is auto-selected from S. Each rule below is a controller heuristic;
-    /// only FIXED_NBAR carries a genuine certificate, and only for the full horizon.
-    int compute_safe_horizon(int S_actual, int n_u = 2) const {
-        if (!mpc.uses_safe_horizon()) return mpc.horizon;
-
-        const auto& c = mpc.constraints;
-        if (c.forced_safe_horizon >= 0) {
-            return std::clamp(c.forced_safe_horizon, c.safe_horizon_min, mpc.horizon);
-        }
-
-        int N_safe = c.safe_horizon_min;
-        switch (c.safe_horizon_mode) {
-            case SafeHorizonTruncationRule::FIXED_NBAR:
-                // de Groot's certified strategy: the support cap fixes the total support at
-                // n̄ (horizon-independent), so the exact NSO bound (Eq. 8) is a single
-                // threshold. If S certifies n̄, the FULL horizon carries the P(collision) ≤ ε
-                // @ 1-β guarantee. HEURISTIC FALLBACK: if S is insufficient, dropping to
-                // safe_horizon_min is NOT automatically certified — a shorter horizon may
-                // have smaller support, but that support must still be MEASURED/bounded
-                // (n̂ ≤ n̄_max(S)) to certify it. Treat the short-horizon branch as an
-                // engineering fallback, not a proof.
-                N_safe = (S_actual >= compute_required_scenarios(c.support_cap_nbar))
-                             ? mpc.horizon
-                             : c.safe_horizon_min;
-                break;
-            case SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL:
-                N_safe = std::min(mpc.horizon, S_actual / (2 * n_u));
-                break;
-            case SafeHorizonTruncationRule::THEORETICAL_SIMPLE:
-                for (int N_try = mpc.horizon; N_try >= c.safe_horizon_min; --N_try) {
-                    if (S_actual >= compute_required_scenarios_simple(N_try * n_u)) {
-                        N_safe = N_try;
-                        break;
-                    }
-                }
-                break;
-            case SafeHorizonTruncationRule::THEORETICAL_TIGHT:
-                // Evaluates de Groot's Eq. 8 EXACTLY, but with the support PROXIED by the
-                // per-step decision-variable count N·n_u. That proxy is NOT de Groot's
-                // online active-scenario support estimate (a count of distinct support
-                // scenarios, which the SQP union can make larger OR smaller than N·n_u),
-                // so this is NOT certified unless N·n_u is independently established as a
-                // valid upper bound on the total scenario support. It is a design proxy,
-                // despite the "TIGHT" label.
-                for (int N_try = mpc.horizon; N_try >= c.safe_horizon_min; --N_try) {
-                    if (S_actual >= compute_required_scenarios(N_try * n_u)) {
-                        N_safe = N_try;
-                        break;
-                    }
-                }
-                break;
-        }
-        return std::clamp(N_safe, c.safe_horizon_min, mpc.horizon);
+    /// Required S for the configured reference support cap n-bar + R.
+    int compute_required_scenarios() const {
+        return compute_required_scenarios(
+            mpc.constraints.support_cap_n_bar,
+            mpc.constraints.scenario_removal_budget);
     }
 
     /// Realized joint-risk certificate ε(n_total) actually guaranteed by S_actual drawn
@@ -557,6 +542,10 @@ struct RuntimeConfig {
         // overrides intentionally set after type selection.
         mpc.sampling.sync_belief();
         dro.apply_fixed_rho();
+        if (mpc.uses_safe_horizon() &&
+            mpc.sampling.automatically_compute_sample_size) {
+            mpc.sampling.num_scenarios = compute_required_scenarios();
+        }
     }
 
     void validate() const {
@@ -568,6 +557,24 @@ struct RuntimeConfig {
             throw std::invalid_argument("beta must be in (0, 1)");
         if (mpc.sampling.num_scenarios <= 0)
             throw std::invalid_argument("num_scenarios must be positive");
+        if (mpc.sampling.max_history_length == 0 ||
+            mpc.sampling.max_history_length < -1)
+            throw std::invalid_argument(
+                "max_history_length must be -1 or positive");
+        if (mpc.constraints.support_cap_n_bar < 0)
+            throw std::invalid_argument("support_cap_n_bar must be non-negative");
+        if (mpc.constraints.scenario_removal_budget < 0)
+            throw std::invalid_argument("scenario_removal_budget must be non-negative");
+
+        const auto& radius = dro.solver.radius_calibration;
+        if (!is_valid_risk_scoring_model(radius.risk_scoring_model))
+            throw std::invalid_argument("risk_scoring_model is invalid");
+        if (radius.joint_risk_samples <= 0)
+            throw std::invalid_argument("joint_risk_samples must be positive");
+        if (radius.mixture_sequence_samples <= 0)
+            throw std::invalid_argument("mixture_sequence_samples must be positive");
+        if (radius.risk_horizon == 0 || radius.risk_horizon < -1)
+            throw std::invalid_argument("risk_horizon must be -1 or positive");
     }
 };
 

@@ -39,8 +39,10 @@ inline std::string lower(std::string s) {
     return s;
 }
 inline bool to_bool(const std::string& v) {
-    std::string l = lower(v);
-    return l == "true" || l == "1" || l == "yes" || l == "on";
+    const std::string l = lower(trim(v));
+    if (l == "true" || l == "1" || l == "yes" || l == "on") return true;
+    if (l == "false" || l == "0" || l == "no" || l == "off") return false;
+    throw std::invalid_argument("expected a boolean value");
 }
 inline std::vector<std::string> split_csv(const std::string& v) {
     std::vector<std::string> out;
@@ -80,6 +82,26 @@ inline std::vector<ObstacleState> parse_obstacle_states(const std::string& v) {
     return states;
 }
 
+inline std::vector<Eigen::Vector2d> parse_path_waypoints(const std::string& v) {
+    std::vector<Eigen::Vector2d> waypoints;
+    std::stringstream groups(v);
+    std::string group;
+    while (std::getline(groups, group, ';')) {
+        group = trim(group);
+        while (group.size() >= 2 && group.front() == '[' && group.back() == ']') {
+            group = trim(group.substr(1, group.size() - 2));
+        }
+        if (group.empty()) continue;
+        const auto values = split_csv_d(group);
+        if (values.size() != 2) {
+            throw std::invalid_argument(
+                "each path waypoint must be x,y");
+        }
+        waypoints.emplace_back(values[0], values[1]);
+    }
+    return waypoints;
+}
+
 inline std::string strip_comment(const std::string& line) {
     bool in_single_quote = false;
     bool in_double_quote = false;
@@ -106,10 +128,11 @@ inline size_t find_mapping_colon(const std::string& line) {
 
 inline MPCType parse_mpc(const std::string& v) {
     std::string l = lower(v);
-    if (l == "mpc")    return MPCType::MPC;
-    if (l == "mpcc")   return MPCType::MPCC;
-    if (l == "sh_mpc") return MPCType::SH_MPC;
-    return MPCType::SH_MPCC;
+    if (l == "mpc")                          return MPCType::MPC;
+    if (l == "mpcc")                         return MPCType::MPCC;
+    if (l == "sh_mpc" || l == "sh-mpc")     return MPCType::SH_MPC;
+    if (l == "sh_mpcc" || l == "sh-mpcc")   return MPCType::SH_MPCC;
+    throw std::invalid_argument("unknown mpc_type '" + v + "'");
 }
 inline EnvironmentType parse_env(const std::string& v) {
     std::string l = lower(v);
@@ -126,36 +149,43 @@ inline EnvironmentType parse_env(const std::string& v) {
     if (l == "narrow"   || l == "narrow_corridor")    return EnvironmentType::NARROW_CORRIDOR;
     if (l == "intersection")                          return EnvironmentType::INTERSECTION;
     if (l == "oncoming")                              return EnvironmentType::ONCOMING;
-    return EnvironmentType::S_CURVE;
+    throw std::invalid_argument("unknown environment '" + v + "'");
 }
 inline ModeSwitchConfiguration parse_switch(const std::string& v) {
     std::string l = lower(v);
     if (l == "hold" || l == "hold_over_horizon") return ModeSwitchConfiguration::HOLD_OVER_HORIZON;
-    return ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM;
+    if (l == "markov" || l == "markov_jump_system")
+        return ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM;
+    throw std::invalid_argument("unknown switch_regime '" + v + "'");
 }
 inline ObstacleHistoryConfiguration parse_obstacle_history(const std::string& v) {
     const std::string l = lower(v);
-    return (l == "shared" || l == "shared_history" ||
-            l == "shared_history_classes")
-        ? ObstacleHistoryConfiguration::SHARED
-        : ObstacleHistoryConfiguration::INDEPENDENT;
-}
-inline SafeHorizonTruncationRule parse_sh(const std::string& v) {
-    std::string l = lower(v);
-    if (l == "uncertified_practical" || l == "practical") return SafeHorizonTruncationRule::UNCERTIFIED_PRACTICAL;
-    if (l == "theoretical_tight")                         return SafeHorizonTruncationRule::THEORETICAL_TIGHT;
-    if (l == "theoretical_simple")                        return SafeHorizonTruncationRule::THEORETICAL_SIMPLE;
-    return SafeHorizonTruncationRule::FIXED_NBAR;
+    if (l == "shared" || l == "shared_history" ||
+        l == "shared_history_classes") {
+        return ObstacleHistoryConfiguration::SHARED;
+    }
+    if (l == "independent" || l == "independent_history") {
+        return ObstacleHistoryConfiguration::INDEPENDENT;
+    }
+    throw std::invalid_argument("unknown obstacle_history '" + v + "'");
 }
 inline NominalBeliefKind parse_belief(const std::string& v) {
-    return lower(v) == "sticky" ? NominalBeliefKind::STICKY : NominalBeliefKind::DIRICHLET;
+    const std::string l = lower(v);
+    if (l == "sticky") return NominalBeliefKind::STICKY;
+    if (l == "dirichlet") return NominalBeliefKind::DIRICHLET;
+    throw std::invalid_argument("unknown belief_kind '" + v + "'");
 }
 inline DROGroundCostType parse_ground(const std::string& v) {
     std::string l = lower(v);
-    if (l == "w1_metric")      return DROGroundCostType::W1_METRIC;
-    if (l == "zero_one")       return DROGroundCostType::ZERO_ONE;
-    if (l == "euclidean_mean") return DROGroundCostType::EUCLIDEAN_MEAN;
-    return DROGroundCostType::W2_BURES;
+    if (l == "w2_bures" || l == "w2-bures" || l == "w2")
+                                      return DROGroundCostType::W2_BURES;
+    if (l == "w1_metric" || l == "w1-metric")
+                                      return DROGroundCostType::W1_METRIC;
+    if (l == "zero_one" || l == "zero-one")
+                                      return DROGroundCostType::ZERO_ONE;
+    if (l == "euclidean_mean" || l == "euclidean-mean")
+                                      return DROGroundCostType::EUCLIDEAN_MEAN;
+    throw std::invalid_argument("unknown ground_cost '" + v + "'");
 }
 inline DRORiskMeasure parse_risk(const std::string& v) {
     std::string l = lower(v);
@@ -168,15 +198,36 @@ inline DRORiskMeasure parse_risk(const std::string& v) {
     if (l == "mixture_cvar")             return DRORiskMeasure::MIXTURE_CVAR;
     if (l == "joint_var")                return DRORiskMeasure::JOINT_VAR;
     if (l == "joint_cvar")               return DRORiskMeasure::JOINT_CVAR;
-    return DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+    throw std::invalid_argument("unknown risk_measure '" + v + "'");
+}
+inline DRORiskScoringModel parse_risk_scoring_model(const std::string& v) {
+    const std::string l = lower(v);
+    if (l == "inherit" || l == "inherit_risk_measure") {
+        return DRORiskScoringModel::INHERIT_RISK_MEASURE;
+    }
+    if (l == "certified_surrogate" || l == "surrogate_bonferroni") {
+        return DRORiskScoringModel::CERTIFIED_SURROGATE;
+    }
+    if (l == "euclidean_bonferroni" || l == "euclidean_bonferroni_var") {
+        return DRORiskScoringModel::EUCLIDEAN_BONFERRONI_VAR;
+    }
+    if (l == "euclidean_joint_var" || l == "joint_var") {
+        return DRORiskScoringModel::EUCLIDEAN_JOINT_VAR;
+    }
+    if (l == "euclidean_joint_cvar" || l == "joint_cvar" ||
+        l == "euclidean_joint") {
+        return DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR;
+    }
+    throw std::invalid_argument("unknown risk_scoring_model '" + v + "'");
 }
 inline AmbiguityDivergence parse_divergence(const std::string& v) {
     std::string l = lower(v);
+    if (l == "wasserstein" || l == "wass")             return AmbiguityDivergence::WASSERSTEIN;
     if (l == "total_variation" || l == "tv")             return AmbiguityDivergence::TOTAL_VARIATION;
     if (l == "kullback_leibler" || l == "kl")            return AmbiguityDivergence::KULLBACK_LEIBLER;
     if (l == "jensen_shannon" || l == "js")              return AmbiguityDivergence::JENSEN_SHANNON;
     if (l == "hellinger")                                return AmbiguityDivergence::HELLINGER;
-    return AmbiguityDivergence::WASSERSTEIN;
+    throw std::invalid_argument("unknown divergence '" + v + "'");
 }
 
 /// Search order: compile-time DRO_MPC_DEFAULT_CONFIG, env var, cwd-relative paths.
@@ -210,6 +261,8 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
 
     std::string line;
     int lineno = 0;
+    bool saw_num_scenarios = false;
+    bool saw_automatic_sample_sizing = false;
     while (std::getline(in, line)) {
         ++lineno;
         line = strip_comment(line);
@@ -233,16 +286,30 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             if      (k == "mpc_type")                      { cfg.mpc.type = parse_mpc(val); cfg.mpc.sync_from_type(); }
             else if (k == "horizon")                       cfg.mpc.horizon = std::stoi(val);
             else if (k == "dt")                            cfg.mpc.dt = std::stod(val);
-            else if (k == "num_scenarios")                 cfg.mpc.sampling.num_scenarios = std::stoi(val);
+            else if (k == "num_scenarios") {
+                cfg.mpc.sampling.num_scenarios = std::stoi(val);
+                saw_num_scenarios = true;
+            }
             else if (k == "road_width")                    cfg.mpc.constraints.road_width = std::stod(val);
             else if (k == "safety_margin")                 cfg.mpc.constraints.safety_margin = std::stod(val);
             else if (k == "enable_contouring_constraints") cfg.mpc.enable_contouring_constraints = to_bool(val);
-            else if (k == "safe_horizon_enabled")          cfg.mpc.safe_horizon_enabled = to_bool(val);
+            else if (k == "safe_horizon_enabled" || k == "enable_safe_horizon")
+                                                           cfg.mpc.safe_horizon_enabled = to_bool(val);
             else if (k == "enable_velocity_bounds")        cfg.mpc.constraints.enable_velocity_bounds = to_bool(val);
-            else if (k == "safe_horizon_min")              cfg.mpc.constraints.safe_horizon_min = std::stoi(val);
-            else if (k == "safe_horizon_mode")             cfg.mpc.constraints.safe_horizon_mode = parse_sh(val);
-            else if (k == "forced_safe_horizon")           cfg.mpc.constraints.forced_safe_horizon = std::stoi(val);
-            else if (k == "support_cap_nbar")              cfg.mpc.constraints.support_cap_nbar = std::stoi(val);
+            else if (k == "support_cap_n_bar" || k == "n_bar")
+                                                           cfg.mpc.constraints.support_cap_n_bar = std::stoi(val);
+            else if (k == "scenario_removal_budget")       cfg.mpc.constraints.scenario_removal_budget = std::stoi(val);
+            else if (k == "safe_horizon_min" || k == "safe_horizon_mode" ||
+                     k == "forced_safe_horizon")
+                throw std::invalid_argument(
+                    "temporal safe-horizon truncation was removed; Safe Horizon certifies the full MPC horizon");
+            else if (k == "support_cap_nbar")
+                throw std::invalid_argument("renamed to support_cap_n_bar");
+            else if (k == "enable_scenario_removal" || k == "scenario_removal_enabled")
+                throw std::invalid_argument(
+                    "removed because online scenario removal is not implemented; use scenario_removal_budget for conservative certification");
+            else if (k == "scenario_removal_count" || k == "removal_count")
+                throw std::invalid_argument("renamed to scenario_removal_budget");
             else if (k == "clearance_filter_distance")     cfg.mpc.constraints.clearance_filter_distance = std::stod(val);
             else if (k == "ego_radius")                    cfg.mpc.ego.radius = std::stod(val);
             else if (k == "ego_length")                    cfg.mpc.ego.length = std::stod(val);
@@ -262,8 +329,21 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
                     ? ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM
                     : ModeSwitchConfiguration::HOLD_OVER_HORIZON;
             }
+            else if (k == "compute_automatically" ||
+                     k == "automatically_compute_sample_size" ||
+                     k == "auto_compute_sample_size")
+            {
+                cfg.mpc.sampling.automatically_compute_sample_size = to_bool(val);
+                saw_automatic_sample_sizing = true;
+            }
+            // Compatibility for old overlays: its prior effect was to make
+            // the controller fill an undersized sample set, which is exactly
+            // the reference automatic-sizing behavior.
             else if (k == "enforce_certified_scenario_count" || k == "enforce_scenario_count")
-                                                           cfg.mpc.sampling.enforce_certified_scenario_count = to_bool(val);
+            {
+                cfg.mpc.sampling.automatically_compute_sample_size = to_bool(val);
+                saw_automatic_sample_sizing = true;
+            }
             else if (k == "max_history_length")            cfg.mpc.sampling.max_history_length = std::stoi(val);
             else if (k == "one_minus_chance_constraint_violation_probability" || k == "confidence_level")
                                                            cfg.mpc.sampling.one_minus_chance_constraint_violation_probability = std::stod(val);
@@ -272,6 +352,8 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "dro_enabled")                   cfg.dro.enabled = to_bool(val);
             else if (k == "fixed_rho")                     cfg.dro.fixed_rho = std::stod(val);
             else if (k == "risk_measure")                  cfg.dro.solver.radius_calibration.risk_measure = parse_risk(val);
+            else if (k == "risk_scoring_model" || k == "risk_scoring")
+                                                           cfg.dro.solver.radius_calibration.risk_scoring_model = parse_risk_scoring_model(val);
             else if (k == "risk_horizon")                  cfg.dro.solver.radius_calibration.risk_horizon = std::stoi(val);
             else if (k == "divergence")                    cfg.dro.solver.radius_calibration.divergence = parse_divergence(val);
             else if (k == "ground_cost")                   cfg.dro.solver.ground_cost_type = parse_ground(val);
@@ -289,7 +371,6 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "joint_risk_samples")            cfg.dro.solver.radius_calibration.joint_risk_samples = std::stoi(val);
             else if (k == "joint_risk_seed")               cfg.dro.solver.radius_calibration.joint_risk_seed = std::stoull(val);
             else if (k == "mixture_sequence_samples")      cfg.dro.solver.radius_calibration.mixture_sequence_samples = std::stoi(val);
-            else if (k == "use_sqp_solver")                cfg.solver.use_sqp_solver = to_bool(val);
             else if (k == "sqp_max_iterations")            cfg.solver.sqp_max_iterations = std::stoi(val);
             else if (k == "sqp_convergence_tol")           cfg.solver.sqp_convergence_tol = std::stod(val);
             else if (k == "qp_max_iterations")             cfg.solver.qp_max_iterations = std::stoi(val);
@@ -323,6 +404,12 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "environment")                   cfg.environment.type = parse_env(val);
             else if (k == "path_completion_fraction")      cfg.environment.path_completion_fraction = std::stod(val);
             else if (k == "path_completion_termination")   cfg.environment.path_completion_termination = to_bool(val);
+            else if (k == "path_waypoints")                cfg.environment.path_waypoints = parse_path_waypoints(val);
+            else if (k == "path_closed_loop" || k == "path_closed")
+                                                           cfg.environment.path_closed_loop = to_bool(val);
+            else if (k == "path_sample_spacing")            cfg.environment.path_sample_spacing = std::stod(val);
+            else if (k == "path_control_point_spacing")     cfg.environment.path_control_point_spacing = std::stod(val);
+            else if (k == "path_max_lateral_acceleration")  cfg.environment.path_max_lateral_acceleration = std::stod(val);
             else if (k == "s_curve_length")                cfg.environment.s_curve_length = std::stod(val);
             else if (k == "s_curve_amplitude")             cfg.environment.s_curve_amplitude = std::stod(val);
             else if (k == "s_curve_points")                cfg.environment.s_curve_points = std::stoi(val);
@@ -344,14 +431,44 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "scenario_tag")                  cfg.rollout.scenario_tag = val;
             else if (k == "method_name")                   cfg.rollout.method_name = val;
             else if (k == "metrics_v_ref")                 cfg.rollout.metrics_v_ref = std::stod(val);
+            else if (k == "artifact_output_directory" || k == "artifact_output_dir")
+                                                           cfg.artifacts.output_directory = val;
+            else if (k == "artifact_run_name" || k == "artifact_label")
+                                                           cfg.artifacts.run_name = val;
+            else if (k == "artifact_write_manifest")       cfg.artifacts.write_reproducibility_manifest = to_bool(val);
+            else if (k == "artifact_write_trace_csv")      cfg.artifacts.write_trace_csv = to_bool(val);
+            else if (k == "artifact_write_visualization_svg")
+                                                           cfg.artifacts.write_visualization_svg = to_bool(val);
+            else if (k == "artifact_write_visualization_gif" ||
+                     k == "artifact_write_gif")
+                                                           cfg.artifacts.write_visualization_gif = to_bool(val);
+            else if (k == "artifact_gif_frame_stride")    cfg.artifacts.gif_frame_stride = std::stoi(val);
+            else if (k == "artifact_gif_playback_rate")  cfg.artifacts.gif_playback_rate = std::stod(val);
+            else if (k == "artifact_gif_frame_delay_ms")
+                throw std::invalid_argument(
+                    "artifact_gif_frame_delay_ms was removed; use artifact_gif_playback_rate");
+            else if (k == "artifact_write_rviz_replay" ||
+                     k == "artifact_write_rviz")
+                                                           cfg.artifacts.write_rviz_replay_bundle = to_bool(val);
+            else if (k == "use_sqp_solver")
+                throw std::invalid_argument("removed because acados SQP is the only solver path");
             else if (k == "injection_mode" || k == "injection_count" || k == "reweighting")
-                continue;  // removed; ignore leftover keys in old overlays
+                throw std::invalid_argument(
+                    "removed because DRO reweights the scenario distribution instead of injecting scenarios");
             else if (strict)
                 throw std::runtime_error("unknown key '" + key + "'");
         } catch (const std::exception& e) {
             throw std::runtime_error("load_experiment_config: " + path + ":" + std::to_string(lineno) +
                                      " bad entry '" + key + ": " + val + "' (" + e.what() + ")");
         }
+    }
+
+    // An overlay that provides S but does not explicitly request automatic
+    // sizing is a manual-S experiment. This prevents inherited defaults from
+    // silently changing a labeled scenario-budget sweep. A file that sets both
+    // options makes its policy explicit, regardless of key order.
+    if (saw_num_scenarios && !saw_automatic_sample_sizing) {
+        cfg.mpc.sampling.automatically_compute_sample_size = false;
     }
 }
 
@@ -375,6 +492,15 @@ inline ExperimentConfig load_experiment_config(const std::string& path = "", boo
         cfg.config_source = path;
     }
     cfg.normalize();
+    try {
+        // Validate after normalization so YAML-loaded automatic sizing and
+        // fixed-radius settings are checked in the same form used at runtime.
+        cfg.to_scenario_mpc_config().validate();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            "load_experiment_config: " + cfg.config_source +
+            " invalid configuration (" + e.what() + ")");
+    }
     return cfg;
 }
 

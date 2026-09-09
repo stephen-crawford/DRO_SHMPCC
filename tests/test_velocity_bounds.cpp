@@ -1,7 +1,11 @@
-// velocity_bound_probe: closed-loop check that the hard velocity bounds hold.
-// Drives the controller with a reference velocity well above max_velocity so the
-// upper bound is binding, on an obstacle-free straight path, and asserts the
-// realized speed never leaves [min_velocity, max_velocity].
+/**
+ * @file test_velocity_bounds.cpp
+ * @brief Closed-loop integration test for hard ego velocity bounds.
+ *
+ * Drives the controller with a reference velocity well above max_velocity so
+ * the upper bound is binding on an obstacle-free straight path, then verifies
+ * that the realized speed never leaves the configured interval.
+ */
 #include "mpc_controller.hpp"
 #include "dynamics.hpp"
 #include "reference_path.hpp"
@@ -42,7 +46,7 @@ int main() {
         }
     }
 
-    std::printf("velocity_bound_probe: v in [%.4f, %.4f], bounds [%.2f, %.2f], target=%.1f\n",
+    std::printf("velocity-bounds integration: v in [%.4f, %.4f], bounds [%.2f, %.2f], target=%.1f\n",
                 v_min_seen, v_max_seen, cfg.mpc.ego.dynamics.min_velocity, cfg.mpc.ego.dynamics.max_velocity, v_target);
     // The cap must actually engage (target is 2.5x the cap) and never be exceeded.
     bool cap_engaged = v_max_seen > cfg.mpc.ego.dynamics.max_velocity - 0.5;

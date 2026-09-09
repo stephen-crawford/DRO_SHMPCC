@@ -16,9 +16,20 @@ namespace {
  */
 std::map<std::string, double> compute_frequency_weights(
     const ModeHistory& mode_history,
-    const std::vector<std::string>& modes,
-    double dirichlet_alpha = 0.5
+    const ModeBeliefConfig& belief
 ) {
+
+    std::vector<std::string> modes;
+    for (const auto& [mode_id, _] : mode_history.available_modes) {
+        modes.push_back(mode_id);
+    }
+
+    int num_modes = static_cast<int>(modes.size());
+    if (num_modes == 0) {
+        return {};
+    }
+    const double dirichlet_alpha = belief.alpha(num_modes);
+
     auto counts = mode_history.get_mode_counts();
     std::map<std::string, double> weights;
 
@@ -36,15 +47,6 @@ std::map<std::string, double> compute_mode_weights(
     const ModeHistory& mode_history,
     const ModeBeliefConfig& belief
 ) {
-    std::vector<std::string> modes;
-    for (const auto& [mode_id, _] : mode_history.available_modes) {
-        modes.push_back(mode_id);
-    }
-
-    int num_modes = static_cast<int>(modes.size());
-    if (num_modes == 0) {
-        return {};
-    }
 
     // Nominal belief = Dirichlet posterior-predictive mean
     //   p_m = (n_m + a) / (N + M a),   a = belief.alpha(M),
@@ -52,7 +54,7 @@ std::map<std::string, double> compute_mode_weights(
     // unobserved modes). The belief KIND (DIRICHLET vs STICKY) shares this
     // marginal; stickiness enters only through the Markov transition prior
     // (ModeBeliefConfig::kappa), which the mode-sequence samplers apply.
-    auto weights = compute_frequency_weights(mode_history, modes, belief.alpha(num_modes));
+    auto weights = compute_frequency_weights(mode_history, belief);
 
     // Normalize to sum to 1
     double total = 0.0;
@@ -154,7 +156,7 @@ std::vector<std::string> sample_mode_sequence(
 
     // If the first sampled mode governs the interval [t, t+1], draw it from the one-step
     // predictive p_{t+1|t} = T^T p_t; otherwise seed directly from the current belief.
-    const ModeDistribution seed =
+    const ModeDistribution base_distribution =
         predict_before_first_sample ? predict_mode_belief(initial_belief, transition, modes)
                                     : initial_belief;
 
@@ -162,8 +164,8 @@ std::vector<std::string> sample_mode_sequence(
     std::vector<double> w0(M);
     double s0 = 0.0;
     for (int i = 0; i < M; ++i) {
-        auto it = seed.find(modes[i]);
-        w0[i] = (it != seed.end() && it->second > 0.0) ? it->second : 0.0;
+        auto it = base_distribution.find(modes[i]);
+        w0[i] = (it != base_distribution.end() && it->second > 0.0) ? it->second : 0.0;
         s0 += w0[i];
     }
     if (!(s0 > 0.0)) std::fill(w0.begin(), w0.end(), 1.0);

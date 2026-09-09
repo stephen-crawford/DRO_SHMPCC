@@ -49,17 +49,50 @@ struct WorstCaseRecoveryResult {
 };
 
 /**
+ * @brief Reproducible metadata for one per-mode risk-vector evaluation.
+ *
+ * The selected score is intentionally reported separately from the transport
+ * geometry. This makes exactness/runtime comparisons possible without changing
+ * the W2-Bures (or other configured) ambiguity metric.
+ */
+struct RiskEvaluationDiagnostics {
+    DRORiskScoringModel scoring_model =
+        DRORiskScoringModel::INHERIT_RISK_MEASURE;
+    DRORiskMeasure configured_measure =
+        DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+    DRORiskMeasure effective_measure =
+        DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+    DRORiskScoringProperties properties{};
+    int horizon = 0;
+    /// Joint MC samples or sampled mode sequences per start mode; zero for a
+    /// closed-form held-mode surrogate.
+    int sample_count = 0;
+    double evaluation_seconds = 0.0;
+};
+
+/**
  * @brief Result from DRO worst-case weight computation.
  */
 struct DROResult {
     std::map<std::string, double> worst_case_weights;  // q* mode weights
     double optimal_lambda = 0.0;                       // Optimal dual variable
-    double rho_used = 0.0;                              // Wasserstein radius rho used
+    double rho_used = 0.0;                              // Configured ambiguity-set radius
+    /// Radius before applying its configured min/max clamp.  This makes a
+    /// deliberately conservative saturation visible in diagnostics.
+    double rho_before_clamp = 0.0;
+    /// Number of conservative mode episodes used as calibration evidence.
+    int radius_observation_count = 0;
+    /// Actual available-mode cardinality used by the radius formula.
+    int radius_mode_count = 0;
+    bool rho_clamped_to_min = false;
+    bool rho_clamped_to_max = false;
     double worst_case_risk = 0.0;                      // sup risk under Q*
     std::map<std::string, double> risk_per_mode;       // r[m] for each mode
     std::vector<std::vector<double>> transport_cost_matrix;  // D[i][j]
     double implied_transport_cost = 0.0;               // Transport cost of induced plan
     bool recovery_feasible = false;                    // Whether induced plan respects rho
+
+    RiskEvaluationDiagnostics risk_diagnostics;
 
    
     double qstar_support_floor = 0.0;   // min_m Q*[m]. 0 => Assumption 1 FAILS (bang-bang).
@@ -77,9 +110,9 @@ struct DROResult {
 /**
  * @brief Standard input to a configured per-mode risk-vector evaluation.
  *
- * The estimator is selected solely by DRO::config().radius_calibration
- * (and therefore by the YAML `risk_measure` setting).  The request contains only
- * problem data shared by every estimator.
+ * The estimator is selected by DRO::config().radius_calibration through
+ * `risk_scoring_model` and `risk_measure`. The request contains only problem
+ * data shared by every estimator.
  */
 struct RiskVectorRequest {
     const ObstacleState& obstacle_state;
@@ -142,7 +175,7 @@ class DRO {
 public:
     explicit DRO(const DROConfig& config = DROConfig());
 
-    /// Compute r[m] using the risk estimator selected in the DRO configuration.
+    /// Compute r[m] using the effective estimator selected in the DRO configuration.
     std::map<std::string, double> compute_risk_vector(
         const RiskVectorRequest& request
     );
@@ -278,6 +311,16 @@ public:
     const DROConfig& config() const { return config_; }
 
 private:
+    struct ResolvedAmbiguityRadius {
+        double value = 0.0;
+        double before_clamp = 0.0;
+        bool clamped_to_min = false;
+        bool clamped_to_max = false;
+    };
+
+    /// Resolve the configured profile, enforcing explicit switching semantics.
+    DRORiskMeasure resolve_effective_risk_measure(bool has_transition) const;
+
     /**
      * @brief Compute the mode ground-cost transport matrix D[i][j].
      *
@@ -301,7 +344,9 @@ private:
      *
      * r[m] = max_k max_d r_{k,d}
      *
-     * Uses k=1..safe_horizon. Uses worst disc position when num_discs > 1.
+     * Uses k=1..risk_horizon.  Safe-Horizon MPC supplies the complete
+     * prediction horizon so DRO risk and collision certification cover the
+     * same joint event. Uses worst disc position when num_discs > 1.
      */
     std::map<std::string, double> compute_surrogate_risk_vector(
         const ObstacleState& obs_state,
@@ -311,7 +356,8 @@ private:
         int horizon,
         double safety_threshold,
         int num_discs = 1,
-        double vehicle_length = 4.0
+        double vehicle_length = 4.0,
+        DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI
     );
 
     /**
@@ -342,7 +388,8 @@ private:
         double safety_threshold,
         int num_discs = 1,
         double vehicle_length = 4.0,
-        const Eigen::MatrixXd* transition = nullptr
+        const Eigen::MatrixXd* transition = nullptr,
+        DRORiskMeasure risk_measure = DRORiskMeasure::JOINT_VAR
     );
 
     /**
@@ -372,17 +419,9 @@ private:
         double safety_threshold,
         int num_discs,
         double vehicle_length,
-        const Eigen::MatrixXd* transition
+        const Eigen::MatrixXd* transition,
+        DRORiskMeasure risk_measure
     );
-
-    /// Max over (step,disc) of the surrogate clearance violation for one obstacle
-    /// mean/covariance trajectory. Shared by the held and switching risk paths.
-    double surrogate_traj_violation(
-        const std::vector<Eigen::Vector2d>& means,
-        const std::vector<Eigen::Matrix2d>& covs,
-        const std::vector<EgoState>& ego_traj,
-        int horizon, double safety_radius, int num_discs, double vehicle_length,
-        double z_alpha, double alpha) const;
 
     std::pair<double, double> surrogate_traj_gaussian(
         const std::vector<Eigen::Vector2d>& means,
@@ -536,7 +575,7 @@ private:
     );
 
     /// Resolve the configured ambiguity radius for any supported family.
-    double resolve_ambiguity_radius(
+    ResolvedAmbiguityRadius resolve_ambiguity_radius(
         AmbiguityDivergence divergence,
         int mode_count,
         double transport_diameter

@@ -1,6 +1,6 @@
 /**
  * @file mpc_controller.hpp
- * @brief Adaptive Scenario-Based MPC Controller.
+ * @brief Scenario MPC controller.
  *
  * Main control loop that:
  * 1. Samples scenarios from obstacle predictions
@@ -173,8 +173,7 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0,
-        int cost_horizon = -1
+        double path_length = -1.0
     );
 
     /**
@@ -186,8 +185,7 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0,
-        int cost_horizon = -1
+        double path_length = -1.0
     );
 
     /**
@@ -195,11 +193,10 @@ private:
      *
      * Condenses dynamics to express positions as linear function of inputs,
      * then maps collision constraints into input space. MPCC contouring/lag
-     * objectives are applied to all steps 1..N. Collision constraints are
-     * pre-filtered by the safe horizon in solve() before reaching this method.
+     * objectives and Safe-Horizon collision constraints are applied over all
+     * steps 1..N.  Safe Horizon is a support-bound certificate, not a
+     * temporal constraint filter.
      *
-     * @param cost_horizon Reserved for future use (-1 = full horizon).
-     *        Constraint truncation is handled upstream in solve().
      */
     QPProblem build_condensed_qp(
         const std::vector<EgoState>& x_ref,
@@ -208,18 +205,7 @@ private:
         double reference_velocity,
         const std::vector<CollisionConstraint>& constraints,
         double path_progress = -1.0,
-        double path_length = -1.0,
-        int cost_horizon = -1
-    );
-
-    /**
-     * @brief Apply simple constraint avoidance by adjusting inputs.
-     */
-    std::pair<std::vector<EgoState>, std::vector<EgoInput>> apply_simple_avoidance(
-        const EgoState& ego_state,
-        std::vector<EgoState> trajectory,
-        std::vector<EgoInput> inputs,
-        const std::vector<CollisionConstraint>& constraints
+        double path_length = -1.0
     );
 
     /**

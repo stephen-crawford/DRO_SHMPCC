@@ -4,9 +4,8 @@ build/
 *.a
 *.so
 
-# Generated data and figures (regenerate with paper_experiment_runner + scripts)
-paper_figures/*.csv
-paper_figures/*.png
+# Generated experiment artifacts (regenerate with experiment_runner)
+artifacts/
 
 # IDE / OS
 .idea/

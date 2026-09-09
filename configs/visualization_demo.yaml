@@ -1,0 +1,16 @@
+# Fast canonical rollout for inspecting every visualization target.
+mpc_type: mpcc
+horizon: 4
+num_scenarios: 4
+dro_enabled: false
+rollout_steps: 4
+scenario_tag: visualization_demo
+
+# This deliberately disables SVG and enables GIF/RViz data. It exercises YAML
+# artifact inheritance in experiment_runner; CLI flags may explicitly override
+# any of these choices.
+artifact_write_visualization_svg: false
+artifact_write_visualization_gif: true
+artifact_gif_frame_stride: 1
+artifact_gif_playback_rate: 1.0
+artifact_write_rviz_replay: true

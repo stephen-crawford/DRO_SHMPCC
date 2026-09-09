@@ -5,9 +5,170 @@
 
 #include "reference_path.hpp"
 #include <algorithm>
+#include <Eigen/LU>
 #include <limits>
 
 namespace dro_mpc {
+
+namespace {
+
+constexpr double kGeometryEpsilon = 1e-9;
+
+double cross_2d(const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+    return a.x() * b.y() - a.y() * b.x();
+}
+
+struct CubicSegment {
+    Eigen::Vector2d a;
+    Eigen::Vector2d b;
+    Eigen::Vector2d c;
+    Eigen::Vector2d d;
+    double parameter_length = 0.0;
+
+    Eigen::Vector2d position(double u) const {
+        return ((d * u + c) * u + b) * u + a;
+    }
+
+    Eigen::Vector2d first_derivative(double u) const {
+        return (3.0 * d * u + 2.0 * c) * u + b;
+    }
+
+    Eigen::Vector2d second_derivative(double u) const {
+        return 6.0 * d * u + 2.0 * c;
+    }
+};
+
+struct GeometrySample {
+    Eigen::Vector2d position;
+    Eigen::Vector2d first_derivative;
+    Eigen::Vector2d second_derivative;
+};
+
+std::vector<Eigen::Vector2d> unique_waypoints(
+    const std::vector<Eigen::Vector2d>& waypoints, bool closed_loop
+) {
+    std::vector<Eigen::Vector2d> result;
+    result.reserve(waypoints.size());
+    for (const auto& waypoint : waypoints) {
+        if (result.empty() ||
+            (waypoint - result.back()).norm() > kGeometryEpsilon) {
+            result.push_back(waypoint);
+        }
+    }
+    if (closed_loop && result.size() > 1 &&
+        (result.front() - result.back()).norm() <= kGeometryEpsilon) {
+        result.pop_back();
+    }
+    return result;
+}
+
+std::vector<Eigen::Vector2d> resample_control_points(
+    const std::vector<Eigen::Vector2d>& knots,
+    double control_point_spacing,
+    bool closed_loop
+) {
+    if (!(control_point_spacing > kGeometryEpsilon) || knots.size() < 2) {
+        return knots;
+    }
+
+    const size_t segment_count = closed_loop ? knots.size() : knots.size() - 1;
+    std::vector<Eigen::Vector2d> controls;
+    controls.reserve(knots.size());
+    for (size_t i = 0; i < segment_count; ++i) {
+        const Eigen::Vector2d& start = knots[i];
+        const Eigen::Vector2d& end = knots[(i + 1) % knots.size()];
+        if (controls.empty()) controls.push_back(start);
+
+        const double length = (end - start).norm();
+        const int pieces = std::max(
+            1, static_cast<int>(std::ceil(length / control_point_spacing)));
+        for (int piece = 1; piece <= pieces; ++piece) {
+            // The closed path stores its seam implicitly; do not duplicate the
+            // first control as the final control.
+            if (closed_loop && i + 1 == segment_count && piece == pieces) {
+                continue;
+            }
+            controls.push_back(start + (end - start) *
+                (static_cast<double>(piece) / static_cast<double>(pieces)));
+        }
+    }
+    return controls;
+}
+
+std::vector<CubicSegment> make_cubic_segments(
+    const std::vector<Eigen::Vector2d>& knots, bool closed_loop
+) {
+    const int knot_count = static_cast<int>(knots.size());
+    const int segment_count = closed_loop ? knot_count : knot_count - 1;
+    if (knot_count < 2 || (closed_loop && knot_count < 3)) return {};
+
+    std::vector<double> h(segment_count);
+    for (int i = 0; i < segment_count; ++i) {
+        const int next = (i + 1) % knot_count;
+        h[i] = (knots[next] - knots[i]).norm();
+        if (!(h[i] > kGeometryEpsilon)) return {};
+    }
+
+    // Solve the natural (open) or periodic (closed) cubic-spline equations.
+    // This is a minimum-bending-energy interpolation in the chord-length
+    // parameter, giving C2 position/heading/curvature continuity.
+    Eigen::MatrixXd system = Eigen::MatrixXd::Zero(knot_count, knot_count);
+    Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(knot_count, 2);
+    if (closed_loop) {
+        for (int i = 0; i < knot_count; ++i) {
+            const int prev = (i + knot_count - 1) % knot_count;
+            const int next = (i + 1) % knot_count;
+            const double h_prev = h[prev];
+            const double h_next = h[i];
+            system(i, prev) += h_prev;
+            system(i, i) += 2.0 * (h_prev + h_next);
+            system(i, next) += h_next;
+            const Eigen::Vector2d value = 3.0 * (
+                (knots[next] - knots[i]) / h_next -
+                (knots[i] - knots[prev]) / h_prev);
+            rhs.row(i) = value.transpose();
+        }
+    } else {
+        system(0, 0) = 1.0;
+        system(knot_count - 1, knot_count - 1) = 1.0;
+        for (int i = 1; i < knot_count - 1; ++i) {
+            const double h_prev = h[i - 1];
+            const double h_next = h[i];
+            system(i, i - 1) = h_prev;
+            system(i, i) = 2.0 * (h_prev + h_next);
+            system(i, i + 1) = h_next;
+            const Eigen::Vector2d value = 3.0 * (
+                (knots[i + 1] - knots[i]) / h_next -
+                (knots[i] - knots[i - 1]) / h_prev);
+            rhs.row(i) = value.transpose();
+        }
+    }
+
+    const Eigen::MatrixXd second_coefficients = system.fullPivLu().solve(rhs);
+    if (!second_coefficients.allFinite()) return {};
+
+    std::vector<Eigen::Vector2d> c(knot_count);
+    for (int i = 0; i < knot_count; ++i) {
+        c[i] = second_coefficients.row(i).transpose();
+    }
+
+    std::vector<CubicSegment> segments;
+    segments.reserve(segment_count);
+    for (int i = 0; i < segment_count; ++i) {
+        const int next = (i + 1) % knot_count;
+        CubicSegment segment;
+        segment.a = knots[i];
+        segment.c = c[i];
+        segment.parameter_length = h[i];
+        segment.b = (knots[next] - knots[i]) / h[i] -
+            h[i] * (c[next] + 2.0 * c[i]) / 3.0;
+        segment.d = (c[next] - c[i]) / (3.0 * h[i]);
+        segments.push_back(segment);
+    }
+    return segments;
+}
+
+}  // namespace
 
 ReferencePath ReferencePath::create_straight(
     const Eigen::Vector2d& start,
@@ -120,6 +281,9 @@ ReferencePath ReferencePath::create_circle(
 
     double angle_span = end_angle - start_angle;
     path.total_length_ = std::abs(radius * angle_span);
+    const double turns = std::abs(angle_span) / (2.0 * M_PI);
+    path.closed_loop_ = turns >= 1.0 &&
+        std::abs(turns - std::round(turns)) <= 1e-9;
     double curvature = 1.0 / radius;
 
     path.points_.reserve(num_points);
@@ -169,6 +333,176 @@ ReferencePath ReferencePath::create_polyline(
     return path;
 }
 
+ReferencePath ReferencePath::create_waypoint_trajectory(
+    const std::vector<Eigen::Vector2d>& waypoints,
+    const WaypointTrajectoryOptions& options
+) {
+    const auto source_knots = unique_waypoints(waypoints, options.closed_loop);
+    const auto knots = resample_control_points(
+        source_knots, options.control_point_spacing, options.closed_loop);
+    if (knots.empty()) return ReferencePath();
+    if (knots.size() == 1 || (options.closed_loop && knots.size() < 3)) {
+        ReferencePath path = create_polyline(knots);
+        path.path_type_ = PathType::WAYPOINT_TRAJECTORY;
+        return path;
+    }
+
+    const auto segments = make_cubic_segments(knots, options.closed_loop);
+    if (segments.empty()) {
+        ReferencePath path = create_polyline(knots);
+        path.path_type_ = PathType::WAYPOINT_TRAJECTORY;
+        return path;
+    }
+
+    const double sample_spacing = std::max(1e-3, options.sample_spacing);
+    std::vector<GeometrySample> samples;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const CubicSegment& segment = segments[i];
+        const int steps = std::max(
+            1, static_cast<int>(std::ceil(segment.parameter_length / sample_spacing)));
+        for (int step = 0; step <= steps; ++step) {
+            if (!samples.empty() && step == 0) continue;
+            const double u = segment.parameter_length *
+                static_cast<double>(step) / static_cast<double>(steps);
+            samples.push_back({
+                segment.position(u), segment.first_derivative(u),
+                segment.second_derivative(u)});
+        }
+    }
+
+    ReferencePath path;
+    path.path_type_ = PathType::WAYPOINT_TRAJECTORY;
+    path.closed_loop_ = options.closed_loop;
+    path.points_.reserve(samples.size());
+    double arc_length = 0.0;
+    for (size_t i = 0; i < samples.size(); ++i) {
+        if (i > 0) {
+            arc_length += (samples[i].position - samples[i - 1].position).norm();
+        }
+
+        Eigen::Vector2d tangent = samples[i].first_derivative;
+        if (tangent.squaredNorm() <= kGeometryEpsilon * kGeometryEpsilon) {
+            if (i + 1 < samples.size()) {
+                tangent = samples[i + 1].position - samples[i].position;
+            } else if (i > 0) {
+                tangent = samples[i].position - samples[i - 1].position;
+            }
+        }
+
+        const double tangent_norm = tangent.norm();
+        const double derivative_norm = samples[i].first_derivative.norm();
+        const double heading = tangent_norm > kGeometryEpsilon
+            ? std::atan2(tangent.y(), tangent.x()) : 0.0;
+        const double curvature = derivative_norm > kGeometryEpsilon
+            ? cross_2d(samples[i].first_derivative,
+                       samples[i].second_derivative) /
+                std::pow(derivative_norm, 3)
+            : 0.0;
+        path.points_.emplace_back(
+            samples[i].position, heading,
+            std::isfinite(curvature) ? curvature : 0.0, arc_length);
+    }
+    path.total_length_ = arc_length;
+    return path;
+}
+
+ReferencePath ReferencePath::with_time_parameterization(
+    const TrajectoryTimingOptions& options
+) const {
+    ReferencePath result = *this;
+    result.has_timing_ = false;
+    result.total_duration_ = 0.0;
+    for (auto& point : result.points_) {
+        point.time = 0.0;
+        point.speed = 0.0;
+    }
+
+    if (result.points_.size() < 2 ||
+        !(options.nominal_speed > kGeometryEpsilon)) {
+        return result;
+    }
+
+    const size_t point_count = result.points_.size();
+    std::vector<double> speeds(point_count, options.nominal_speed);
+    const double max_lateral_acceleration =
+        std::max(0.0, options.max_lateral_acceleration);
+    const double max_angular_velocity =
+        std::max(0.0, options.max_angular_velocity);
+    for (size_t i = 0; i < point_count; ++i) {
+        const double curvature = std::abs(result.points_[i].curvature);
+        if (curvature <= kGeometryEpsilon) continue;
+        if (max_lateral_acceleration > 0.0) {
+            speeds[i] = std::min(
+                speeds[i], std::sqrt(max_lateral_acceleration / curvature));
+        }
+        if (max_angular_velocity > 0.0) {
+            speeds[i] = std::min(
+                speeds[i], max_angular_velocity / curvature);
+        }
+    }
+
+    const bool closed_loop = result.closed_loop_;
+    if (!closed_loop && options.initial_speed >= 0.0) {
+        speeds.front() = std::min(speeds.front(), options.initial_speed);
+    }
+
+    const double max_acceleration = std::max(0.0, options.max_acceleration);
+    const double max_deceleration = std::max(0.0, options.max_deceleration);
+    const auto constrain_forward = [&] {
+        if (!(max_acceleration > 0.0)) return;
+        for (size_t i = 1; i < point_count; ++i) {
+            const double ds = std::max(0.0,
+                result.points_[i].s - result.points_[i - 1].s);
+            const double reachable = std::sqrt(std::max(
+                0.0, speeds[i - 1] * speeds[i - 1] + 2.0 * max_acceleration * ds));
+            speeds[i] = std::min(speeds[i], reachable);
+        }
+    };
+    const auto constrain_backward = [&] {
+        if (!(max_deceleration > 0.0)) return;
+        for (size_t i = point_count - 1; i > 0; --i) {
+            const double ds = std::max(0.0,
+                result.points_[i].s - result.points_[i - 1].s);
+            const double reachable = std::sqrt(std::max(
+                0.0, speeds[i] * speeds[i] + 2.0 * max_deceleration * ds));
+            speeds[i - 1] = std::min(speeds[i - 1], reachable);
+        }
+    };
+
+    constrain_forward();
+    constrain_backward();
+    if (closed_loop) {
+        // The final sample duplicates the first point.  Repeating the two
+        // passes after tying their speeds removes a discontinuity at the seam.
+        for (int pass = 0; pass < 2; ++pass) {
+            const double seam_speed = std::min(speeds.front(), speeds.back());
+            speeds.front() = seam_speed;
+            speeds.back() = seam_speed;
+            constrain_forward();
+            constrain_backward();
+        }
+        const double seam_speed = std::min(speeds.front(), speeds.back());
+        speeds.front() = seam_speed;
+        speeds.back() = seam_speed;
+    }
+
+    double time = 0.0;
+    result.points_.front().speed = speeds.front();
+    result.points_.front().time = time;
+    for (size_t i = 1; i < point_count; ++i) {
+        const double ds = std::max(0.0,
+            result.points_[i].s - result.points_[i - 1].s);
+        const double average_speed = std::max(
+            kGeometryEpsilon, 0.5 * (speeds[i - 1] + speeds[i]));
+        time += ds / average_speed;
+        result.points_[i].speed = speeds[i];
+        result.points_[i].time = time;
+    }
+    result.total_duration_ = time;
+    result.has_timing_ = true;
+    return result;
+}
+
 PathPoint ReferencePath::get_point_at(double s) const {
     if (points_.empty()) {
         return PathPoint();
@@ -192,7 +526,11 @@ PathPoint ReferencePath::get_point_at(double s) const {
     const PathPoint& p2 = *it;
     const PathPoint& p1 = *(it - 1);
 
-    double t = (s - p1.s) / (p2.s - p1.s + 1e-9);
+    const double segment_length = p2.s - p1.s;
+    if (segment_length <= kGeometryEpsilon) {
+        return p2;
+    }
+    const double t = std::clamp((s - p1.s) / segment_length, 0.0, 1.0);
     return interpolate(p1, p2, t);
 }
 
@@ -202,6 +540,14 @@ Eigen::Vector2d ReferencePath::get_position_at(double s) const {
 
 double ReferencePath::get_heading_at(double s) const {
     return get_point_at(s).heading;
+}
+
+double ReferencePath::get_time_at(double s) const {
+    return get_point_at(s).time;
+}
+
+double ReferencePath::get_speed_at(double s) const {
+    return get_point_at(s).speed;
 }
 
 double ReferencePath::find_closest_point(const Eigen::Vector2d& position) const {
@@ -268,11 +614,21 @@ Eigen::Vector2d ReferencePath::get_position_at_fraction(double fraction) const {
     return get_position_at(fraction * total_length_);
 }
 
+double ReferencePath::wrap_arc_length(double s) const {
+    if (!(total_length_ > kGeometryEpsilon)) return 0.0;
+    if (!closed_loop_) return std::clamp(s, 0.0, total_length_);
+    double wrapped = std::fmod(s, total_length_);
+    if (wrapped < 0.0) wrapped += total_length_;
+    return wrapped;
+}
+
 PathPoint ReferencePath::interpolate(const PathPoint& p1, const PathPoint& p2, double t) const {
     PathPoint result;
     result.position = (1 - t) * p1.position + t * p2.position;
     result.s = (1 - t) * p1.s + t * p2.s;
     result.curvature = (1 - t) * p1.curvature + t * p2.curvature;
+    result.time = (1 - t) * p1.time + t * p2.time;
+    result.speed = (1 - t) * p1.speed + t * p2.speed;
 
     // Interpolate heading carefully (handle wrap-around)
     double h1 = p1.heading;

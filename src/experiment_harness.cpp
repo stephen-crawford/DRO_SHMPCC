@@ -2,11 +2,12 @@
  * @file experiment_harness.cpp
  * @brief Canonical rollout runner, obstacle simulator, stats, CSV writer.
  *
- * ALL rollout logic lives here. The paper_experiment_runner configures
- * ExperimentConfig and calls run_experiment_rollout().
+ * ALL rollout logic lives here. experiment_runner configures ExperimentConfig
+ * and calls run_experiment_rollout().
  */
 
 #include "experiment_harness.hpp"
+#include "experiment_artifacts_internal.hpp"
 #include "experiment_config_yaml.hpp"
 #include "mpc_controller.hpp"
 #include "collision_constraints.hpp"
@@ -22,6 +23,7 @@
 #include <iomanip>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace dro_mpc {
@@ -82,6 +84,27 @@ EnvironmentExperimentConfig default_environment_experiment_config() {
     return cached_default_experiment_config().environment;
 }
 
+Eigen::Vector2d rollout_tracking_goal(
+    const ReferencePath& path,
+    double path_progress,
+    double reference_velocity,
+    int horizon,
+    double dt
+) {
+    if (!path.is_closed_loop() || !(path.total_length() > 0.0)) {
+        return path.get_position_at(path.total_length());
+    }
+
+    const double horizon_distance = std::max(0.0, reference_velocity) *
+        std::max(1, horizon) * std::max(0.0, dt);
+    // Keep a nonzero geometric target when starting at rest; otherwise a loop
+    // would have the same point-goal pathology as an endpoint target.
+    const double lookahead_distance = std::max(0.5, horizon_distance);
+    const double target_s = path.wrap_arc_length(
+        std::max(0.0, path_progress) + lookahead_distance);
+    return path.get_position_at(target_s);
+}
+
 // ============================================================================
 // ObstacleSim
 // ============================================================================
@@ -109,7 +132,11 @@ void ObstacleSim::maybe_switch(double switch_prob, std::mt19937& rng) {
 // CSV Writer
 // ============================================================================
 
-CSVWriter::CSVWriter(const std::string& filepath) : ofs_(filepath) {}
+CSVWriter::CSVWriter(const std::string& filepath) : ofs_(filepath) {
+    if (!ofs_) {
+        throw std::runtime_error("could not open CSV output '" + filepath + "'");
+    }
+}
 
 CSVWriter::~CSVWriter() {
     if (ofs_.is_open()) ofs_.close();
@@ -117,13 +144,16 @@ CSVWriter::~CSVWriter() {
 
 void CSVWriter::write_header() {
     ofs_ << "seed,plant_seed,predictor_seed,controller_seed,method,scenario,S,eps_wass,sigma,shift_rho,shift_boost,ground_cost,"
+         << "risk_scoring_model,configured_risk_measure,effective_risk_measure,"
          << "collision,collision_step,min_clearance,min_clearance_step,"
          << "total_progress,control_effort,constraint_active_count,"
          << "missed_mode_steps,total_steps,"
-         << "avg_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,"
-         << "total_dro_injected,avg_safe_horizon,clearance_5pct,"
+         << "avg_dro_risk_ms,avg_solve_ms,p50_solve_ms,p95_solve_ms,max_solve_ms,"
+         << "safe_horizon_decisions,certified_decisions,certificate_rate,"
+         << "avg_certified_horizon,clearance_5pct,"
          << "mean_contouring_err,mean_velocity_err,mean_lag_err,config_source,"
-         << "qp_backend,qp_solver_identity\n";
+         << "qp_backend,qp_solver_identity,mode_selection_policy,"
+         << "requested_random_mode_count,effective_available_mode_counts,artifact_directory\n";
 }
 
 void CSVWriter::write_record(const RolloutRecord& rec) {
@@ -132,19 +162,28 @@ void CSVWriter::write_record(const RolloutRecord& rec) {
          << std::fixed << std::setprecision(4)
          << rec.eps_wass << "," << rec.sigma << ","
          << rec.shift_rho << "," << rec.shift_boost << "," << rec.ground_cost << ","
+         << rec.risk_scoring_model << "," << rec.configured_risk_measure << ","
+         << rec.effective_risk_measure << ","
          << (rec.collision ? 1 : 0) << "," << rec.collision_step << ","
          << std::setprecision(4) << rec.min_clearance << "," << rec.min_clearance_step << ","
          << std::setprecision(4) << rec.total_progress << "," << rec.control_effort << ","
          << rec.constraint_active_count << ","
          << rec.missed_mode_steps << "," << rec.total_steps << ","
-         << std::setprecision(4) << rec.avg_solve_ms << "," << rec.p50_solve_ms << ","
+         << std::setprecision(4) << rec.avg_dro_risk_ms << "," << rec.avg_solve_ms << "," << rec.p50_solve_ms << ","
          << rec.p95_solve_ms << "," << rec.max_solve_ms << ","
-         << rec.total_dro_injected << ","
-         << std::setprecision(4) << rec.avg_safe_horizon << "," << rec.clearance_5pct << ","
+         << rec.safe_horizon_decisions << "," << rec.certified_decisions << ","
+         << std::setprecision(4) << rec.certificate_rate << ","
+         << rec.avg_certified_horizon << "," << rec.clearance_5pct << ","
          << rec.mean_contouring_error() << "," << rec.mean_velocity_error() << ","
          << (rec.metric_steps > 0 ? std::sqrt(rec.sum_lag_sq / rec.metric_steps) : 0.0) << ","
          << rec.config_source << "," << rec.qp_backend << ","
-         << rec.qp_solver_identity << "\n";
+         << rec.qp_solver_identity << "," << rec.mode_selection_policy << ","
+         << rec.requested_random_mode_count << ",";
+    for (std::size_t i = 0; i < rec.effective_available_mode_counts.size(); ++i) {
+        if (i != 0) ofs_ << ";";
+        ofs_ << rec.effective_available_mode_counts[i];
+    }
+    ofs_ << "," << rec.artifact_directory << "\n";
 }
 
 void CSVWriter::flush() {
@@ -384,6 +423,15 @@ RolloutRecord run_experiment_rollout(
     rec.shift_rho = config.obstacles.shift.psi;
     rec.shift_boost = config.obstacles.shift.dangerous_boost;
     rec.ground_cost = ground_cost_name(config.dro.solver.ground_cost_type);
+    rec.risk_scoring_model = risk_scoring_model_name(
+        config.dro.solver.radius_calibration.risk_scoring_model);
+    rec.configured_risk_measure = risk_measure_name(
+        config.dro.solver.radius_calibration.risk_measure);
+    rec.effective_risk_measure = risk_measure_name(resolve_risk_scoring_measure(
+        config.dro.solver.radius_calibration.risk_scoring_model,
+        config.dro.solver.radius_calibration.risk_measure));
+    rec.mode_selection_policy = mode_selection_policy_name(config.obstacles);
+    rec.requested_random_mode_count = config.obstacles.num_modes;
 
     auto mode_models = create_obstacle_mode_models(config.mpc.dt);
 
@@ -399,35 +447,94 @@ RolloutRecord run_experiment_rollout(
     ReferencePath ref_path = config.environment.custom_ref_path.has_value()
         ? config.environment.custom_ref_path.value()
         : env_setup.path;
+    EgoState ego = config.environment.custom_initial_ego.value_or(env_setup.initial_ego);
+
+    // Keep geometry construction vehicle-agnostic, then apply the current
+    // experiment's actual dynamic limits to obtain a time/speed profile.  This
+    // means YAML changes to velocity, acceleration, omega, v_ref, or the
+    // optional lateral-acceleration cap all reach trajectory execution.
+    TrajectoryTimingOptions timing;
+    timing.nominal_speed = std::max(0.0, std::min(
+        metrics_v_ref, config.mpc.ego.dynamics.max_velocity));
+    timing.initial_speed = std::max(0.0, ego.v);
+    timing.max_acceleration = config.mpc.ego.dynamics.max_acceleration;
+    timing.max_deceleration = std::max(
+        0.0, -config.mpc.ego.dynamics.min_acceleration);
+    timing.max_angular_velocity = config.mpc.ego.dynamics.max_omega;
+    timing.max_lateral_acceleration =
+        config.environment.path_max_lateral_acceleration > 0.0
+            ? config.environment.path_max_lateral_acceleration
+            : timing.nominal_speed * std::max(0.0, timing.max_angular_velocity);
+    ref_path = ref_path.with_time_parameterization(timing);
     controller.set_reference_path(ref_path);
     double path_length = ref_path.total_length();
-    Eigen::Vector2d goal = ref_path.get_position_at(path_length);
 
-    EgoState ego = config.environment.custom_initial_ego.value_or(env_setup.initial_ego);
     EgoDynamics dynamics(config.mpc.ego.dynamics, dt);
     double collision_radius = mpc_cfg.combined_radius();
     double path_progress = 0.0;
 
     auto obs_sims = construct_obstacles(
         config.obstacles, env_setup.initial_obs, ref_path, mode_models, plant_rng);
+    rec.effective_available_mode_counts.reserve(obs_sims.size());
+    for (const auto& obstacle : obs_sims) {
+        rec.effective_available_mode_counts.push_back(
+            static_cast<int>(obstacle.available_modes.size()));
+    }
     const int n_obs = static_cast<int>(obs_sims.size());
     const int per_class = std::max(1, config.obstacles.obstacles_per_class);
+
+    detail::RolloutTrace trace;
+    trace.route = ref_path;
+    trace.road_centerlines = build_environment_road_centerlines(
+        config.environment.type, config.environment);
+    auto append_trace_frame = [&](int step, double minimum_clearance,
+                                  double ambiguity_radius, double solve_time,
+                                  bool collision) {
+        detail::RolloutTraceFrame frame;
+        frame.step = step;
+        frame.time_seconds = static_cast<double>(step) * dt;
+        frame.ego = ego;
+        frame.path_progress = path_progress;
+        frame.minimum_clearance = std::isfinite(minimum_clearance)
+            ? minimum_clearance : 0.0;
+        frame.ambiguity_radius = ambiguity_radius;
+        frame.solve_time_ms = 1000.0 * solve_time;
+        frame.collision = collision;
+        frame.obstacles.reserve(obs_sims.size());
+        frame.obstacle_modes.reserve(obs_sims.size());
+        for (const auto& obstacle : obs_sims) {
+            frame.obstacles.push_back(obstacle.state);
+            frame.obstacle_modes.push_back(obstacle.current_mode);
+        }
+        trace.frames.push_back(std::move(frame));
+    };
 
     for (int i = 0; i < n_obs; ++i) {
         int obs_class = i / per_class;
         controller.initialize_obstacle(i, obs_class, obs_sims[i].mode_models);
     }
 
-    for (int t = 0; t < 5; ++t) {
-        for (int oi = 0; oi < n_obs; ++oi) {
-            int obs_class = oi / per_class;
-            controller.update_mode_observation(
-                oi, obs_class, obs_sims[oi].current_mode, t);
-        }
+    // Seed each class with the one mode observation actually available at
+    // rollout start.  Repeating the same state five times fabricated evidence
+    // for the categorical belief and caused calibrated DRO radii to shrink as
+    // though those copies were independent samples.
+    for (int oi = 0; oi < n_obs; ++oi) {
+        const int obs_class = oi / per_class;
+        controller.update_mode_observation(
+            oi, obs_class, obs_sims[oi].current_mode, /*timestep=*/0);
     }
+    double initial_minimum_clearance = std::numeric_limits<double>::infinity();
+    for (const auto& obstacle : obs_sims) {
+        initial_minimum_clearance = std::min(
+            initial_minimum_clearance,
+            (ego.position() - obstacle.state.position()).norm());
+    }
+    append_trace_frame(/*step=*/0, initial_minimum_clearance,
+                       /*ambiguity_radius=*/0.0, /*solve_time=*/0.0,
+                       /*collision=*/false);
 
     std::vector<double> clearances;
-    std::vector<int> safe_horizons;
+    std::vector<int> certified_horizons;
     double control_effort = 0.0;
     int constraint_active_total = 0;
 
@@ -455,8 +562,12 @@ RolloutRecord run_experiment_rollout(
             apply_distribution_shift(config.obstacles.shift, obs_sims[oi], plant_rng);
 
             int obs_class = oi / per_class;
+            // Timestep zero is the single real initial observation above, so
+            // subsequent plant observations advance naturally from one.  The
+            // previous +5 offset only existed to follow five synthetic
+            // startup copies.
             controller.update_mode_observation(
-                oi, obs_class, obs_sims[oi].current_mode, step + 5);
+                oi, obs_class, obs_sims[oi].current_mode, step + 1);
 
             if (config.rollout.step_callback) {
                 config.rollout.step_callback(
@@ -471,13 +582,30 @@ RolloutRecord run_experiment_rollout(
             obstacles[oi] = obs_sims[oi].state;
         }
 
+        const double trajectory_speed = ref_path.has_time_parameterization()
+            ? ref_path.get_speed_at(path_progress) : metrics_v_ref;
+        const Eigen::Vector2d goal = rollout_tracking_goal(
+            ref_path, path_progress, trajectory_speed,
+            config.mpc.horizon, config.mpc.dt);
         auto mpc_result = controller.solve(
-            ego, obstacles, goal, metrics_v_ref, path_progress, path_length);
+            ego, obstacles, goal, trajectory_speed, path_progress, path_length);
         rec.eps_wass = mpc_result.ambiguity_radius_used;
         rec.solve_times_raw.push_back(mpc_result.solve_time);
-        rec.total_dro_injected += mpc_result.num_dro_injected;
-        if (mpc_result.safe_horizon > 0)
-            safe_horizons.push_back(mpc_result.safe_horizon);
+        rec.dro_risk_times_raw.push_back(mpc_result.dro_risk_evaluation_time);
+        if (!controller.last_dro_results().empty()) {
+            rec.effective_risk_measure = risk_measure_name(
+                controller.last_dro_results().begin()->second
+                    .risk_diagnostics.effective_measure);
+        }
+        if (mpc_result.certificate_status !=
+            SafeHorizonCertificateStatus::NOT_REQUESTED) {
+            ++rec.safe_horizon_decisions;
+        }
+        if (mpc_result.certificate_status ==
+            SafeHorizonCertificateStatus::CERTIFIED) {
+            ++rec.certified_decisions;
+            certified_horizons.push_back(mpc_result.certified_horizon);
+        }
 
         constraint_active_total +=
             static_cast<int>(mpc_result.active_scenarios.size());
@@ -540,7 +668,9 @@ RolloutRecord run_experiment_rollout(
             const Eigen::Vector2d normal(-std::sin(pp.heading), std::cos(pp.heading));
             const double e_c = d.dot(normal);
             const double e_l = d.dot(tangent);
-            const double v_err = ego.v - metrics_v_ref;
+            const double profile_speed = ref_path.has_time_parameterization()
+                ? ref_path.get_speed_at(s_closest) : metrics_v_ref;
+            const double v_err = ego.v - profile_speed;
             rec.sum_contouring_sq += e_c * e_c;
             rec.sum_lag_sq += e_l * e_l;
             rec.sum_velocity_err_sq += v_err * v_err;
@@ -562,6 +692,7 @@ RolloutRecord run_experiment_rollout(
         // This makes collision and completion accounting agree with the state
         // passed to the next controller solve.
         path_progress = ref_path.find_closest_point(ego.position(), path_progress);
+        double step_minimum_clearance = std::numeric_limits<double>::infinity();
         for (int oi = 0; oi < n_obs; ++oi) {
             bool collision_this_obs = false;
             double min_dist_this_obs = std::numeric_limits<double>::infinity();
@@ -584,6 +715,8 @@ RolloutRecord run_experiment_rollout(
                 collision_this_obs = min_dist_this_obs < collision_radius;
             }
             clearances.push_back(min_dist_this_obs);
+            step_minimum_clearance = std::min(
+                step_minimum_clearance, min_dist_this_obs);
             if (min_dist_this_obs < rec.min_clearance) {
                 rec.min_clearance = min_dist_this_obs;
                 rec.min_clearance_step = step + 1;
@@ -594,6 +727,9 @@ RolloutRecord run_experiment_rollout(
             }
         }
         rec.total_steps++;
+        append_trace_frame(step + 1, step_minimum_clearance,
+                           mpc_result.ambiguity_radius_used,
+                           mpc_result.solve_time, rec.collision);
 
         if (config.environment.path_completion_termination &&
             path_progress >=
@@ -625,10 +761,20 @@ RolloutRecord run_experiment_rollout(
         rec.max_solve_ms = times_ms.back();
     }
 
-    if (!safe_horizons.empty()) {
-        rec.avg_safe_horizon =
-            std::accumulate(safe_horizons.begin(), safe_horizons.end(), 0.0) /
-            safe_horizons.size();
+    if (!rec.dro_risk_times_raw.empty()) {
+        rec.avg_dro_risk_ms = 1000.0 * std::accumulate(
+            rec.dro_risk_times_raw.begin(), rec.dro_risk_times_raw.end(), 0.0) /
+            rec.dro_risk_times_raw.size();
+    }
+
+    if (!certified_horizons.empty()) {
+        rec.avg_certified_horizon =
+            std::accumulate(certified_horizons.begin(), certified_horizons.end(), 0.0) /
+            certified_horizons.size();
+    }
+    if (rec.safe_horizon_decisions > 0) {
+        rec.certificate_rate = static_cast<double>(rec.certified_decisions) /
+            rec.safe_horizon_decisions;
     }
 
     if (!clearances.empty()) {
@@ -637,6 +783,11 @@ RolloutRecord run_experiment_rollout(
         int idx_5pct =
             std::max(0, static_cast<int>(0.05 * sorted_clear.size()) - 1);
         rec.clearance_5pct = sorted_clear[idx_5pct];
+    }
+
+    if (config.artifacts.enabled()) {
+        rec.artifact_directory = detail::write_rollout_artifacts(
+            config, rec, seeds, trace);
     }
 
     return rec;
@@ -727,8 +878,9 @@ EnvironmentSetup create_environment(
 }
 
 ReferencePath setup_mpcc_path(MPCController& controller) {
-    ReferencePath path = ReferencePath::create_s_curve(
-        S_CURVE_LENGTH, S_CURVE_AMPLITUDE, S_CURVE_POINTS);
+    const EnvironmentExperimentConfig config =
+        default_environment_experiment_config();
+    ReferencePath path = build_environment_reference_path(config.type, config);
     controller.set_reference_path(path);
     return path;
 }
@@ -736,9 +888,7 @@ ReferencePath setup_mpcc_path(MPCController& controller) {
 RolloutResult run_single_rollout_env(
     ExperimentConfig cfg,
     unsigned seed,
-    const EnvironmentSetup& env_setup,
-    SamplingBaseline,
-    int forced_safe_horizon
+    const EnvironmentSetup& env_setup
 ) {
     // An explicit YAML/in-memory mode list takes precedence over an
     // environment's legacy suggestion.
@@ -752,11 +902,6 @@ RolloutResult run_single_rollout_env(
     if (env_setup.path.total_length() > 0.0) {
         cfg.environment.custom_ref_path = env_setup.path;
     }
-    cfg.mpc.constraints.forced_safe_horizon = forced_safe_horizon;
-    if (forced_safe_horizon >= 0) {
-        cfg.mpc.safe_horizon_enabled = true;
-    }
-
     return run_configured_rollout(std::move(cfg), seed);
 }
 

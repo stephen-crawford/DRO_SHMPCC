@@ -254,7 +254,7 @@ std::vector<CollisionConstraint> filter_constraints_by_clearance(
  *                          step. The caller derives the growth from the actual speed
  *                          bound (2 * v_max * dt per step). Default 0 reproduces the
  *                          previous constant-ball behaviour exactly.
- * @return The non-dominated scenario subset (injected scenarios always retained).
+ * @return The non-dominated subset of the supplied sampled scenarios.
  */
 std::vector<Scenario> prune_dominated_scenarios(
     const std::vector<Scenario>& scenarios,

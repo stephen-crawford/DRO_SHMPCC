@@ -1,0 +1,8 @@
+# Fast overlay for verifying the canonical experiment/artifact workflow.
+# All unspecified settings inherit from configs/default.yaml.
+mpc_type: mpcc
+horizon: 8
+num_scenarios: 8
+dro_enabled: false
+rollout_steps: 12
+scenario_tag: quickstart

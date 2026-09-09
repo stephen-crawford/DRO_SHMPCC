@@ -1,6 +1,6 @@
 /**
  * @file types.hpp
- * @brief Core data structures for Adaptive Scenario-Based MPC.
+ * @brief Core data structures for scenario MPC.
  *
  * Following the mathematical formulation:
  * - Section 2: State Representations
@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <cmath>
+#include <stdexcept>
 
 namespace dro_mpc {
 
@@ -194,7 +195,8 @@ struct ModeHistory {
     int obstacle_class_id = 0;                          // Class identifier (shared across obstacles)
     std::map<std::string, ModeModel> available_modes;   // Mode ID to ModeModel
     std::vector<std::pair<int, std::string>> observed_modes;  // (timestep, mode_id)
-    int max_history_length = 100;                       // Maximum history length
+    /// Positive values keep a rolling window; -1 retains all observations.
+    int max_history_length = -1;
 
     ModeHistory() : obstacle_id(0) {}
     ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes,
@@ -205,11 +207,33 @@ struct ModeHistory {
     /// Record a mode observation at the given timestep
     void record_observation(int timestep, const std::string& mode_id) {
         observed_modes.emplace_back(timestep, mode_id);
-        // Trim history if too long
-        if (static_cast<int>(observed_modes.size()) > max_history_length) {
+        // Only a positive value enables a rolling window.  In particular, -1
+        // is the documented "retain all" setting rather than an implicit
+        // horizon-dependent cap.
+        if (max_history_length > 0 &&
+            static_cast<int>(observed_modes.size()) > max_history_length) {
             observed_modes.erase(observed_modes.begin(),
             observed_modes.begin() + (observed_modes.size() - max_history_length));
         }
+    }
+
+    /// Conservative amount of independent-looking evidence available for an
+    /// ambiguity-radius calibration.  Repeated reports of a held mode are one
+    /// mode episode, not fresh IID categorical observations.  This deliberately
+    /// under-counts an unchanged mode after a possible switch, which is safer
+    /// than shrinking a concentration radius from temporally correlated data.
+    int ambiguity_radius_sample_count() const noexcept {
+        if (observed_modes.empty()) return 0;
+
+        int episodes = 1;
+        const std::string* previous_mode = &observed_modes.front().second;
+        for (std::size_t i = 1; i < observed_modes.size(); ++i) {
+            if (observed_modes[i].second != *previous_mode) {
+                ++episodes;
+                previous_mode = &observed_modes[i].second;
+            }
+        }
+        return episodes;
     }
 
     /// Count occurrences of each mode in history
@@ -345,19 +369,87 @@ struct CollisionConstraint {
 /**
  * @brief Result from MPC optimization.
  */
+enum class SupportCapStatus {
+    /// No SQP iterate was available for support accounting.
+    NOT_EVALUATED,
+    /// The union of observed support scenarios did not exceed the configured cap.
+    WITHIN_LIMIT,
+    /// The union of observed support scenarios exceeded the configured cap.
+    SUPPORT_EXCEEDED,
+};
+
+/**
+ * @brief Whether this solve produced a usable Safe-Horizon certificate.
+ *
+ * The support-cap status alone is insufficient: a certificate also requires a
+ * Safe-Horizon problem, enough independently drawn scenarios, and a returned
+ * plan that satisfies the sampled constraints.
+ */
+enum class SafeHorizonCertificateStatus {
+    NOT_REQUESTED,
+    INSUFFICIENT_SCENARIOS,
+    SUPPORT_NOT_EVALUATED,
+    SUPPORT_EXCEEDED,
+    PLAN_INFEASIBLE,
+    CERTIFIED,
+};
+
+inline const char* safe_horizon_certificate_status_name(
+    SafeHorizonCertificateStatus status
+) {
+    switch (status) {
+        case SafeHorizonCertificateStatus::NOT_REQUESTED:
+            return "not_requested";
+        case SafeHorizonCertificateStatus::INSUFFICIENT_SCENARIOS:
+            return "insufficient_scenarios";
+        case SafeHorizonCertificateStatus::SUPPORT_NOT_EVALUATED:
+            return "support_not_evaluated";
+        case SafeHorizonCertificateStatus::SUPPORT_EXCEEDED:
+            return "support_exceeded";
+        case SafeHorizonCertificateStatus::PLAN_INFEASIBLE:
+            return "plan_infeasible";
+        case SafeHorizonCertificateStatus::CERTIFIED:
+            return "certified";
+    }
+    return "unknown";
+}
+
 struct MPCResult {
     bool success;                           // Whether optimization succeeded
     std::vector<EgoState> ego_trajectory;   // Planned ego states over horizon
     std::vector<EgoInput> control_inputs;   // Planned control inputs
-    std::vector<int> active_scenarios;      // Scenarios with binding constraints
+    /// Scenarios binding or violated on the returned trajectory only.
+    std::vector<int> active_scenarios;
+    /// Sorted unique union of scenarios binding or violated over SQP iterates.
+    /// This is the conservative online support estimate used by Safe-Horizon MPC.
+    std::vector<int> support_scenarios;
+    int support_size = 0;                   // support_scenarios.size()
+    int support_limit = -1;                 // configured total support cap
+    bool support_cap_satisfied = false;     // support_size <= support_limit
+    SupportCapStatus support_cap_status = SupportCapStatus::NOT_EVALUATED;
+    /// SQP iterates plus the final returned-plan verification included above.
+    int support_iterations_evaluated = 0;
+    /// Number of joint scenarios used to form this decision problem.
+    int sampled_scenarios = 0;
+    /// Scenario-theoretic minimum for the configured support cap; -1 outside SH.
+    int required_scenarios = -1;
+    /// Whether sampled_scenarios meets required_scenarios for this solve.
+    bool sample_count_sufficient = false;
+    /// Whether the returned plan satisfies the sampled collision constraints.
+    bool sampled_constraints_satisfied = false;
+    SafeHorizonCertificateStatus certificate_status =
+        SafeHorizonCertificateStatus::NOT_REQUESTED;
     double solve_time = 0.0;                // Optimization solve time [s]
     double cost = std::numeric_limits<double>::infinity();  // Optimal cost value
-    int safe_horizon = -1;              // Truncated safe horizon used (-1 = full)
+
+    /// Complete horizon covered by a valid Safe-Horizon certificate; -1 otherwise.
+    int certified_horizon = -1;
     double constraint_construction_time = 0.0;  // Time for constraint building [s]
     double qp_solve_time = 0.0;                 // Time for QP/SQP solve [s]
-    int num_dro_injected = 0;           // Always 0; DRO now resamples from q* only
     /// Largest ambiguity radius used across obstacles during this solve.
     double ambiguity_radius_used = 0.0;
+    /// Sum of per-obstacle risk-vector evaluation times during this solve [s].
+    double dro_risk_evaluation_time = 0.0;
 
     MPCResult() : success(false) {}
 
@@ -479,6 +571,111 @@ enum class DRORiskMeasure {
     JOINT_VAR,       // joint-horizon VaR of Euclidean collision over the whole horizon (MC)
     JOINT_CVAR       // joint-horizon CVaR of Euclidean collision over the whole horizon (MC)
 };
+
+/**
+ * @brief Named risk-score profiles for separating ambiguity geometry from risk fidelity.
+ *
+ * The Wasserstein ground cost D and the per-mode score r are deliberately
+ * independent: D must be a metric, while r may use a non-metric collision
+ * functional.  These profiles select existing DRORiskMeasure implementations
+ * without changing D or the ambiguity-radius calibration.
+ *
+ * INHERIT_RISK_MEASURE is the non-switching default: use the configured
+ * `risk_measure` exactly. Held-mode estimators are rejected for a Markov
+ * transition matrix rather than being silently replaced by a different
+ * estimator.
+ */
+enum class DRORiskScoringModel {
+    INHERIT_RISK_MEASURE = 0,
+    CERTIFIED_SURROGATE = 2,
+    EUCLIDEAN_BONFERRONI_VAR = 3,
+    EUCLIDEAN_JOINT_VAR = 4,
+    EUCLIDEAN_JOINT_CVAR = 5
+};
+
+/**
+ * @brief Theoretical/computational properties of the effective risk functional.
+ *
+ * `population_joint_var_upper_bound` describes the ideal population
+ * functional; a finite Monte-Carlo estimate still has sampling error whenever
+ * `uses_finite_sampling` is true.
+ */
+struct DRORiskScoringProperties {
+    bool evaluates_true_euclidean_violation = false;
+    bool covers_joint_horizon = false;
+    bool supports_mode_switching = false;
+    bool population_joint_var_upper_bound = false;
+    bool coherent_joint_risk = false;
+    bool uses_finite_sampling = false;
+};
+
+/// Resolve a named scoring profile to an existing risk-measure implementation.
+inline DRORiskMeasure resolve_risk_scoring_measure(
+    DRORiskScoringModel model,
+    DRORiskMeasure configured_measure
+) {
+    switch (model) {
+        case DRORiskScoringModel::CERTIFIED_SURROGATE:
+            return DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+        case DRORiskScoringModel::EUCLIDEAN_BONFERRONI_VAR:
+            return DRORiskMeasure::BONFERRONI_VAR;
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_VAR:
+            return DRORiskMeasure::JOINT_VAR;
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR:
+            return DRORiskMeasure::JOINT_CVAR;
+        case DRORiskScoringModel::INHERIT_RISK_MEASURE:
+            return configured_measure;
+    }
+    throw std::invalid_argument("unknown risk_scoring_model");
+}
+
+inline bool is_valid_risk_scoring_model(DRORiskScoringModel model) noexcept {
+    switch (model) {
+        case DRORiskScoringModel::INHERIT_RISK_MEASURE:
+        case DRORiskScoringModel::CERTIFIED_SURROGATE:
+        case DRORiskScoringModel::EUCLIDEAN_BONFERRONI_VAR:
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_VAR:
+        case DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR:
+            return true;
+    }
+    return false;
+}
+
+/// Describe the effective estimator, not the requested profile alias.
+inline DRORiskScoringProperties risk_scoring_properties(
+    DRORiskMeasure measure
+) {
+    switch (measure) {
+        case DRORiskMeasure::SURROGATE_VAR_BONFERRONI:
+            return {/*true Euclidean=*/false, /*joint horizon=*/true,
+                    /*switching=*/false, /*population bound=*/true,
+                    /*coherent=*/false, /*sampling=*/false};
+        case DRORiskMeasure::BONFERRONI_VAR:
+            return {/*true Euclidean=*/true, /*joint horizon=*/true,
+                    /*switching=*/false, /*population bound=*/true,
+                    /*coherent=*/false, /*sampling=*/true};
+        case DRORiskMeasure::MIXTURE_VAR:
+            return {/*true Euclidean=*/false, /*joint horizon=*/true,
+                    /*switching=*/true, /*population bound=*/false,
+                    /*coherent=*/false, /*sampling=*/true};
+        case DRORiskMeasure::MIXTURE_CVAR:
+            return {/*true Euclidean=*/false, /*joint horizon=*/true,
+                    /*switching=*/true, /*population bound=*/false,
+                    /*coherent=*/true, /*sampling=*/true};
+        case DRORiskMeasure::JOINT_VAR:
+            return {/*true Euclidean=*/true, /*joint horizon=*/true,
+                    /*switching=*/true, /*population bound=*/false,
+                    /*coherent=*/false, /*sampling=*/true};
+        case DRORiskMeasure::JOINT_CVAR:
+            return {/*true Euclidean=*/true, /*joint horizon=*/true,
+                    /*switching=*/true, /*population bound=*/false,
+                    /*coherent=*/true, /*sampling=*/true};
+        case DRORiskMeasure::SURROGATE_VAR:
+        case DRORiskMeasure::SURROGATE_CVAR:
+        default:
+            return {};
+    }
+}
 
 /*
  * MIXTURE_* -- why it exists, and what it fixes.

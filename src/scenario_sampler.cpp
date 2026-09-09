@@ -137,7 +137,6 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         /*predict_before_first_sample=*/true
     );
 
-    // Track which mode was used most (for trajectory labeling)
     std::map<std::string, int> mode_counts;
     for (const auto& mode_id : modes) {
         mode_counts[mode_id] = 0;
@@ -164,10 +163,11 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         steps.emplace_back(k + 1, x.head<2>(), state_covariance.block<2, 2>(0, 0));
 
     }
-
-    // Label trajectory with most frequent mode
-    std::string dominant_mode;
-    int max_count = 0;
+    // ObstacleTrajectory stores one label, while a Markov rollout can use
+    // several modes.  Preserve the most-used mode as its representative label
+    // so diagnostics, logging, and mode-distribution checks remain meaningful.
+    std::string dominant_mode = modes.empty() ? "stationary" : modes.front();
+    int max_count = -1;
     for (const auto& [mode_id, count] : mode_counts) {
         if (count > max_count) {
             max_count = count;
@@ -188,7 +188,8 @@ std::vector<Scenario> sample_scenarios(
     int num_scenarios,
     const ModeBeliefConfig& mode_belief,
     const std::map<int, Eigen::MatrixXd>* per_obstacle_transitions,
-    std::mt19937* rng
+    std::mt19937* rng,
+    int scenario_id_offset
 ) {
     // Create local RNG if not provided
     std::mt19937 local_rng;
@@ -269,7 +270,7 @@ std::vector<Scenario> sample_scenarios(
             }
         }
 
-        scenarios.emplace_back(s, trajectories);
+        scenarios.emplace_back(scenario_id_offset + s, trajectories);
     }
 
     return scenarios;

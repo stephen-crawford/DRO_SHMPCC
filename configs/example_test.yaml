@@ -7,9 +7,7 @@ num_scenarios: 40
 road_width: 4.0
 safety_margin: 0.1
 enable_contouring_constraints: true
-safe_horizon_mode: fixed_nbar
-safe_horizon_min: 3
-support_cap_nbar: 5
+support_cap_n_bar: 5
 
 ego_radius: 0.5
 ego_length: 1.5
@@ -19,7 +17,8 @@ max_velocity: 4.0
 belief_kind: dirichlet
 
 dro_enabled: true
-risk_measure: surrogate_var_bonferroni
+risk_measure: joint_cvar
+risk_scoring_model: euclidean_joint_cvar
 ground_cost: w2_bures
 confidence_beta: 0.05
 

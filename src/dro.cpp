@@ -10,6 +10,7 @@
 #include "schuurmans_ambiguity.hpp"
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 #include <numeric>
 #include <limits>
 #include <cstdlib>
@@ -183,6 +184,12 @@ void update_support_diagnostics(DROResult& result, int mode_count) {
         support == mode_count && result.qstar_support_floor > 0.0;
 }
 
+bool has_matching_transition(const Eigen::MatrixXd* transition, size_t mode_count) {
+    return transition != nullptr &&
+        transition->rows() == static_cast<Eigen::Index>(mode_count) &&
+        transition->cols() == static_cast<Eigen::Index>(mode_count);
+}
+
 // One row of the entropic plan: Pi_i: = p_i * softmax_j((r_j - lambda D_ij)/tau).
 // Computed in log-space (subtract the row max) so large (r - lambda D)/tau does not
 // overflow -- at small tau the exponent is O(1/tau) and naive exp() overflows fast.
@@ -294,25 +301,64 @@ void DRO::set_observation_count(int count) {
     observation_count_ = std::max(0, count);
 }
 
-double DRO::resolve_ambiguity_radius(
+DRORiskMeasure DRO::resolve_effective_risk_measure(bool has_transition) const {
+    const auto& calibration = config_.radius_calibration;
+    const DRORiskMeasure selected = resolve_risk_scoring_measure(
+        calibration.risk_scoring_model, calibration.risk_measure);
+
+    if (!has_transition) return selected;
+
+    switch (selected) {
+        case DRORiskMeasure::MIXTURE_VAR:
+        case DRORiskMeasure::MIXTURE_CVAR:
+        case DRORiskMeasure::JOINT_VAR:
+        case DRORiskMeasure::JOINT_CVAR:
+            return selected;
+        case DRORiskMeasure::SURROGATE_VAR:
+        case DRORiskMeasure::SURROGATE_CVAR:
+        case DRORiskMeasure::SURROGATE_VAR_BONFERRONI:
+        case DRORiskMeasure::BONFERRONI_VAR:
+            break;
+    }
+
+    throw std::invalid_argument(
+        "The selected held-mode risk score is incompatible with a Markov "
+        "transition matrix. Use risk_measure: mixture_var/mixture_cvar, "
+        "or risk_scoring_model: euclidean_joint_var/euclidean_joint_cvar."
+    );
+}
+
+DRO::ResolvedAmbiguityRadius DRO::resolve_ambiguity_radius(
     AmbiguityDivergence divergence,
     int mode_count,
     double transport_diameter_value
 ) const {
-    if (rho_override_.has_value()) return *rho_override_;
+    ResolvedAmbiguityRadius resolved;
+    if (rho_override_.has_value()) {
+        resolved.value = *rho_override_;
+        resolved.before_clamp = *rho_override_;
+        return resolved;
+    }
 
     const auto& calibration = config_.radius_calibration;
     const double lower = std::max(0.0, config_.min_radius);
     const double upper = std::max(lower, config_.max_radius);
+    double raw_radius = config_.base_radius;
     if (!calibration.use_calibrated_radius) {
-        return std::clamp(config_.base_radius, lower, upper);
+        raw_radius = config_.base_radius;
+    } else {
+        const double theoretical_radius = schuurmans::ambiguity_radius(
+            divergence, std::max(1, mode_count), std::max(1, observation_count_),
+            std::clamp(calibration.confidence_beta, 1e-6, 0.5),
+            std::max(0.0, transport_diameter_value));
+        raw_radius = calibration.calibration_scale * theoretical_radius;
     }
 
-    const double theoretical_radius = schuurmans::ambiguity_radius(
-        divergence, std::max(1, mode_count), std::max(1, observation_count_),
-        std::clamp(calibration.confidence_beta, 1e-6, 0.5),
-        std::max(0.0, transport_diameter_value));
-    return std::clamp(calibration.calibration_scale * theoretical_radius, lower, upper);
+    resolved.before_clamp = raw_radius;
+    resolved.value = std::clamp(raw_radius, lower, upper);
+    resolved.clamped_to_min = raw_radius < lower;
+    resolved.clamped_to_max = raw_radius > upper;
+    return resolved;
 }
 
 DROResult DRO::compute_worst_case_weights(
@@ -338,6 +384,11 @@ DROResult DRO::compute_worst_case_weights(
 
     DROResult result;
 
+    result.risk_diagnostics.scoring_model =
+        config_.radius_calibration.risk_scoring_model;
+    result.risk_diagnostics.configured_measure =
+        config_.radius_calibration.risk_measure;
+
     // Collect mode IDs in consistent order
     std::vector<std::string> mode_ids;
     for (const auto& [id, _] : nominal_weights) {
@@ -347,6 +398,20 @@ DROResult DRO::compute_worst_case_weights(
     if (mode_ids.empty()) {
         result.worst_case_weights = nominal_weights;
         return result;
+    }
+
+    const bool has_transition = has_matching_transition(transition, mode_ids.size());
+    const DRORiskMeasure effective_risk_measure =
+        resolve_effective_risk_measure(has_transition);
+    result.risk_diagnostics.effective_measure = effective_risk_measure;
+    result.risk_diagnostics.properties =
+        risk_scoring_properties(effective_risk_measure);
+    if (!has_transition &&
+        (effective_risk_measure == DRORiskMeasure::MIXTURE_VAR ||
+         effective_risk_measure == DRORiskMeasure::MIXTURE_CVAR)) {
+        // With no chain the one-component mixture is analytical rather than a
+        // finite sequence-sampling approximation.
+        result.risk_diagnostics.properties.uses_finite_sampling = false;
     }
 
     // Compute transport cost matrix D[i][j]
@@ -365,17 +430,47 @@ DROResult DRO::compute_worst_case_weights(
         configured_risk_horizon > 0
             ? configured_risk_horizon : requested_risk_horizon);
 
+    result.risk_diagnostics.horizon = effective_risk_horizon;
+    switch (effective_risk_measure) {
+        case DRORiskMeasure::BONFERRONI_VAR:
+            result.risk_diagnostics.sample_count = std::max(
+                256, config_.radius_calibration.joint_risk_samples);
+            break;
+        case DRORiskMeasure::JOINT_VAR:
+        case DRORiskMeasure::JOINT_CVAR:
+            result.risk_diagnostics.sample_count = std::max(
+                1, config_.radius_calibration.joint_risk_samples);
+            break;
+        case DRORiskMeasure::MIXTURE_VAR:
+        case DRORiskMeasure::MIXTURE_CVAR:
+            result.risk_diagnostics.sample_count = has_transition
+                ? std::max(1, config_.radius_calibration.mixture_sequence_samples)
+                : 0;
+            break;
+        default:
+            break;
+    }
+
+    const auto risk_start = std::chrono::steady_clock::now();
     result.risk_per_mode = compute_risk_vector(RiskVectorRequest{
         obs_state, mode_models, mode_ids, ego_linearization_traj,
         effective_risk_horizon, safety_threshold, num_discs, vehicle_length,
         transition
     });
+    result.risk_diagnostics.evaluation_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - risk_start).count();
 
     const int mode_count = static_cast<int>(mode_ids.size());
     const AmbiguityDivergence divergence = config_.radius_calibration.divergence;
-    const double rho = resolve_ambiguity_radius(
+    const ResolvedAmbiguityRadius resolved_radius = resolve_ambiguity_radius(
         divergence, mode_count, transport_diameter(result.transport_cost_matrix));
+    const double rho = resolved_radius.value;
     result.rho_used = rho;
+    result.rho_before_clamp = resolved_radius.before_clamp;
+    result.radius_observation_count = std::max(1, observation_count_);
+    result.radius_mode_count = mode_count;
+    result.rho_clamped_to_min = resolved_radius.clamped_to_min;
+    result.rho_clamped_to_max = resolved_radius.clamped_to_max;
 
     // Schuurmans--Patrinos φ-divergence sets share a common configured-radius
     // lifecycle with Wasserstein, but use their native worst-case solver.
@@ -724,47 +819,44 @@ std::map<std::string, double> DRO::compute_risk_vector(
         throw std::invalid_argument("Risk-vector request contains invalid geometry.");
     }
 
-    const auto& cfg = config_.radius_calibration;
     const Eigen::Index mode_count = static_cast<Eigen::Index>(request.mode_ids.size());
-    const bool has_transition = request.transition != nullptr &&
-        request.transition->rows() == mode_count && request.transition->cols() == mode_count;
+    const bool has_transition = has_matching_transition(
+        request.transition, static_cast<size_t>(mode_count));
     const Eigen::MatrixXd* transition = has_transition ? request.transition : nullptr;
+    const DRORiskMeasure effective_risk_measure =
+        resolve_effective_risk_measure(has_transition);
 
-    switch (cfg.risk_measure) {
+    switch (effective_risk_measure) {
         case DRORiskMeasure::MIXTURE_VAR:
         case DRORiskMeasure::MIXTURE_CVAR:
             return compute_risk_vector_mixture(
                 request.obstacle_state, request.mode_models, request.mode_ids,
                 request.ego_linearization_trajectory, request.horizon,
                 request.safety_radius, request.num_discs, request.vehicle_length,
-                transition);
+                transition, effective_risk_measure);
         case DRORiskMeasure::JOINT_VAR:
         case DRORiskMeasure::JOINT_CVAR:
             return compute_risk_vector_joint(
                 request.obstacle_state, request.mode_models, request.mode_ids,
                 request.ego_linearization_trajectory, request.horizon,
                 request.safety_radius, request.num_discs, request.vehicle_length,
-                transition);
+                transition, effective_risk_measure);
         case DRORiskMeasure::BONFERRONI_VAR:
             return compute_risk_vector_bonferroni(
                 request.obstacle_state, request.mode_models, request.mode_ids,
                 request.ego_linearization_trajectory, request.horizon,
                 request.safety_radius, request.num_discs, request.vehicle_length);
-        default:
-            // With a Markov chain, surrogate risk must cover the joint
-            // mode-sequence/noise law rather than silently holding a mode fixed.
-            if (transition != nullptr) {
-                return compute_risk_vector_joint(
-                    request.obstacle_state, request.mode_models, request.mode_ids,
-                    request.ego_linearization_trajectory, request.horizon,
-                    request.safety_radius, request.num_discs, request.vehicle_length,
-                    transition);
-            }
+        case DRORiskMeasure::SURROGATE_VAR:
+        case DRORiskMeasure::SURROGATE_CVAR:
+        case DRORiskMeasure::SURROGATE_VAR_BONFERRONI:
             return compute_surrogate_risk_vector(
                 request.obstacle_state, request.mode_models, request.mode_ids,
                 request.ego_linearization_trajectory, request.horizon,
-                request.safety_radius, request.num_discs, request.vehicle_length);
+                request.safety_radius, request.num_discs, request.vehicle_length,
+                effective_risk_measure);
     }
+
+    throw std::logic_error("Unhandled effective DRO risk measure.");
 }
 
 std::map<std::string, double> DRO::compute_surrogate_risk_vector(
@@ -775,7 +867,8 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
     int horizon,
     double safety_radius,
     int num_discs,
-    double vehicle_length
+    double vehicle_length,
+    DRORiskMeasure risk_measure
 ) {
     std::map<std::string, double> risk;
 
@@ -783,9 +876,10 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
 
     // Bonferroni: inflate the per-step level to alpha' = 1 - (1-alpha)/(N_s*D) so
     // the union over the N_s*D (step, disc) violation events is controlled at alpha.
-    // The number of union terms must match the loops below exactly -- k runs 1..N_s
+    // The number of union terms must match or exceed -- k runs 1..N_s
     // and d runs over the discs -- or the guarantee is void.
-    const bool bonferroni = (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
+    const bool bonferroni =
+        (risk_measure == DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
     double alpha_eff = alpha;
     if (bonferroni) {
         const double n_events = std::max(1.0, static_cast<double>(horizon) *
@@ -801,7 +895,7 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
     for (const auto& mode_id : mode_ids) {
         auto it = mode_models.find(mode_id);
         if (it == mode_models.end()) {
-            risk[mode_id] = 0.0;
+            risk[mode_id] = 0.0;  // Assign zero risk to missing modes.
             continue;
         }
 
@@ -856,7 +950,7 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
                 const double mu_V = safety_radius - dist;
 
                 double r_kd;
-                if (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
+                if (risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
                     // Correct clamp order: CVaR_a([Vtil]_+), NOT [CVaR_a(Vtil)]_+.
                     r_kd = cvar_clamped_gaussian(mu_V, sigma_dir, alpha);
                 } else {
@@ -874,50 +968,6 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
     }
 
     return risk;
-}
-
-double DRO::surrogate_traj_violation(
-    const std::vector<Eigen::Vector2d>& means,
-    const std::vector<Eigen::Matrix2d>& covs,
-    const std::vector<EgoState>& ego_traj,
-    int horizon, double safety_radius, int num_discs, double vehicle_length,
-    double z_alpha, double alpha) const
-{
-    const double sigma_floor = config_.radius_calibration.sigma_floor;
-    const int n_steps = std::min({static_cast<int>(means.size()),
-                                  static_cast<int>(covs.size()),
-                                  horizon + 1});
-    double max_risk = 0.0;
-    for (int k = 1; k < n_steps; ++k) {
-        const EgoState& ego_state =
-            (k < static_cast<int>(ego_traj.size())) ? ego_traj[k] : ego_traj.back();
-        std::vector<Eigen::Vector2d> disc_positions;
-        if (num_discs > 1)
-            disc_positions = compute_ego_disc_positions(ego_state, num_discs, vehicle_length);
-        else
-            disc_positions = { ego_state.position() };
-
-        double step_risk = 0.0;
-        for (const auto& c_d : disc_positions) {
-            const Eigen::Vector2d mu = means[k];
-            const Eigen::Matrix2d Sigma = covs[k];
-            const Eigen::Vector2d diff = mu - c_d;
-            const double dist = diff.norm();
-            const Eigen::Vector2d n = safe_unit(diff);
-            double var_dir = n.transpose() * Sigma * n;
-            if (!std::isfinite(var_dir) || var_dir < 0.0) var_dir = 0.0;
-            const double sigma_dir = std::max(std::sqrt(var_dir), sigma_floor);
-            const double mu_V = safety_radius - dist;
-            double r_kd;
-            if (config_.radius_calibration.risk_measure == DRORiskMeasure::SURROGATE_CVAR)
-                r_kd = cvar_clamped_gaussian(mu_V, sigma_dir, alpha);
-            else
-                r_kd = std::max(0.0, mu_V + z_alpha * sigma_dir);
-            step_risk = std::max(step_risk, r_kd);
-        }
-        max_risk = std::max(max_risk, step_risk);
-    }
-    return max_risk;
 }
 
 std::pair<double, double> DRO::surrogate_traj_gaussian(
@@ -955,6 +1005,11 @@ std::pair<double, double> DRO::surrogate_traj_gaussian(
             if (!std::isfinite(var_dir) || var_dir < 0.0) var_dir = 0.0;
             const double sd = std::max(std::sqrt(var_dir), sigma_floor);
             const double mv = safety_radius - diff.norm();
+
+            // A mixture component is represented by its underlying Gaussian;
+            // select the dominant component with its *unclamped* VaR score.
+            // The outer MIXTURE_VAR/MIXTURE_CVAR calculation then applies the
+            // correct mixture-level tail functional and positive-part clamp.
             const double score = mv + z_alpha * sd;
             if (score > best_score) {
                 best_score = score;
@@ -975,7 +1030,8 @@ std::map<std::string, double> DRO::compute_risk_vector_mixture(
     double safety_radius,
     int num_discs,
     double vehicle_length,
-    const Eigen::MatrixXd* transition
+    const Eigen::MatrixXd* transition,
+    DRORiskMeasure risk_measure
 ) {
     std::map<std::string, double> risk;
     const int M = static_cast<int>(mode_ids.size());
@@ -983,8 +1039,7 @@ std::map<std::string, double> DRO::compute_risk_vector_mixture(
 
     const double alpha = config_.radius_calibration.alpha_one_sided;
     const double z_alpha = normal_quantile(alpha);
-    const bool want_cvar =
-        (config_.radius_calibration.risk_measure == DRORiskMeasure::MIXTURE_CVAR);
+    const bool want_cvar = (risk_measure == DRORiskMeasure::MIXTURE_CVAR);
 
     const bool switching =
         (transition != nullptr &&
@@ -1157,13 +1212,14 @@ std::map<std::string, double> DRO::compute_risk_vector_joint(
     double safety_radius,
     int num_discs,
     double vehicle_length,
-    const Eigen::MatrixXd* transition
+    const Eigen::MatrixXd* transition,
+    DRORiskMeasure risk_measure
 ) {
     std::map<std::string, double> risk;
 
     const double alpha = config_.radius_calibration.alpha_one_sided;
     const int n_samples = std::max(1, config_.radius_calibration.joint_risk_samples);
-    const bool want_cvar = (config_.radius_calibration.risk_measure == DRORiskMeasure::JOINT_CVAR);
+    const bool want_cvar = (risk_measure == DRORiskMeasure::JOINT_CVAR);
 
     // Markov-jump: each sample draws a mode SEQUENCE together with the noise path, so
     // the estimator is a risk measure of the JOINT (sequence, noise) law rather than a

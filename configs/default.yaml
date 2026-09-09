@@ -6,6 +6,8 @@
 mpc_type: sh_mpcc
 horizon: 20
 dt: 0.1
+# Manual fallback. An overlay that specifies num_scenarios without an explicit
+# automatically_compute_sample_size policy selects manual sizing.
 num_scenarios: 40
 safe_horizon_enabled: true
 enable_contouring_constraints: true
@@ -14,10 +16,9 @@ enable_contouring_constraints: true
 road_width: 7.0
 safety_margin: 0.1
 enable_velocity_bounds: true
-safe_horizon_min: 12
-safe_horizon_mode: fixed_nbar
-forced_safe_horizon: -1
-support_cap_nbar: 5
+# Non-removed support cap n̄ and conservative offline removal budget R.
+support_cap_n_bar: 6
+scenario_removal_budget: 0
 clearance_filter_distance: 20.0
 
 # --- ego geometry + dynamics ---
@@ -33,7 +34,9 @@ max_omega: 0.8
 # --- scenario sampling / chance constraint ---
 one_minus_chance_constraint_violation_probability: 0.95
 chance_of_certificate_violation: 0.01
-enforce_certified_scenario_count: false
+automatically_compute_sample_size: true
+# -1 retains all observations; set a positive rolling-window length when the
+# mode distribution is intentionally treated as non-stationary.
 max_history_length: -1
 markov_jump_system: false
 belief_kind: dirichlet
@@ -51,7 +54,12 @@ alpha_one_sided: 0.95
 calibration_scale: 1.0
 use_primal_ot: true
 risk_measure: surrogate_var_bonferroni
-# -1 follows the active safe horizon; set a positive value to override it.
+# Named profile for comparing collision-score fidelity while retaining the
+# configured W2-Bures ambiguity geometry. `inherit` uses risk_measure exactly.
+# Alternatives: certified_surrogate, euclidean_bonferroni_var,
+# euclidean_joint_var, euclidean_joint_cvar.
+risk_scoring_model: inherit
+# -1 follows the full prediction horizon; set a positive value to override it.
 risk_horizon: -1
 divergence: wasserstein
 ground_cost: w2_bures
@@ -63,7 +71,6 @@ use_entropic_allocator: true
 entropic_tau: 0.05
 
 # --- solver ---
-use_sqp_solver: true
 sqp_max_iterations: 5
 sqp_convergence_tol: 1.0e-3
 # Both values are passed directly to the deterministic acados/HPIPM dense QP
@@ -74,8 +81,9 @@ qp_tolerance: 1.0e-4
 # --- obstacles / ground-truth process ---
 obstacle_radius: 0.35
 num_obstacles: 1
-# Full candidate catalog.  With randomize_available_modes enabled, num_modes
-# are selected reproducibly from this list for each rollout.
+# Full candidate catalog. `num_modes` is a random-subset request only: while
+# randomize_available_modes is false, all 12 valid entries below are available
+# to every obstacle and form the DRO mode support.
 num_modes: 4
 obstacles_per_class: 0
 obstacle_history: independent_history
@@ -101,6 +109,16 @@ boosted_mode: -1
 environment: s_curve
 path_completion_termination: true
 path_completion_fraction: 0.95
+# Route input follows the trajectory-generator convention: provide ordered
+# world-frame x,y waypoints to replace the generated environment route.
+# Example: [0,0; 12,0; 20,4; 32,4]
+path_waypoints: []
+path_closed_loop: false
+# C2 polynomial route sampling and maximum control-point spacing, in metres.
+path_sample_spacing: 0.25
+path_control_point_spacing: 4.0
+# 0 derives the cap from metrics_v_ref and ego max_omega.
+path_max_lateral_acceleration: 0.0
 s_curve_length: 25.0
 s_curve_amplitude: 3.0
 s_curve_points: 200
@@ -123,3 +141,19 @@ transition_length: 15.0
 rollout_steps: 200
 scenario_tag: baseline
 metrics_v_ref: 1.5
+
+# --- optional canonical rollout artifacts ---
+# Set artifact_output_directory to make the harness create one run bundle with
+# resolved_config.yaml, reproducibility.yaml, rollout.csv, trace.csv, and
+# rollout.svg. The optional GIF is a native animated replay; the optional RViz
+# bundle is consumed by the ROS 2 replayer when that target is built. Empty
+# keeps library calls and unit tests side-effect free.
+artifact_output_directory: ""
+artifact_run_name: ""
+artifact_write_manifest: true
+artifact_write_trace_csv: true
+artifact_write_visualization_svg: true
+artifact_write_visualization_gif: false
+artifact_gif_frame_stride: 1
+artifact_gif_playback_rate: 1.0
+artifact_write_rviz_replay: false

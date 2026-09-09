@@ -1,6 +1,6 @@
 /**
  * @file mode_weights.hpp
- * @brief Mode weight computation for adaptive scenario-based MPC.
+ * @brief Mode weight computation for scenario MPC.
  *
  * Implements Section 4: Mode History and Weights
  */

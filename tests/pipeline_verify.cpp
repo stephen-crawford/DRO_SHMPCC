@@ -99,7 +99,7 @@ int main() {
 
     std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
     RuntimeConfig cfg; cfg.dro.enabled=true;
-    cfg.mpc.sampling.num_scenarios=40; cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
+    cfg.mpc.sampling.set_manual_sample_count(40); cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
     MPCController ctrl(cfg);
     ctrl.set_reference_path(path);
     EgoState ego(0,0,0,1.5); Eigen::Vector2d goal(25,0);

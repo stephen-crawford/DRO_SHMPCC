@@ -8,11 +8,59 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <set>
 
 namespace dro_mpc {
 
+namespace {
+
+// A negative signed clearance is a
+// violation; a small positive clearance is treated as binding support.
+constexpr double kSupportBindingTolerance = 1e-3;
+
+/// Add the distinct scenario IDs whose collision constraints are either
+/// binding or violated by `trajectory`.  Scenario support is a property of a
+/// joint scenario, so multiple obstacle/stage/disc constraints with the same
+/// scenario_id deliberately contribute only once.
+void collect_active_or_violated_scenarios(
+    const std::vector<CollisionConstraint>& constraints,
+    const std::vector<EgoState>& trajectory,
+    std::set<int>& scenario_ids
+) {
+    for (const auto& constraint : constraints) {
+        if (constraint.scenario_id < 0 || constraint.k < 0 ||
+            constraint.k >= static_cast<int>(trajectory.size())) {
+            continue;
+        }
+
+        const Eigen::Vector2d disc_center = compute_collision_disc_center(
+            trajectory[constraint.k], constraint);
+        const double signed_clearance = constraint.evaluate(disc_center);
+        if (std::isfinite(signed_clearance) &&
+            signed_clearance <= kSupportBindingTolerance) {
+            scenario_ids.insert(constraint.scenario_id);
+        }
+    }
+}
+
+std::vector<int> sorted_scenario_ids(
+    const std::vector<CollisionConstraint>& constraints,
+    const std::vector<EgoState>& trajectory
+) {
+    std::set<int> scenario_ids;
+    collect_active_or_violated_scenarios(constraints, trajectory, scenario_ids);
+    return {scenario_ids.begin(), scenario_ids.end()};
+}
+
+}  // namespace
+
 MPCController::MPCController(const RuntimeConfig& config)
     : config_(config), ego_dynamics_(config.mpc.ego.dynamics, config.mpc.dt) {
+    // Resolve the certified
+    // sample size from n_bar + R before any scenarios are drawn.  Direct
+    // RuntimeConfig users must receive the same behavior as YAML/harness
+    // callers, which already normalize during their conversion lifecycle.
+    config_.normalize();
     config_.validate();
     default_modes_ = create_obstacle_mode_models(config_.mpc.dt);
 
@@ -38,7 +86,7 @@ void MPCController::initialize_obstacle(
     const auto& modes = available_modes.empty() ? default_modes_ : available_modes;
 
     ModeHistory history(obstacle_id, modes, obstacle_class_id);
-    history.max_history_length = (config_.mpc.sampling.max_history_length > 0) ? config_.mpc.sampling.max_history_length : config_.mpc.horizon * 10;
+    history.max_history_length = config_.mpc.sampling.max_history_length;
 
     // Reconstruct the class aggregate from every existing sibling. Histories are
     // normally synchronized, so deduplicate observations that were broadcast.
@@ -58,7 +106,8 @@ void MPCController::initialize_obstacle(
     class_observations.erase(
         std::unique(class_observations.begin(), class_observations.end()),
         class_observations.end());
-    if (static_cast<int>(class_observations.size()) > history.max_history_length) {
+    if (history.max_history_length > 0 &&
+        static_cast<int>(class_observations.size()) > history.max_history_length) {
         class_observations.erase(
             class_observations.begin(),
             class_observations.begin() +
@@ -108,6 +157,12 @@ MPCResult MPCController::solve(
     iteration_count_++;
     last_dro_results_.clear();
 
+    // A scenario certificate is attached to one decision problem.  Keep the
+    // controller RNG for reproducibility, but regenerate trajectories from the
+    // current obstacle states at every receding-horizon solve.  Retaining old
+    // trajectories would leave their k=0 state anchored to a past measurement.
+    scenarios_.clear();
+
     if (!reference_path_.has_value()) {
         reference_path_ = ReferencePath::create_straight(ego_state.position(), goal);
     }
@@ -149,12 +204,11 @@ MPCResult MPCController::solve(
     }
 
     // When DRO is enabled: compute worst-case distribution q* and resample all S
-    // scenarios from it. 
+    // scenarios from it.  Safe-Horizon certification is joint over the full
+    // prediction horizon, so DRO's risk assessment must cover that same N.
     if (config_.dro.enabled && !reference_trajectory_.empty()) {
         const int S = config_.mpc.sampling.num_scenarios;
-        int pre_dro_safe_horizon = config_.mpc.safe_horizon_enabled
-            ? config_.compute_safe_horizon(S)
-            : config_.mpc.horizon;
+        const int risk_horizon = config_.mpc.horizon;
 
         // Compute DRO q* from the nominal p hat
         for (const auto& [obs_id, obs_state] : obstacles) {
@@ -167,8 +221,11 @@ MPCResult MPCController::solve(
             );
 
             if (nominal_weights.empty()) continue;
+            // The calibrated ambiguity radius requires an IID-like sample
+            // count.  A held mode observed on successive MPC ticks is one
+            // evidence episode, not one independent categorical draw.
             dro_.set_observation_count(
-                static_cast<int>(hist_it->second.observed_modes.size()));
+                hist_it->second.ambiguity_radius_sample_count());
 
             // Markov-jump obstacle: hand the DRO risk model the transition chain so
             // per-mode risk is computed over within-horizon switching rather than a
@@ -192,7 +249,7 @@ MPCResult MPCController::solve(
                 reference_trajectory_, config_.mpc.horizon,
                 config_.mpc.ego.radius, config_.obstacle_radius,
                 config_.mpc.constraints.safety_margin,
-                pre_dro_safe_horizon,
+                risk_horizon,
                 config_.mpc.ego.num_discs,
                 config_.mpc.ego.length,
                 transition_ptr
@@ -258,17 +315,25 @@ MPCResult MPCController::solve(
     // Clear custom weights after use (they're set per-solve by external code)
     custom_per_obstacle_weights_.clear();
 
-    // Verify scenario sufficiency for epsilon guarantee (Part 4).
-    // de Groot sizes S from the SUPPORT LIMIT n̄ (horizon-independent) via the exact
-    // NSO bound (Eq. 8), not from the decision-variable dimension.
-
+    // Safe-Horizon sizes S from the total support cap n̄ + R, not
+    // from horizon length or decision dimension.  Normalized configurations
+    // sample this target immediately; this fallback keeps the invariant true
+    // if a caller provides an existing undersized scenario set.
     int S_actual = static_cast<int>(scenarios_.size());
-    int S_required = config_.compute_required_scenarios(
-        config_.mpc.constraints.support_cap_nbar);
-    (void)config_.compute_effective_epsilon(
-        S_actual, config_.mpc.constraints.support_cap_nbar);
+    const bool support_certification_enabled = config_.mpc.uses_safe_horizon();
+    const int S_required = support_certification_enabled
+        ? config_.compute_required_scenarios()
+        : S_actual;
 
-    auto sample_additional_scenarios = [&](int count) {
+    auto next_scenario_id = [&]() {
+        int next_id = 0;
+        for (const auto& scenario : scenarios_) {
+            next_id = std::max(next_id, scenario.scenario_id + 1);
+        }
+        return next_id;
+    };
+
+    auto sample_additional_scenarios = [&](int count, int scenario_id_offset) {
         if (config_.mpc.sampling.markov_jump_system) {
             const auto* initial_belief =
                 (used_external_sampling_weights && !sampling_weights.empty())
@@ -276,30 +341,42 @@ MPCResult MPCController::solve(
             return sample_scenarios(
                 obstacles, mode_histories_, initial_belief,
                 config_.mpc.horizon, count,
-                config_.mpc.sampling.mode_belief, &sampling_transitions, &rng_);
+                config_.mpc.sampling.mode_belief, &sampling_transitions, &rng_,
+                scenario_id_offset);
         }
         return sample_scenarios(
             obstacles, mode_histories_,
             (used_external_sampling_weights && !sampling_weights.empty())
                 ? &sampling_weights : nullptr,
             config_.mpc.horizon, count, config_.mpc.sampling.mode_belief,
-            nullptr, &rng_
+            nullptr, &rng_, scenario_id_offset
         );
     };
 
-    if (S_actual < S_required && config_.mpc.sampling.enforce_certified_scenario_count) {
-        // Auto-increase: sample additional scenarios
+    // scenario_module uses the explicit automatic-sizing setting; with it off
+    // an intentionally static sample count is left untouched.
+    const bool enforce_support_sample_count = support_certification_enabled &&
+        config_.mpc.sampling.automatically_compute_sample_size;
+    if (S_actual < S_required && enforce_support_sample_count) {
+        // Append independent scenarios with fresh joint IDs.  Reusing IDs
+        // would collapse distinct draws during support-union accounting.
         int additional_count = S_required - S_actual;
-        auto additional = sample_additional_scenarios(additional_count);
+        auto additional = sample_additional_scenarios(
+            additional_count, next_scenario_id());
         scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
     } else if (S_actual < 3) {
         // Ensure minimum scenario count even without enforcement
         int additional_count = std::max(
             5, config_.mpc.sampling.num_scenarios - S_actual
         );
-        auto additional = sample_additional_scenarios(additional_count);
+        auto additional = sample_additional_scenarios(
+            additional_count, next_scenario_id());
         scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
     }
+
+    S_actual = static_cast<int>(scenarios_.size());
+    const bool sample_count_sufficient = support_certification_enabled &&
+        S_actual >= S_required;
 
 
     // Step 4: Fixed collision normals from the numerical linearization trajectory.
@@ -319,7 +396,12 @@ MPCResult MPCController::solve(
     const double reach_growth =
         2.0 * config_.mpc.ego.dynamics.max_velocity * config_.mpc.dt;
 
-    scenarios_ = prune_dominated_scenarios(
+    // Preserve the complete i.i.d. draw set in `scenarios_` for this decision
+    // problem: S and scenario identity define its certificate.  Dominance
+    // reduction is only a local constraint-construction optimization for this
+    // numerical linearization; the next receding-horizon solve draws a fresh,
+    // state-conditioned set above.
+    const auto constraint_scenarios = prune_dominated_scenarios(
         scenarios_, reference_trajectory_, combined_radius,
         config_.mpc.ego.num_discs, config_.mpc.ego.length,
         disc_span, reach_growth);
@@ -327,7 +409,7 @@ MPCResult MPCController::solve(
 
     auto constraints = compute_linearized_constraints(
         reference_trajectory_,
-        scenarios_,
+        constraint_scenarios,
         config_.mpc.ego.radius,
         config_.obstacle_radius,
         config_.mpc.constraints.safety_margin,
@@ -335,28 +417,17 @@ MPCResult MPCController::solve(
         config_.mpc.ego.length
     );
 
-    // Safe horizon truncation
-    int effective_horizon = config_.mpc.horizon;
-    if (config_.mpc.safe_horizon_enabled) {
-        int S_for_sh = config_.mpc.sampling.num_scenarios;
-        effective_horizon = config_.compute_safe_horizon(S_for_sh);
-
-        if (effective_horizon < config_.mpc.horizon) {
-            // Filter out constraints beyond the safe horizon
-            constraints.erase(
-                std::remove_if(constraints.begin(), constraints.end(),
-                    [effective_horizon](const CollisionConstraint& c) {
-                        return c.k >= effective_horizon;
-                    }),
-                constraints.end()
-            );
-        }
+    // Safe Horizon refers to support-bounded joint-risk
+    // certification across the *complete* MPC horizon.  Do not erase late
+    // collision stages and do not apply the optional distance filter here:
+    // either operation would silently change the sampled constraint problem
+    // whose support union is being certified.  Non-SH controllers retain the
+    // engineering clearance filter for their ordinary performance path.
+    if (!config_.mpc.uses_safe_horizon()) {
+        constraints = filter_constraints_by_clearance(
+            constraints, reference_trajectory_,
+            config_.mpc.constraints.clearance_filter_distance);
     }
-
-    // Remvove far-away constraints
-    constraints = filter_constraints_by_clearance(
-        constraints, reference_trajectory_,
-        config_.mpc.constraints.clearance_filter_distance);
 
     auto constraint_end = std::chrono::high_resolution_clock::now();
 
@@ -364,17 +435,37 @@ MPCResult MPCController::solve(
     auto qp_start = std::chrono::high_resolution_clock::now();
     MPCResult result = solve_optimization(
         ego_with_spline, goal, reference_velocity, constraints,
-        path_progress, path_length, effective_horizon
+        path_progress, path_length
     );
 
     auto qp_end = std::chrono::high_resolution_clock::now();
 
-    // Record safe horizon and DRO injection count
-    result.safe_horizon = effective_horizon;
-    result.num_dro_injected = 0;
+    result.sampled_scenarios = S_actual;
+    result.required_scenarios = support_certification_enabled ? S_required : -1;
+    result.sample_count_sufficient = sample_count_sufficient;
+    result.certified_horizon = -1;
+    if (!support_certification_enabled) {
+        result.certificate_status = SafeHorizonCertificateStatus::NOT_REQUESTED;
+    } else if (!sample_count_sufficient) {
+        result.certificate_status =
+            SafeHorizonCertificateStatus::INSUFFICIENT_SCENARIOS;
+    } else if (!result.sampled_constraints_satisfied) {
+        result.certificate_status = SafeHorizonCertificateStatus::PLAN_INFEASIBLE;
+    } else if (result.support_cap_status == SupportCapStatus::NOT_EVALUATED) {
+        result.certificate_status =
+            SafeHorizonCertificateStatus::SUPPORT_NOT_EVALUATED;
+    } else if (result.support_cap_status == SupportCapStatus::SUPPORT_EXCEEDED) {
+        result.certificate_status = SafeHorizonCertificateStatus::SUPPORT_EXCEEDED;
+    } else if (result.support_cap_status == SupportCapStatus::WITHIN_LIMIT) {
+        // Only this conjunction represents the full-horizon certificate.
+        result.certificate_status = SafeHorizonCertificateStatus::CERTIFIED;
+        result.certified_horizon = config_.mpc.horizon;
+    }
     for (const auto& [_, dro_result] : last_dro_results_) {
         result.ambiguity_radius_used = std::max(
             result.ambiguity_radius_used, dro_result.rho_used);
+        result.dro_risk_evaluation_time +=
+            dro_result.risk_diagnostics.evaluation_seconds;
     }
     result.constraint_construction_time =
         std::chrono::duration<double>(constraint_end - constraint_start).count();
@@ -487,18 +578,11 @@ MPCResult MPCController::solve_optimization(
     double reference_velocity,
     const std::vector<CollisionConstraint>& constraints,
     double path_progress,
-    double path_length,
-    int cost_horizon
+    double path_length
 ) {
-    if (config_.solver.use_sqp_solver) {
-        return solve_optimization_sqp(
-            ego_state, goal, reference_velocity, constraints,
-            path_progress, path_length, cost_horizon
-        );
-    }
     return solve_optimization_sqp(
         ego_state, goal, reference_velocity, constraints,
-        path_progress, path_length, cost_horizon
+        path_progress, path_length
     );
 }
 
@@ -512,8 +596,7 @@ MPCResult MPCController::solve_optimization_sqp(
     double reference_velocity,
     const std::vector<CollisionConstraint>& constraints,
     double path_progress,
-    double path_length,
-    int cost_horizon
+    double path_length
 ) {
     const int N = config_.mpc.horizon;
 
@@ -577,12 +660,31 @@ MPCResult MPCController::solve_optimization_sqp(
             x_ref, constraints, /*max_projection_sweeps=*/10, /*tolerance=*/1e-3);
     }
 
+    // de Groot's online support estimate is the union of distinct scenarios
+    // that are active OR violated at each SQP iterate.  It is intentionally
+    // not just the support set of the final trajectory: a scenario that held
+    // any intermediate convex approximation in place must remain counted.
+    // The configuration resolves the reference-compatible total cap n̄ + R.
+    const bool support_certification_enabled = config_.mpc.uses_safe_horizon();
+    const int support_limit = support_certification_enabled
+        ? config_.support_limit()
+        : -1;
+    std::set<int> support_scenarios;
+    int support_iterations_evaluated = 0;
+    auto account_support_evaluation = [&](const std::vector<EgoState>& trajectory) {
+        if (!support_certification_enabled) return true;
+        collect_active_or_violated_scenarios(
+            constraints, trajectory, support_scenarios);
+        ++support_iterations_evaluated;
+        return static_cast<int>(support_scenarios.size()) <= support_limit;
+    };
+
     // 2. SQP loop
     for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter) {
         // Build and solve QP subproblem
         QPProblem qp = build_condensed_qp(
             x_ref, u_ref, goal, reference_velocity, constraints,
-            path_progress, path_length, cost_horizon
+            path_progress, path_length
         );
 
         QPSettings qp_settings;
@@ -593,8 +695,15 @@ MPCResult MPCController::solve_optimization_sqp(
 
         Eigen::VectorXd delta_u = qp_result.x;
 
+        // An invalid primal vector is not an SQP iterate and must not be used
+        // to fabricate a support certificate (or indexed below).
+        if (delta_u.size() != 2 * N || !delta_u.allFinite()) {
+            break;
+        }
+
         // Check SQP convergence
         if (delta_u.norm() < config_.solver.sqp_convergence_tol) {
+            account_support_evaluation(x_ref);
             break;
         }
 
@@ -636,6 +745,12 @@ MPCResult MPCController::solve_optimization_sqp(
         u_ref = best_inputs;
         x_ref = best_traj;
 
+        // As soon as the aggregate
+        // support exceeds its cap, later SQP iterations cannot restore the
+        // certificate because support is a monotone union.
+        if (!account_support_evaluation(x_ref)) {
+            break;
+        }
     }
 
     // Hard velocity-bound enforcement on the returned plan.
@@ -669,6 +784,12 @@ MPCResult MPCController::solve_optimization_sqp(
                     ? ego_dynamics_.rollout_with_spline(ego_state, u_ref, *reference_path_)
                     : ego_dynamics_.rollout(ego_state, u_ref);
     }
+
+    // The hard velocity backstop may change the returned trajectory after the
+    // last SQP solve.  Include that returned plan in the monotone support
+    // union as a final verification pass, so result support never describes a
+    // different trajectory than the one handed to the caller.
+    account_support_evaluation(x_ref);
 
     const double effective_goal_weight = config_.mpc.objective.goal_weight;
     (void)path_progress; (void)path_length;
@@ -732,6 +853,7 @@ MPCResult MPCController::solve_optimization_sqp(
 
     MPCResult result;
     result.success = feasible;
+    result.sampled_constraints_satisfied = feasible;
     result.ego_trajectory = x_ref;
     result.control_inputs = u_ref;
     result.cost = cost;
@@ -740,25 +862,42 @@ MPCResult MPCController::solve_optimization_sqp(
         const std::vector<EgoState>& trajectory,
         MPCResult& mpc_result
     ) {
-        constexpr double binding_tolerance = 1e-3;
-        for (const auto& constraint : constraints) {
-            if (constraint.scenario_id < 0 ||
-                constraint.k < 0 ||
-                constraint.k >= static_cast<int>(trajectory.size())) {
-                continue;
-            }
+        mpc_result.active_scenarios = sorted_scenario_ids(constraints, trajectory);
+    };
 
-            const Eigen::Vector2d disc_center = compute_collision_disc_center(
-                trajectory[constraint.k], constraint);
-            if (constraint.evaluate(disc_center) <= binding_tolerance &&
-                std::find(mpc_result.active_scenarios.begin(),
-                          mpc_result.active_scenarios.end(),
-                          constraint.scenario_id) == mpc_result.active_scenarios.end()) {
-                mpc_result.active_scenarios.push_back(constraint.scenario_id);
-            }
+    auto populate_support_accounting = [&](MPCResult& mpc_result) {
+        if (!support_certification_enabled) {
+            mpc_result.support_scenarios.clear();
+            mpc_result.support_size = 0;
+            mpc_result.support_limit = -1;
+            mpc_result.support_cap_satisfied = false;
+            mpc_result.support_cap_status = SupportCapStatus::NOT_EVALUATED;
+            mpc_result.support_iterations_evaluated = 0;
+            return;
         }
+
+        mpc_result.support_scenarios.assign(
+            support_scenarios.begin(), support_scenarios.end());
+        mpc_result.support_size = static_cast<int>(support_scenarios.size());
+        mpc_result.support_limit = support_limit;
+        mpc_result.support_iterations_evaluated = support_iterations_evaluated;
+
+        if (support_iterations_evaluated == 0) {
+            // A cap cannot certify a solve for which no finite SQP iterate was
+            // inspected.  Keep this distinct from a valid zero-support solve.
+            mpc_result.support_cap_satisfied = false;
+            mpc_result.support_cap_status = SupportCapStatus::NOT_EVALUATED;
+            return;
+        }
+
+        mpc_result.support_cap_satisfied =
+            mpc_result.support_size <= mpc_result.support_limit;
+        mpc_result.support_cap_status = mpc_result.support_cap_satisfied
+            ? SupportCapStatus::WITHIN_LIMIT
+            : SupportCapStatus::SUPPORT_EXCEEDED;
     };
     populate_active_scenarios(x_ref, result);
+    populate_support_accounting(result);
 
     // If infeasible, try safe fallback
     if (!feasible) {
@@ -769,6 +908,10 @@ MPCResult MPCController::solve_optimization_sqp(
             result.success = true;  // Approximately feasible
         } else {
             populate_active_scenarios(fallback.ego_trajectory, fallback);
+            // The fallback is not an SQP iterate.  Preserve the support union
+            // observed while solving the original scenario problem so a
+            // physically safe fallback cannot hide a SUPPORT_EXCEEDED status.
+            populate_support_accounting(fallback);
             return fallback;
         }
     }
@@ -783,8 +926,7 @@ QPProblem MPCController::build_condensed_qp(
     double reference_velocity,
     const std::vector<CollisionConstraint>& constraints,
     double path_progress,
-    double path_length,
-    int cost_horizon
+    double path_length
 ) {
     const int N = config_.mpc.horizon;
     const int n_u = 2;  // [a, w]

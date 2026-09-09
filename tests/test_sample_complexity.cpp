@@ -67,8 +67,9 @@ int main() {
 
     std::printf("\n=== (C) exact bound is a valid, tighter certificate ===\n");
     {
-        // At the code defaults (ε=0.05, β=0.01, n̄=5) the exact bound is ~781 and is
-        // strictly below the old closed-form Alamo/Campi upper bound (~932).
+        // scenario_module-compatible defaults use n-bar=6 (S*=895 at
+        // epsilon=0.05, beta=0.01). Keep n-bar=5 as a known-value check for
+        // the exact bound and the old closed-form Alamo/Campi upper bound.
         RuntimeConfig c = cfg_with(0.05, 0.01);
         int S_exact = c.compute_required_scenarios(5);
         double closed_form = (2.0 / 0.05) * std::log(1.0 / 0.01)
@@ -78,8 +79,8 @@ int main() {
         check(S_exact <= static_cast<int>(std::ceil(closed_form)),
               "exact de Groot bound <= old closed-form upper bound (tighter)");
         check(RuntimeConfig::degroot_violation_risk(S_exact, 5, 0.01) <= 0.05,
-              "exact bound genuinely certifies ε(n̄) ≤ ε at the defaults");
-        // Reference values (de Groot-style Eq. 8 inversion, ε=0.05, β=0.01), and the
+              "exact bound genuinely certifies ε(n̄) ≤ ε at the n̄=5 check point");
+        // de Groot-style Eq. 8 inversion, ε=0.05, β=0.01 and the
         // steep sensitivity to the total support that motivates counting removal.
         check(S_exact == 781, "n̄=5 -> S*=781 (reference)");
         check(c.compute_required_scenarios(6) == 895 &&

@@ -1,6 +1,6 @@
 /**
  * @file scenario_sampler.hpp
- * @brief Scenario sampling for adaptive scenario-based MPC.
+ * @brief Scenario sampling for scenario MPC.
  *
  * There are two sampling approaches:
  *
@@ -52,6 +52,10 @@ namespace dro_mpc {
  *        obstacle ID. A supplied obstacle matrix enables switching for that
  *        obstacle; otherwise its sampled mode is held over the horizon.
  * @param rng Random number generator
+ * @param scenario_id_offset First identifier assigned to this batch.  This is
+ *        required when a certified controller augments an existing sample set:
+ *        support is tracked by joint scenario identifier, so appended samples
+ *        must not reuse identifiers from the original batch.
  * @return List of Scenario objects
  */
 std::vector<Scenario> sample_scenarios(
@@ -62,7 +66,8 @@ std::vector<Scenario> sample_scenarios(
     int num_scenarios,
     const ModeBeliefConfig& mode_belief = {},
     const std::map<int, Eigen::MatrixXd>* per_obstacle_transitions = nullptr,
-    std::mt19937* rng = nullptr
+    std::mt19937* rng = nullptr,
+    int scenario_id_offset = 0
 );
 
 }  // namespace dro_mpc

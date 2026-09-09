@@ -32,6 +32,45 @@ int main() {
         check(catalog.count(id) == 1, id);
     }
 
+    const auto default_cfg = yaml_config::load_experiment_config("");
+    std::mt19937 default_rng(9);
+    const auto default_modes = select_obstacle_mode_ids(
+        default_cfg.obstacles.obs_modes, default_cfg.obstacles.rare_mode,
+        catalog, default_cfg.obstacles.randomize_available_modes,
+        default_cfg.obstacles.num_modes, default_rng);
+    check(mode_selection_policy_name(default_cfg.obstacles) == "configured_list" &&
+              default_cfg.obstacles.num_modes == 4 &&
+              default_modes.size() == default_cfg.obstacles.obs_modes.size() &&
+              default_modes.size() == 12,
+          "default mode support uses the full configured list, not num_modes");
+
+    ExperimentConfig count_record_cfg = default_cfg;
+    count_record_cfg.rollout.rollout_steps = 0;
+    const RolloutRecord count_record = run_experiment_rollout(count_record_cfg, 9);
+    check(count_record.mode_selection_policy == "configured_list" &&
+              count_record.requested_random_mode_count == 4 &&
+              count_record.effective_available_mode_counts ==
+                  std::vector<int>{12},
+          "rollout record exposes requested and effective mode counts");
+
+    const char* record_csv_path = "/tmp/dro_shmpcc_mode_count_record.csv";
+    {
+        CSVWriter writer(record_csv_path);
+        writer.write_header();
+        writer.write_record(count_record);
+        writer.flush();
+    }
+    std::ifstream record_csv(record_csv_path);
+    std::string csv_header;
+    std::string csv_row;
+    std::getline(record_csv, csv_header);
+    std::getline(record_csv, csv_row);
+    std::remove(record_csv_path);
+    check(csv_header.find("mode_selection_policy,requested_random_mode_count,") !=
+                  std::string::npos &&
+              csv_row.find(",configured_list,4,12") != std::string::npos,
+          "CSV log preserves requested and effective mode counts");
+
     const std::vector<std::string> candidates = {
         "constant_velocity", "turn_left", "turn_right", "accelerating", "invalid"};
     std::mt19937 rng_a(42);
@@ -52,6 +91,25 @@ int main() {
               std::set<std::string>(randomized_a.begin(), randomized_a.end()).size() ==
                   randomized_a.size(),
           "random mode selection honors num_modes and keeps rare mode available");
+
+    bool unknown_scoring_profile_rejected = false;
+    try {
+        (void)yaml_config::parse_risk_scoring_model("unsupported_profile");
+    } catch (const std::invalid_argument&) {
+        unknown_scoring_profile_rejected = true;
+    }
+    check(unknown_scoring_profile_rejected,
+          "unknown scoring profiles are rejected by YAML parsing");
+
+    bool invalid_scoring_enum_rejected = false;
+    try {
+        (void)resolve_risk_scoring_measure(
+            static_cast<DRORiskScoringModel>(1), DRORiskMeasure::JOINT_CVAR);
+    } catch (const std::invalid_argument&) {
+        invalid_scoring_enum_rejected = true;
+    }
+    check(invalid_scoring_enum_rejected,
+          "invalid scoring-model enum values fail closed");
 
     const char* overlay_path = "/tmp/dro_shmpcc_mode_catalog_overlay.yaml";
     {
@@ -78,6 +136,7 @@ int main() {
                 << "obstacle_starts: [4.5,1.0,0.5,0; 8.0,-2.0; 12,3,-1,0.25]\n"
                 << "fixed_rho: 0.23\n"
                 << "risk_measure: joint_cvar\n"
+                << "risk_scoring_model: euclidean_joint_cvar\n"
                 << "risk_horizon: 7\n"
                 << "joint_risk_seed: 123456\n";
     }
@@ -86,6 +145,8 @@ int main() {
     const auto runtime_cfg = yaml_cfg.to_scenario_mpc_config();
     check(yaml_cfg.obstacles.randomize_available_modes &&
               yaml_cfg.obstacles.randomize_modes_per_obstacle &&
+              mode_selection_policy_name(yaml_cfg.obstacles) ==
+                  "random_subset_per_obstacle" &&
               yaml_cfg.mpc.horizon == 17 && yaml_cfg.mpc.dt == 0.2 &&
               yaml_cfg.mpc.ego.dynamics.max_velocity == 6.5 &&
               yaml_cfg.environment.type == EnvironmentType::ENTER_RAMP &&
@@ -108,12 +169,16 @@ int main() {
               yaml_cfg.obstacles.obstacles_per_class == 2 &&
               yaml_cfg.mpc.sampling.markov_jump_system &&
               yaml_cfg.dro.solver.radius_calibration.risk_measure == DRORiskMeasure::JOINT_CVAR &&
+              yaml_cfg.dro.solver.radius_calibration.risk_scoring_model ==
+                  DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR &&
               yaml_cfg.dro.solver.radius_calibration.risk_horizon == 7 &&
               yaml_cfg.dro.solver.radius_calibration.joint_risk_seed == 123456ULL,
           "YAML settings survive parsing and experiment normalization");
     check(runtime_cfg.mpc.horizon == 17 && runtime_cfg.mpc.dt == 0.2 &&
               runtime_cfg.mpc.ego.dynamics.max_velocity == 6.5 &&
               runtime_cfg.mpc.sampling.markov_jump_system &&
+              runtime_cfg.dro.solver.radius_calibration.risk_scoring_model ==
+                  DRORiskScoringModel::EUCLIDEAN_JOINT_CVAR &&
               runtime_cfg.dro.solver.base_radius == 0.23 &&
               !runtime_cfg.dro.solver.radius_calibration.use_calibrated_radius,
           "YAML settings survive conversion to the controller runtime config");

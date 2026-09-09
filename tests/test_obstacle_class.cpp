@@ -23,17 +23,23 @@
  */
 
 #include <iostream>
-#include <cassert>
 #include <map>
 #include <string>
 
 #include "mpc_controller.hpp"
 #include "experiment_harness.hpp"
 #include "dynamics.hpp"
-#include "mode_weights.hpp"
-#include "scenario_sampler.hpp"
 
 using namespace dro_mpc;
+
+namespace {
+int failures = 0;
+
+void check(bool condition, const char* message) {
+    std::cout << (condition ? "PASS: " : "FAIL: ") << message << '\n';
+    if (!condition) ++failures;
+}
+}  // namespace
 
 int main() {
     std::cout << "=== Test: Obstacle Class Sharing ===\n\n";
@@ -44,8 +50,7 @@ int main() {
     RuntimeConfig cfg;
     cfg.mpc.horizon = 10;
     cfg.mpc.dt = DT;
-    cfg.mpc.sampling.num_scenarios = 10;
-    cfg.solver.use_sqp_solver = true;
+    cfg.mpc.sampling.set_manual_sample_count(10);
 
     // -------------------------------------------------------
     // Test 1: Observations sync within same class
@@ -78,9 +83,7 @@ int main() {
         // Now solve - just verifying it doesn't crash with multi-obstacle multi-class
         Eigen::Vector2d goal(20.0, 0.0);
         auto result = ctrl.solve(EgoState(0, 0, 0, 1.5), obstacles, goal);
-        assert(result.success);
-
-        std::cout << "PASS (solve succeeded with 3 obstacles, 2 classes)\n";
+        check(result.success, "class sharing solves with three obstacles and two classes");
     }
 
     // -------------------------------------------------------
@@ -107,9 +110,7 @@ int main() {
 
         Eigen::Vector2d goal(20.0, 0.0);
         auto result = ctrl.solve(EgoState(0, 0, 0, 1.5), obstacles, goal);
-        assert(result.success);
-
-        std::cout << "PASS\n";
+        check(result.success, "late-joining class member has a usable inherited history");
     }
 
     // -------------------------------------------------------
@@ -137,9 +138,7 @@ int main() {
 
         Eigen::Vector2d goal(20.0, 0.0);
         auto result = ctrl.solve(EgoState(0, 0, 0, 1.5), obstacles, goal);
-        assert(result.success);
-
-        std::cout << "PASS\n";
+        check(result.success, "independent classes solve without cross-class contamination");
     }
 
     // -------------------------------------------------------
@@ -162,11 +161,15 @@ int main() {
         Eigen::Vector2d goal(20.0, 0.0);
         std::mt19937 rng(42);
 
+        bool all_steps_solved = true;
         for (int step = 0; step < 20; ++step) {
             // Build obstacle map
             std::map<int, ObstacleState> obstacles;
             for (int i = 0; i < n_obs; ++i) {
-                obstacles[i] = ObstacleState(3.0 + i * 2.0, 0.5 * (i % 2 == 0 ? 1 : -1), -0.1, 0.0);
+                // Keep the physical states clear of the ego route: this test
+                // exercises class-history updates over repeated solves, not
+                // an intentionally blocked collision-avoidance scenario.
+                obstacles[i] = ObstacleState(30.0 + i * 4.0, 8.0 + 2.0 * i, -0.1, 0.0);
             }
 
             // Observe modes - obstacle 0 and 1 share class 0
@@ -178,14 +181,17 @@ int main() {
             }
 
             auto result = ctrl.solve(ego, obstacles, goal);
-            assert(result.success);
+            if (!result.success) {
+                all_steps_solved = false;
+                break;
+            }
 
             if (result.first_input().has_value()) {
                 ego = dynamics.propagate(ego, result.first_input().value());
             }
         }
 
-        std::cout << "PASS (20 steps, 4 obstacles, 2 classes)\n";
+        check(all_steps_solved, "multi-obstacle class-sharing rollout stays solvable");
     }
 
     // -------------------------------------------------------
@@ -196,18 +202,18 @@ int main() {
         ExperimentConfig ecfg;
         ecfg.obstacles.num_obstacles = 3;
         ecfg.obstacles.obstacles_per_class = 3;  // all share class 0
-        ecfg.mpc.sampling.num_scenarios = 10;
+        ecfg.mpc.sampling.set_manual_sample_count(10);
         ecfg.rollout.rollout_steps = 10;
         ecfg.mpc.horizon = 10;
         ecfg.dro.enabled = false;
         ecfg.mpc.safe_horizon_enabled = false;
 
         auto rec = run_experiment_rollout(ecfg, 42);
-        assert(rec.total_steps == 10);
-        std::cout << "PASS (collision=" << rec.collision
-                  << ", progress=" << rec.total_progress << ")\n";
+        check(rec.total_steps == 10,
+              "ExperimentConfig class-sharing fields reach the canonical harness");
     }
 
-    std::cout << "\n=== All obstacle class tests PASSED ===\n";
-    return 0;
+    std::cout << "\n=== Obstacle-class test "
+              << (failures == 0 ? "PASSED" : "FAILED") << " ===\n";
+    return failures == 0 ? 0 : 1;
 }

@@ -1,98 +1,169 @@
-# OT-SHMPC Paper: Standalone Export
+# Scenario MPC with Distributionally Robust Obstacle Prediction
 
-This directory contains the code used for ****
-
-## Dependencies
-
-- **Eigen3** (≥ 3.3): `sudo apt-get install libeigen3-dev` (or equivalent)
-- **Python 3** with NumPy, Pandas, Matplotlib (for figure generation)
-
-## Directory layout
-
-```
-dro_shmpcc/
-├── CMakeLists.txt          # Builds library + paper_experiment_runner + tests
-├── README.md               # This file
-├── include/                # C++ headers (config, MPC, DRO, OT predictor, etc.)
-│   └── experiment_harness.hpp  # Canonical rollout API (ExperimentConfig, RolloutRecord)
-├── src/
-│   └── experiment_harness.cpp  # ALL rollout logic (obstacle sim, collision, path, OT)
-├── tests/
-│   ├── paper_experiment_runner.cpp  # Experiment configs A-H
-│   ├── test_dro_framework.cpp       # DRO module validation 
-│   ├── test_statistical_power.cpp   # Statistical tests (2000 rollouts)
-│   └── test_obstacle_class.cpp      # Obstacle class sharing validation
-```
+This repository contains the scenario-MPC library, its YAML-driven experiment
+harness, and a compact deterministic test suite. The harness is the only
+rollout implementation: it owns environment construction, obstacle simulation,
+mode observations, DRO reweighting, collision accounting, reproducible random
+streams, and artifact output.
 
 ## Build
 
-From the repo root:
+The project requires Eigen 3.3+ and an acados installation containing acados,
+HPIPM, and BLASFEO.
 
 ```bash
-cmake -S . -B build
-cmake --build build
+cmake -S . -B build -DACADOS_ROOT=/path/to/acados
+cmake --build build -j2
 ```
 
-## Run experiments and generate figures
+## Run an experiment
 
-From the repo root, after building:
+`experiment_runner` is the supported executable. It delegates every rollout to
+`run_experiment_rollout()` and produces a self-contained artifact bundle.
 
 ```bash
-cd build
-
-# Run all paper experiments (A–AB). Writes CSVs to build/paper_figures/
-./paper_experiment_runner
-
-# Optional: extra CSVs for fig 10–12 (bootstrap, missed-mode significance, ablation)
-./test_dro_framework
-./test_statistical_power
-
-# Validate obstacle class sharing
-./test_obstacle_class
-
-# Generate figures (reads/writes build/paper_figures/)
-python3 ../scripts/generate_results_figures.py
+./build/experiment_runner \
+  --config configs/quickstart.yaml \
+  --seed 77 \
+  --output build/artifacts \
+  --label quickstart
 ```
 
-Figures (e.g. `fig1_collision_vs_switching.png`) and CSVs will be in `build/paper_figures/`.
+For multiple deterministic rollouts, pass `--rollouts N`. The runner advances
+the master seed by one per rollout and writes `summary.csv` at the output root.
 
-To run a single experiment, e.g. A or T:
+The full `configs/default.yaml` is a certified research configuration and can
+be substantially more expensive than `configs/quickstart.yaml`.
+
+### Artifact bundle
+
+Each run creates `OUTPUT/RUN_NAME/` with:
+
+- `reproducibility.yaml` — master and derived plant/predictor/controller seeds,
+  source revision/tree state, source-config location, method, outcome, and QP
+  backend identity.
+- `resolved_config.yaml` — the normalized, replayable configuration used by
+  the harness. If a YAML source was used, it is also copied as
+  `source_config.yaml`.
+- `rollout.csv` — the rollout summary and a link to its artifact directory.
+- `trace.csv` — initial and post-step ego/obstacle states, modes, clearance,
+  radius, solve time, and collision state.
+- `rollout.svg` — a dependency-free visualization of the environment roads,
+  reference route, ego trajectory, and obstacle trajectories.
+- `rollout.gif` — an optional, dependency-free animated replay of the same
+  recorded rollout. It uses a small fixed palette and requires no external
+  renderer or video tool.
+- `scene.csv`, `geometry.csv`, and `rollout.rviz` — optional road/route data,
+  exact collision geometry, and an RViz display preset for the ROS 2 replayer.
+
+SVG is deliberately used so artifacts remain inspectable without Python,
+Matplotlib, RViz, or image-generation tooling.
+
+Artifacts can also be enabled from YAML:
+
+```yaml
+artifact_output_directory: build/artifacts
+artifact_run_name: experiment_a_seed_77
+artifact_write_manifest: true
+artifact_write_trace_csv: true
+artifact_write_visualization_svg: true
+artifact_write_visualization_gif: true
+artifact_gif_frame_stride: 1
+artifact_gif_playback_rate: 1.0
+artifact_write_rviz_replay: false
+```
+
+An empty `artifact_output_directory` keeps direct library calls and unit tests
+side-effect free. The CLI supplies an artifact directory by default. It honors
+these YAML settings unless an explicit `--svg`, `--gif`, `--rviz`, or matching
+`--no-*` option is passed.
+
+### Animated GIF
+
+For a fast visual replay without ROS 2, enable the GIF either in YAML or on the
+command line:
 
 ```bash
-./paper_experiment_runner A
-./paper_experiment_runner T
+./build/experiment_runner --config configs/quickstart.yaml --gif \
+  --output build/artifacts --label gif_demo
 ```
 
-## Architecture
+By default, `artifact_gif_frame_stride: 1` writes every recorded state from the
+initial condition through the final post-step state. Larger stride values are
+available for deliberately compact previews; their frame delays still preserve
+the recorded elapsed-time proportions. `artifact_gif_playback_rate: 1.0`
+makes one GIF loop span the actual recorded execution duration; use a larger
+positive value to replay faster.
+`configs/visualization_demo.yaml` is a short, full-frame GIF-and-RViz-ready
+example.
 
-All rollout logic lives in `experiment_harness.cpp` — obstacle simulation, mode observation tracking, multi-disc collision detection, OT predictor integration, path progress, and multi-obstacle class sharing. The paper experiment runner (`paper_experiment_runner.cpp`) is a thin configuration layer: it maps experiment parameters to `ExperimentConfig`, calls `run_experiment_rollout()`, and writes CSVs.
+### ROS 2 / RViz replay
 
-**Obstacle class sharing**: obstacles assigned to the same class share mode observations. When one obstacle's mode is observed, it is broadcast to all siblings in the same class. This is configured via `ExperimentConfig::obstacles_per_class` and tracked via `ModeHistory::obstacle_class` in the controller.
-
-## What this export includes
-
-- **Core SHMPC library**: scenario sampling, mode weights, DRO (Wasserstein worst-case weights + injection), OT predictor (Sinkhorn, ground cost), safe-horizon truncation, QP solver, collision constraints.
-- **Experiment harness**: canonical rollout runner with S-curve paths, multi-obstacle class sharing, OT predictor, and per-step callbacks for experiment-specific behavior.
-- **Paper experiment runner**: variants Base, DRO, OT, OT+SH, etc.; experiments A–AB writing CSVs for the paper figures. All rollouts delegate to the harness.
-- **test_dro_framework** and **test_statistical_power**: additional CSVs used by fig 10, 11, 12.
-- **test_obstacle_class**: validates obstacle class sharing (observation sync, late-join inheritance, class independence).
-- **Figure script**: `scripts/generate_results_figures.py` produces all paper figures from the CSVs.
-- **Docs**: pipeline description, OT/safe-horizon formulation, and complete codebase reference.
-
-## Exporting as a new repo
-
-From the parent of `ot_shmpc_paper`:
+The runner never re-simulates inside RViz. With `--rviz`, it records the route,
+road centerlines, state trace, and collision geometry; the optional replayer
+publishes those exact records as `nav_msgs/Path` and
+`visualization_msgs/MarkerArray` messages. Ego collision discs, obstacle radii,
+and the configured clearance boundary are drawn from `geometry.csv`.
 
 ```bash
-cp -r ot_shmpc_paper /path/to/new/repo
-cd /path/to/new/repo
-git init
-git add .
-git commit -m "Initial export: OT-SHMPC paper code"
+# In a shell where your ROS 2 distribution is sourced:
+cmake -S . -B build-ros2 -DACADOS_ROOT=/path/to/acados -DDRO_MPC_ENABLE_ROS2=ON
+cmake --build build-ros2 -j2 --target dro_mpc_rviz_replay experiment_runner
+
+./build-ros2/experiment_runner --config configs/quickstart.yaml --rviz \
+  --output build/artifacts --label rviz_demo
+./build-ros2/dro_mpc_rviz_replay --artifact build/artifacts/rviz_demo --loop
+
+# In a second sourced ROS 2 shell:
+rviz2 -d build/artifacts/rviz_demo/rollout.rviz
 ```
 
-Or zip:
+RViz replay requires `trace.csv`, so `artifact_write_rviz_replay: true` cannot
+be combined with `artifact_write_trace_csv: false`.
+
+The preset uses relative `dro_mpc/...` topic names. This resolves to the
+default `/dro_mpc/...` topics automatically; for a namespaced replay, launch
+both the replayer and RViz with the same ROS namespace (for example,
+`--ros-args -r __ns:=/run1`). Explicit topic remaps can likewise be selected
+in RViz or applied consistently to both processes.
+
+## Programmatic use
+
+```cpp
+ExperimentConfig config = default_experiment_config();
+config.artifacts.output_directory = "artifacts";
+config.artifacts.run_name = "baseline_seed_77";
+
+RolloutRecord result = run_experiment_rollout(config, 77u);
+std::cout << result.artifact_directory << '\n';
+```
+
+The output directory and every seed are recorded in the returned
+`RolloutRecord`, so calling code can index artifacts without reconstructing a
+path convention.
+
+## Tests
+
+The CTest suite contains focused unit and integration tests only; obsolete
+paper sweeps and one-off probes have been removed. It covers the controller,
+collision linearization, dynamics, scenario sampling, mode belief, DRO
+ambiguity/risk logic, configuration lifecycle, support accounting, artifacts,
+reproducibility, class sharing, and velocity bounds.
 
 ```bash
-zip -r ot_shmpc_paper.zip ot_shmpc_paper -x "ot_shmpc_paper/build/*" "ot_shmpc_paper/paper_figures/*"
+ctest --test-dir build --output-on-failure
 ```
+
+`test_experiment_artifacts` is the end-to-end contract for the artifact bundle:
+it validates the manifest, resolved config, trace, CSV linkage, SVG, GIF frame
+stream, RViz scene/preset, and replayable result from a real harness run.
+`test_experiment_runner_cli` verifies that YAML visualization settings are not
+overwritten by the runner and that explicit CLI options take precedence.
+
+## Configuration notes
+
+`configs/default.yaml` is the source of numerical defaults. A user overlay is
+loaded on top of it, then normalized and validated before controller creation.
+The CSV and artifact manifest record both the requested and effective mode-set
+information, derived RNG streams, active DRO risk model, ambiguity radius, and
+solver identity.

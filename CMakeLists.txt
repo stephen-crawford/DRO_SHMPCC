@@ -1,8 +1,38 @@
-# OT-SHMPC Paper Export: Minimal CMake for paper experiments and figures
+# OT-SHMPC: canonical build, experiment runner, and deterministic test suite
 # Requires: Eigen3. Build: cmake -S . -B build && cmake --build build
 
 cmake_minimum_required(VERSION 3.14)
 project(ot_shmpc_paper VERSION 1.0.0 LANGUAGES CXX)
+
+include(CTest)
+
+# Embed source provenance in every harness artifact.  A revision alone is not
+# enough during local research work, so record whether CMake observed a clean
+# tree when the executable was configured as well.
+execute_process(
+    COMMAND git rev-parse --verify HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    RESULT_VARIABLE DRO_MPC_GIT_REVISION_RESULT
+    OUTPUT_VARIABLE DRO_MPC_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT DRO_MPC_GIT_REVISION_RESULT EQUAL 0)
+    set(DRO_MPC_GIT_REVISION "unknown")
+endif()
+execute_process(
+    COMMAND git status --porcelain
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    RESULT_VARIABLE DRO_MPC_SOURCE_TREE_RESULT
+    OUTPUT_VARIABLE DRO_MPC_SOURCE_TREE_STATUS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(DRO_MPC_SOURCE_TREE_RESULT EQUAL 0 AND DRO_MPC_SOURCE_TREE_STATUS STREQUAL "")
+    set(DRO_MPC_SOURCE_TREE_STATE "clean")
+elseif(DRO_MPC_SOURCE_TREE_RESULT EQUAL 0)
+    set(DRO_MPC_SOURCE_TREE_STATE "dirty")
+else()
+    set(DRO_MPC_SOURCE_TREE_STATE "unknown")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,6 +112,7 @@ set(SCENARIO_MPC_SOURCES
     src/collision_constraints.cpp
     src/dynamics.cpp
     src/environment_geometry.cpp
+    src/experiment_artifacts.cpp
     src/experiment_harness.cpp
     src/mode_weights.cpp
     src/mpc_controller.cpp
@@ -97,7 +128,9 @@ target_include_directories(scenario_mpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 target_link_libraries(scenario_mpc PUBLIC Eigen3::Eigen dro_mpc_acados)
 target_compile_definitions(scenario_mpc PUBLIC
     DRO_MPC_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/configs/default.yaml"
-    DRO_MPC_ACADOS_GIT_COMMIT="${DRO_MPC_ACADOS_GIT_COMMIT}")
+    DRO_MPC_ACADOS_GIT_COMMIT="${DRO_MPC_ACADOS_GIT_COMMIT}"
+    DRO_MPC_GIT_REVISION="${DRO_MPC_GIT_REVISION}"
+    DRO_MPC_SOURCE_TREE_STATE="${DRO_MPC_SOURCE_TREE_STATE}")
 
 if(UNIX AND NOT APPLE)
     target_link_options(scenario_mpc INTERFACE
@@ -109,13 +142,25 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(scenario_mpc PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
 endif()
 
-# Paper experiment runner (experiments A–AB, writes CSVs to paper_figures/)
-add_executable(paper_experiment_runner tests/paper_experiment_runner.cpp)
-target_link_libraries(paper_experiment_runner PRIVATE scenario_mpc)
+# Supported experiment entry point. It delegates every rollout to the canonical
+# harness and writes a reproducibility/trace/visualization bundle by default.
+add_executable(experiment_runner tools/experiment_runner.cpp)
+target_link_libraries(experiment_runner PRIVATE scenario_mpc)
 
-# DRO / statistical power tests (extra CSVs for fig 10–12)
-add_executable(test_dro_framework tests/test_dro_framework.cpp)
-target_link_libraries(test_dro_framework PRIVATE scenario_mpc)
+option(DRO_MPC_ENABLE_ROS2
+    "Build the optional ROS 2/RViz artifact replayer (requires a sourced ROS 2 environment)"
+    OFF)
+if(DRO_MPC_ENABLE_ROS2)
+    find_package(ament_cmake REQUIRED)
+    find_package(rclcpp REQUIRED)
+    find_package(geometry_msgs REQUIRED)
+    find_package(nav_msgs REQUIRED)
+    find_package(visualization_msgs REQUIRED)
+
+    add_executable(dro_mpc_rviz_replay tools/rviz_replay.cpp)
+    ament_target_dependencies(dro_mpc_rviz_replay
+        rclcpp geometry_msgs nav_msgs visualization_msgs)
+endif()
 
 add_executable(test_obstacle_class tests/test_obstacle_class.cpp)
 target_link_libraries(test_obstacle_class PRIVATE scenario_mpc)
@@ -129,41 +174,35 @@ target_link_libraries(test_pruning_and_linearization PRIVATE scenario_mpc)
 add_executable(test_sample_complexity tests/test_sample_complexity.cpp)
 target_link_libraries(test_sample_complexity PRIVATE scenario_mpc)
 
+add_executable(test_dynamics tests/test_dynamics.cpp)
+target_link_libraries(test_dynamics PRIVATE scenario_mpc)
+
+add_executable(test_primal_ot tests/test_primal_ot.cpp)
+target_link_libraries(test_primal_ot PRIVATE scenario_mpc)
+
+add_executable(test_scenario_sampler tests/test_scenario_sampler.cpp)
+target_link_libraries(test_scenario_sampler PRIVATE scenario_mpc)
+
+add_executable(test_experiment_statistics tests/test_experiment_statistics.cpp)
+target_link_libraries(test_experiment_statistics PRIVATE scenario_mpc)
+
+add_executable(test_experiment_artifacts tests/test_experiment_artifacts.cpp)
+target_link_libraries(test_experiment_artifacts PRIVATE scenario_mpc)
+target_include_directories(test_experiment_artifacts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+
+add_executable(test_experiment_runner_cli tests/test_experiment_runner_cli.cpp)
+add_dependencies(test_experiment_runner_cli experiment_runner)
+target_compile_definitions(test_experiment_runner_cli PRIVATE
+    EXPERIMENT_RUNNER_PATH="$<TARGET_FILE:experiment_runner>")
+
+add_executable(test_safe_horizon_configuration tests/test_safe_horizon_configuration.cpp)
+target_link_libraries(test_safe_horizon_configuration PRIVATE scenario_mpc)
+
+add_executable(test_support_accounting tests/test_support_accounting.cpp)
+target_link_libraries(test_support_accounting PRIVATE scenario_mpc)
+
 add_executable(test_projection tests/test_projection.cpp)
 target_link_libraries(test_projection PRIVATE scenario_mpc)
-
-add_executable(test_paper_strategies tests/test_paper_strategies.cpp)
-target_link_libraries(test_paper_strategies PRIVATE scenario_mpc)
-
-add_executable(test_strategy_sweep tests/test_strategy_sweep.cpp)
-target_link_libraries(test_strategy_sweep PRIVATE scenario_mpc)
-
-add_executable(test_tuning_sweep tests/test_tuning_sweep.cpp)
-target_link_libraries(test_tuning_sweep PRIVATE scenario_mpc)
-
-add_executable(test_paper_figures tests/test_paper_figures.cpp)
-target_link_libraries(test_paper_figures PRIVATE scenario_mpc)
-
-add_executable(test_dro_benefits tests/test_dro_benefits.cpp)
-target_link_libraries(test_dro_benefits PRIVATE scenario_mpc)
-
-add_executable(test_cdc_experiments tests/test_cdc_experiments.cpp)
-target_link_libraries(test_cdc_experiments PRIVATE scenario_mpc)
-
-add_executable(test_path_obstacle_sweep tests/test_path_obstacle_sweep.cpp)
-target_link_libraries(test_path_obstacle_sweep PRIVATE scenario_mpc)
-
-add_executable(test_generalization tests/test_generalization.cpp)
-target_link_libraries(test_generalization PRIVATE scenario_mpc)
-
-add_executable(test_trajectory_dro tests/test_trajectory_dro.cpp)
-target_link_libraries(test_trajectory_dro PRIVATE scenario_mpc)
-
-add_executable(radius_probe tests/radius_probe.cpp)
-target_link_libraries(radius_probe PRIVATE scenario_mpc)
-
-add_executable(micro_dro_probe tests/micro_dro_probe.cpp)
-target_link_libraries(micro_dro_probe PRIVATE scenario_mpc)
 
 add_executable(test_mode_belief tests/test_mode_belief.cpp)
 target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
@@ -171,11 +210,17 @@ target_link_libraries(test_mode_belief PRIVATE scenario_mpc)
 add_executable(test_mode_catalog tests/test_mode_catalog.cpp)
 target_link_libraries(test_mode_catalog PRIVATE scenario_mpc)
 
+add_executable(test_waypoint_trajectory tests/test_waypoint_trajectory.cpp)
+target_link_libraries(test_waypoint_trajectory PRIVATE scenario_mpc)
+
 add_executable(test_environment_topologies tests/test_environment_topologies.cpp)
 target_link_libraries(test_environment_topologies PRIVATE scenario_mpc)
 
 add_executable(test_switching_risk tests/test_switching_risk.cpp)
 target_link_libraries(test_switching_risk PRIVATE scenario_mpc)
+
+add_executable(test_risk_scoring_models tests/test_risk_scoring_models.cpp)
+target_link_libraries(test_risk_scoring_models PRIVATE scenario_mpc)
 
 add_executable(test_ground_cost tests/test_ground_cost.cpp)
 target_link_libraries(test_ground_cost PRIVATE scenario_mpc)
@@ -189,35 +234,53 @@ target_link_libraries(test_acados_qp_solver PRIVATE scenario_mpc)
 add_executable(test_acados_reproducibility tests/test_acados_reproducibility.cpp)
 target_link_libraries(test_acados_reproducibility PRIVATE scenario_mpc)
 
-add_executable(velocity_bound_probe tests/velocity_bound_probe.cpp)
-target_link_libraries(velocity_bound_probe PRIVATE scenario_mpc)
-
-add_executable(paper_recompute tests/paper_recompute.cpp)
-target_link_libraries(paper_recompute PRIVATE scenario_mpc)
-
-add_executable(paper_recompute_coverage tests/paper_recompute_coverage.cpp)
-target_link_libraries(paper_recompute_coverage PRIVATE scenario_mpc)
-
-add_executable(diagnose_wdro_benefit tests/diagnose_wdro_benefit.cpp)
-target_link_libraries(diagnose_wdro_benefit PRIVATE scenario_mpc)
-
-add_executable(shift_test tests/shift_test.cpp)
-target_link_libraries(shift_test PRIVATE scenario_mpc)
-
-add_executable(wdro_mechanism_probe tests/wdro_mechanism_probe.cpp)
-target_link_libraries(wdro_mechanism_probe PRIVATE scenario_mpc)
-
-add_executable(fixed_rho_test tests/fixed_rho_test.cpp)
-target_link_libraries(fixed_rho_test PRIVATE scenario_mpc)
-
-add_executable(injection_test tests/injection_test.cpp)
-target_link_libraries(injection_test PRIVATE scenario_mpc)
+add_executable(test_velocity_bounds tests/test_velocity_bounds.cpp)
+target_link_libraries(test_velocity_bounds PRIVATE scenario_mpc)
 
 add_executable(pipeline_verify tests/pipeline_verify.cpp)
 target_link_libraries(pipeline_verify PRIVATE scenario_mpc)
 
-add_executable(risk_and_rho_verify tests/risk_and_rho_verify.cpp)
-target_link_libraries(risk_and_rho_verify PRIVATE scenario_mpc)
+if(BUILD_TESTING)
+    function(register_scenario_mpc_test target label)
+        add_test(NAME ${target} COMMAND $<TARGET_FILE:${target}>)
+        set_tests_properties(${target} PROPERTIES
+            LABELS "${label};deterministic"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    endfunction()
 
-add_executable(ablation_confound_check tests/ablation_confound_check.cpp)
-target_link_libraries(ablation_confound_check PRIVATE scenario_mpc)
+    # Focused tests cover every production component and run under CTest.
+    register_scenario_mpc_test(test_collision_halfspaces unit)
+    register_scenario_mpc_test(test_pruning_and_linearization unit)
+    register_scenario_mpc_test(test_projection unit)
+    register_scenario_mpc_test(test_dynamics unit)
+    register_scenario_mpc_test(test_obstacle_class integration)
+    register_scenario_mpc_test(test_mode_belief unit)
+    register_scenario_mpc_test(test_mode_catalog unit)
+    register_scenario_mpc_test(test_scenario_sampler unit)
+    register_scenario_mpc_test(test_waypoint_trajectory unit)
+    register_scenario_mpc_test(test_environment_topologies unit)
+    register_scenario_mpc_test(test_primal_ot unit)
+    register_scenario_mpc_test(test_ground_cost unit)
+    register_scenario_mpc_test(test_dro_ambiguity_sets unit)
+    register_scenario_mpc_test(test_switching_risk unit)
+    register_scenario_mpc_test(test_risk_scoring_models unit)
+    register_scenario_mpc_test(test_acados_qp_solver unit)
+    register_scenario_mpc_test(test_velocity_bounds integration)
+    register_scenario_mpc_test(test_experiment_statistics unit)
+    register_scenario_mpc_test(test_experiment_artifacts integration)
+    register_scenario_mpc_test(test_experiment_runner_cli integration)
+    register_scenario_mpc_test(test_sample_complexity unit)
+    register_scenario_mpc_test(test_safe_horizon_configuration unit)
+    register_scenario_mpc_test(test_support_accounting integration)
+    register_scenario_mpc_test(test_acados_reproducibility integration)
+    register_scenario_mpc_test(pipeline_verify integration)
+
+    # The optional ROS 2 target cannot be built in non-ROS environments, but a
+    # ROS-enabled build still gets a command-line smoke test without needing RViz.
+    if(DRO_MPC_ENABLE_ROS2)
+        add_test(NAME test_rviz_replay_help COMMAND $<TARGET_FILE:dro_mpc_rviz_replay> --help)
+        set_tests_properties(test_rviz_replay_help PROPERTIES
+            LABELS "integration;ros2"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+endif()
