@@ -38,6 +38,14 @@ PrimalOTResult solve_primal_ot(
     const std::vector<std::string>& mode_ids,
     double rho);
 
+PrimalOTResult solve_primal_ot(
+    const std::vector<double>& nominal_weights,
+    const std::vector<double>& risk_vector,
+    const std::vector<std::vector<double>>& D,
+    double rho);
+
 }  // namespace dro_mpc
+
+
 
 #endif  // DRO_MPC_PRIMAL_OT_HPP

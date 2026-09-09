@@ -26,6 +26,7 @@
 #define DRO_MPC_SCHUURMANS_AMBIGUITY_HPP
 
 #include "types.hpp"   // dro_mpc::AmbiguityDivergence (Table I families)
+#include "primal_ot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +34,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <stdexcept>
 
 namespace dro_mpc {
 namespace schuurmans {
@@ -162,7 +164,15 @@ inline double ambiguity_divergence(
             return s;
         }
         case AmbiguityDivergence::WASSERSTEIN:
-            return K ? detail::wasserstein_upper(phat, p, *K) : 0.0;
+            if (!K) {
+                throw std::invalid_argument(
+                    "Wasserstein divergence requires distance kernel K");
+            }
+
+            return detail::wasserstein_upper(
+                phat,
+                p,
+                *K);
         default: return 0.0;
     }
 }
@@ -212,42 +222,40 @@ inline WorstCase worst_case_tv(const std::vector<double>& phat,
     return wc;
 }
 
-/// Kantorovich-dual Wasserstein worst-case (Linear): min_{λ≥0} λr + Σ p̂_i max_j(ξ_j − λ K_ij).
-/// Recover p* by transporting each source i to j*(i)=argmax_j(ξ_j − λ* K_ij).
-inline WorstCase worst_case_wasserstein(const std::vector<double>& phat,
-                                        const std::vector<double>& xi, double r,
-                                        const std::vector<std::vector<double>>& K) {
-    const int d = static_cast<int>(phat.size());
-    auto dual = [&](double lam) {
-        double v = lam * r;
-        for (int i = 0; i < d; ++i) {
-            double best = -std::numeric_limits<double>::infinity();
-            for (int j = 0; j < d; ++j) best = std::max(best, xi[j] - lam * K[i][j]);
-            v += phat[i] * best;
-        }
-        return v;
-    };
-    // 1D convex minimization over λ ≥ 0 (golden-section on a bracketed range).
-    double lo = 0.0, hi = 1.0;
-    while (dual(hi) < dual(hi * 0.5) && hi < 1e9) hi *= 2.0;   // grow until increasing
-    const double gr = 0.6180339887498949;
-    double a = lo, b = hi, c = b - gr * (b - a), e = a + gr * (b - a);
-    for (int it = 0; it < 200; ++it) {
-        if (dual(c) < dual(e)) { b = e; } else { a = c; }
-        c = b - gr * (b - a); e = a + gr * (b - a);
-        if (b - a < 1e-10) break;
-    }
-    const double lam = 0.5 * (a + b);
-    std::vector<double> p(d, 0.0);
+inline WorstCase worst_case_wasserstein(
+    const std::vector<double>& phat,
+    const std::vector<double>& xi,
+    double r,
+    const std::vector<std::vector<double>>& K)
+{
+    const auto ot =
+        solve_primal_ot(phat, xi, K, r);
+
+    WorstCase wc;
+
+    if (!ot.solved)
+        return wc;
+
+    const int d =
+        static_cast<int>(phat.size());
+
+    wc.p.assign(d, 0.0);
+
     for (int i = 0; i < d; ++i) {
-        int jbest = 0; double best = -std::numeric_limits<double>::infinity();
-        for (int j = 0; j < d; ++j) { double val = xi[j] - lam * K[i][j]; if (val > best) { best = val; jbest = j; } }
-        p[jbest] += phat[i];
+        for (int j = 0; j < d; ++j) {
+            wc.p[j] += ot.plan[i][j];
+        }
     }
-    WorstCase wc; wc.p = std::move(p);
-    wc.value = 0.0; for (int i = 0; i < d; ++i) wc.value += wc.p[i] * xi[i];
-    wc.divergence = wasserstein_upper(phat, wc.p, K);
-    wc.feasible = (wc.divergence <= r + 1e-6);
+
+    wc.value =
+        ot.expected_risk;
+
+    wc.divergence =
+        ot.transport_cost;
+
+    wc.feasible =
+        ot.transport_cost <= r + 1e-7;
+
     return wc;
 }
 
@@ -257,22 +265,58 @@ inline WorstCase worst_case_wasserstein(const std::vector<double>& phat,
 ///   Hellinger: φ(t)−tφ'(t) = 1−√t          ⇒ √t  = (λ+η−ξ_i)/λ
 ///   JS:        φ(t)−tφ'(t) = ½log(2/(1+t)) ⇒ t   = 2·exp(2(η−ξ_i)/λ) − 1
 /// with p_i = p̂_i / t_i (clamped ≥ 0). In every case p_i is DECREASING in η.
-inline double phi_p_i(AmbiguityDivergence fam, double phat_i, double xi_i,
-                      double lambda, double eta) {
-    if (phat_i <= 1e-300) return 0.0;
+inline double phi_p_i(
+    AmbiguityDivergence fam,
+    double phat_i,
+    double xi_i,
+    double lambda,
+    double eta)
+{
+    // Zero-support coordinates must be handled separately by
+    // phi_normalize(). The p_hat / t parameterization is valid
+    // only when p_hat_i > 0.
+    if (phat_i <= 1e-300) {
+        throw std::invalid_argument(
+            "phi_p_i requires phat_i > 0");
+    }
+
     const double lam = std::max(lambda, 1e-12);
+
     if (fam == AmbiguityDivergence::KULLBACK_LEIBLER) {
         const double t = (eta - xi_i) / lam;
-        return t > 1e-12 ? phat_i / t : phat_i * 1e12;
+
+        return t > 1e-12
+            ? phat_i / t
+            : phat_i * 1e12;
     }
+
     if (fam == AmbiguityDivergence::HELLINGER) {
-        const double sq = (lam + eta - xi_i) / lam;
+        const double sq =
+            (lam + eta - xi_i) / lam;
+
         const double t = sq * sq;
-        return t > 1e-12 ? phat_i / t : phat_i * 1e12;
+
+        return t > 1e-12
+            ? phat_i / t
+            : phat_i * 1e12;
     }
-    // JENSEN_SHANNON
-    const double t = 2.0 * std::exp(std::clamp(2.0 * (eta - xi_i) / lam, -700.0, 700.0)) - 1.0;
-    return t > 1e-12 ? phat_i / t : phat_i * 1e12;
+
+    if (fam == AmbiguityDivergence::JENSEN_SHANNON) {
+        const double exponent = std::clamp(
+            2.0 * (eta - xi_i) / lam,
+            -700.0,
+            700.0);
+
+        const double t =
+            2.0 * std::exp(exponent) - 1.0;
+
+        return t > 1e-12
+            ? phat_i / t
+            : phat_i * 1e12;
+    }
+
+    throw std::invalid_argument(
+        "phi_p_i called for non-phi divergence");
 }
 
 /// Per-family lower floor on η so every t_i > 0 (finite p_i). Below this the
@@ -286,32 +330,220 @@ inline double phi_eta_floor(AmbiguityDivergence fam, double xi_max, double lambd
 
 /// Given λ, choose the normalizer η so Σ_i p_i(λ,η) = 1 (monotone ⇒ bisection),
 /// returning the normalized p.
-inline std::vector<double> phi_normalize(AmbiguityDivergence fam,
-                                         const std::vector<double>& phat,
-                                         const std::vector<double>& xi,
-                                         double lambda,
-                                         std::vector<double>& p_out) {
+inline std::vector<double> phi_normalize(
+    AmbiguityDivergence fam,
+    const std::vector<double>& phat,
+    const std::vector<double>& xi,
+    double lambda,
+    std::vector<double>& p_out)
+{
     const int d = static_cast<int>(phat.size());
-    const double xi_max = *std::max_element(xi.begin(), xi.end());
+    const double lam = std::max(lambda, 1e-12);
+
     std::vector<double> p(d, 0.0);
-    auto sum_at = [&](double eta) {
-        double s = 0.0;
-        for (int i = 0; i < d; ++i) { p[i] = std::max(0.0, phi_p_i(fam, phat[i], xi[i], lambda, eta)); s += p[i]; }
-        return s;
-    };
-    // Σp is DECREASING in η for all three families. At the domain floor Σp > 1
-    // (max-ξ mass diverges); grow η until Σp < 1, then bisect for Σp = 1.
-    const double floor = phi_eta_floor(fam, xi_max, lambda);
-    double eta_lo = floor, eta_hi = floor + 1.0;
-    while (sum_at(eta_hi) > 1.0 && (eta_hi - floor) < 1e12) eta_hi = floor + (eta_hi - floor) * 2.0;
-    for (int it = 0; it < 300; ++it) {
-        const double eta = 0.5 * (eta_lo + eta_hi);
-        const double s = sum_at(eta);
-        if (s > 1.0) eta_lo = eta; else eta_hi = eta;   // decreasing in η
-        if (std::abs(s - 1.0) < 1e-11 || eta_hi - eta_lo < 1e-14) break;
+
+    // Separate empirical support from unseen modes.
+    std::vector<int> positive_support;
+    std::vector<int> zero_support;
+
+    positive_support.reserve(d);
+    zero_support.reserve(d);
+
+    for (int i = 0; i < d; ++i) {
+        if (phat[i] > 1e-300)
+            positive_support.push_back(i);
+        else
+            zero_support.push_back(i);
     }
-    double s = 0.0; for (double v : p) s += v;
-    if (s > 1e-300) for (double& v : p) v /= s;   // defensive renormalize
+
+    if (positive_support.empty()) {
+        throw std::invalid_argument(
+            "phat must contain at least one positive probability");
+    }
+
+    // ---------------------------------------------------------
+    // 1. Solve normalization assuming zero-support modes inactive
+    // ---------------------------------------------------------
+
+    double xi_max_pos =
+        -std::numeric_limits<double>::infinity();
+
+    for (int i : positive_support)
+        xi_max_pos = std::max(xi_max_pos, xi[i]);
+
+    auto positive_sum_at = [&](double eta) {
+        double sum = 0.0;
+
+        for (int i : positive_support) {
+            p[i] = std::max(
+                0.0,
+                phi_p_i(
+                    fam,
+                    phat[i],
+                    xi[i],
+                    lam,
+                    eta));
+
+            sum += p[i];
+        }
+
+        return sum;
+    };
+
+    const double floor =
+        phi_eta_floor(fam, xi_max_pos, lam);
+
+    double eta_lo = floor;
+    double eta_hi = floor + 1.0;
+
+    while (positive_sum_at(eta_hi) > 1.0 &&
+           (eta_hi - floor) < 1e12) {
+        eta_hi =
+            floor + 2.0 * (eta_hi - floor);
+    }
+
+    for (int it = 0; it < 300; ++it) {
+        const double eta =
+            0.5 * (eta_lo + eta_hi);
+
+        const double sum =
+            positive_sum_at(eta);
+
+        if (sum > 1.0)
+            eta_lo = eta;
+        else
+            eta_hi = eta;
+
+        if (std::abs(sum - 1.0) < 1e-11 ||
+            eta_hi - eta_lo < 1e-14)
+            break;
+    }
+
+    const double eta_pos =
+        0.5 * (eta_lo + eta_hi);
+
+    // ---------------------------------------------------------
+    // 2. Check zero-support KKT conditions
+    // ---------------------------------------------------------
+
+    double eta_zero =
+        -std::numeric_limits<double>::infinity();
+
+    int best_zero = -1;
+    double best_zero_xi =
+        -std::numeric_limits<double>::infinity();
+
+    for (int i : zero_support) {
+
+        double threshold = 0.0;
+
+        switch (fam) {
+
+        case AmbiguityDivergence::KULLBACK_LEIBLER:
+            // phat_i = 0:
+            // KL contribution is zero.
+            //
+            // stationarity:
+            // xi_i - eta = 0
+            threshold = xi[i];
+            break;
+
+        case AmbiguityDivergence::HELLINGER:
+            // phat_i = 0:
+            // H_i = p_i
+            //
+            // stationarity:
+            // xi_i - lambda - eta = 0
+            threshold = xi[i] - lam;
+            break;
+
+        case AmbiguityDivergence::JENSEN_SHANNON:
+            // phat_i = 0:
+            // JS_i = 0.5 * p_i * log(2)
+            //
+            // stationarity:
+            // xi_i - 0.5*lambda*log(2) - eta = 0
+            threshold =
+                xi[i] - 0.5 * lam * std::log(2.0);
+            break;
+
+        default:
+            throw std::invalid_argument(
+                "phi_normalize called for non-phi divergence");
+        }
+
+        eta_zero =
+            std::max(eta_zero, threshold);
+
+        if (xi[i] > best_zero_xi) {
+            best_zero_xi = xi[i];
+            best_zero = i;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 3. No unseen mode needs to become active
+    // ---------------------------------------------------------
+
+    if (zero_support.empty() ||
+        eta_pos >= eta_zero) {
+
+        positive_sum_at(eta_pos);
+
+        // Zero support remains zero.
+        for (int i : zero_support)
+            p[i] = 0.0;
+
+        double sum = 0.0;
+        for (double pi : p)
+            sum += pi;
+
+        if (sum > 1e-300) {
+            for (double& pi : p)
+                pi /= sum;
+        }
+
+        p_out = p;
+        return p;
+    }
+
+    // ---------------------------------------------------------
+    // 4. An unseen mode is active
+    //
+    // eta is pinned by the zero-support KKT threshold.
+    // Recompute the positive-support probabilities and put
+    // remaining probability on the highest-risk unseen mode.
+    // ---------------------------------------------------------
+
+    const double eta = eta_zero;
+
+    const double positive_mass =
+        positive_sum_at(eta);
+
+    for (int i : zero_support)
+        p[i] = 0.0;
+
+    const double remaining_mass =
+        std::max(0.0, 1.0 - positive_mass);
+
+    if (best_zero >= 0)
+        p[best_zero] = remaining_mass;
+
+    // Numerical cleanup only.
+    double total = 0.0;
+
+    for (double& pi : p) {
+        if (pi < 0.0 && pi > -1e-12)
+            pi = 0.0;
+
+        total += pi;
+    }
+
+    if (total > 1e-300) {
+        for (double& pi : p)
+            pi /= total;
+    }
+
     p_out = p;
     return p;
 }
@@ -340,10 +572,42 @@ inline WorstCase worst_case_phi(AmbiguityDivergence fam,
         if (lam_hi - lam_lo < 1e-12 * std::max(1.0, lam_hi)) break;
     }
     phi_normalize(fam, phat, xi, lam, p);
-    WorstCase wc; wc.p = p;
-    wc.value = 0.0; for (size_t i = 0; i < p.size(); ++i) wc.value += p[i] * xi[i];
-    wc.divergence = ambiguity_divergence(fam, phat, p);
-    wc.feasible = (wc.divergence <= r + 1e-4);
+
+    // Verify probability simplex.
+    double sum_p = 0.0;
+
+    for (double pi : p) {
+        if (!std::isfinite(pi) || pi < -1e-10) {
+            throw std::runtime_error(
+                "Invalid probability returned by worst_case_phi");
+        }
+
+        sum_p += pi;
+    }
+
+    if (std::abs(sum_p - 1.0) > 1e-7) {
+        throw std::runtime_error(
+            "worst_case_phi distribution does not sum to one");
+    }
+
+    WorstCase wc;
+    wc.p = p;
+
+    wc.value = 0.0;
+
+    for (size_t i = 0; i < p.size(); ++i)
+        wc.value += p[i] * xi[i];
+
+    wc.divergence =
+        ambiguity_divergence(
+            fam,
+            phat,
+            p);
+
+    wc.feasible =
+        std::isfinite(wc.divergence) &&
+        wc.divergence <= r + 1e-6;
+
     return wc;
 }
 
@@ -372,8 +636,16 @@ inline WorstCase worst_case_expectation(
     switch (fam) {
         case AmbiguityDivergence::TOTAL_VARIATION: return detail::worst_case_tv(phat, xi, r);
         case AmbiguityDivergence::WASSERSTEIN:
-            return K ? detail::worst_case_wasserstein(phat, xi, r, *K)
-                     : detail::worst_case_tv(phat, xi, r);
+            if (!K) {
+                throw std::invalid_argument(
+                    "Wasserstein worst-case expectation requires K");
+            }
+
+            return detail::worst_case_wasserstein(
+                phat,
+                xi,
+                r,
+                *K);
         case AmbiguityDivergence::KULLBACK_LEIBLER:
         case AmbiguityDivergence::JENSEN_SHANNON:
         case AmbiguityDivergence::HELLINGER:
