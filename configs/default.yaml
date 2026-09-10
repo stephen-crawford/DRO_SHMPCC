@@ -4,6 +4,7 @@
 
 # --- MPC / type / horizon ---
 mpc_type: sh_mpcc
+progress_weight: 10.0
 horizon: 20
 dt: 0.1
 # Manual fallback. An overlay that specifies num_scenarios without an explicit
@@ -155,5 +156,8 @@ artifact_write_trace_csv: true
 artifact_write_visualization_svg: true
 artifact_write_visualization_gif: false
 artifact_gif_frame_stride: 1
+# Display a deterministic subset of the actual obstacle forecasts.
+artifact_show_sampled_scenarios: true
+artifact_scenario_preview_count: 8
 artifact_gif_playback_rate: 1.0
 artifact_write_rviz_replay: false

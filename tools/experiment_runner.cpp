@@ -154,6 +154,7 @@ int main(int argc, char** argv) {
             summary.write_record(record);
             std::cout << "seed=" << run_seed
                       << " collision=" << (record.collision ? "yes" : "no")
+                      << " termination=" << record.termination_reason
                       << " artifact=" << record.artifact_directory << '\n';
         }
         summary.flush();

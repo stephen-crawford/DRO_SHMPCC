@@ -158,6 +158,7 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
 
     out << "# Resolved, replayable ExperimentConfig.\n";
     write_scalar(out, "mpc_type", mpc_type_name(mpc.type));
+    write_scalar(out, "progress_weight", mpc.objective.progress_weight);
     write_scalar(out, "horizon", mpc.horizon);
     write_scalar(out, "dt", mpc.dt);
     write_scalar(out, "num_scenarios", sampling.num_scenarios);
@@ -235,7 +236,11 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_obstacle_states(out, obstacle.initial_obstacle_states);
     write_scalar(out, "obs_path_fraction", obstacle.default_arc_fraction);
     write_scalar(out, "obstacle_process_noise", obstacle.process_noise);
+    write_bool(out, "obstacle_prediction_noise", obstacle.prediction_noise);
     write_scalar(out, "obstacle_speed_cap", obstacle.speed_cap);
+    write_scalar(out, "obstacle_behavior", yaml_quote(obstacle.behavior));
+    write_scalar(out, "obstacle_behavior_initial_speed", obstacle.behavior_initial_speed);
+    write_scalar(out, "obstacle_behavior_path_offset", obstacle.behavior_path_offset);
     write_scalar(out, "shift_psi", obstacle.shift.psi);
     write_scalar(out, "shift_boost", obstacle.shift.dangerous_boost);
     write_scalar(out, "boosted_mode", obstacle.shift.boosted_mode);
@@ -281,6 +286,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
                config.artifacts.write_visualization_svg);
     write_bool(out, "artifact_write_visualization_gif",
                config.artifacts.write_visualization_gif);
+    write_bool(out, "artifact_show_sampled_scenarios", config.artifacts.show_sampled_scenarios);
+    write_scalar(out, "artifact_scenario_preview_count", config.artifacts.scenario_preview_count);
     write_scalar(out, "artifact_gif_frame_stride",
                  config.artifacts.gif_frame_stride);
     write_scalar(out, "artifact_gif_playback_rate",
@@ -327,6 +334,8 @@ void write_manifest(const fs::path& path, const ExperimentConfig& config,
     out << "qp_solver_identity: " << yaml_quote(record.qp_solver_identity) << "\n";
     out << "collision: " << (record.collision ? "true" : "false") << "\n";
     out << "completed_path: " << (record.completed_path ? "true" : "false") << "\n";
+    out << "termination_reason: " << yaml_quote(record.termination_reason) << "\n";
+    out << "failed_decision_step: " << record.failed_decision_step << "\n";
     out << "resolved_config: resolved_config.yaml\n";
 }
 
@@ -579,6 +588,15 @@ void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
     draw_actor_history(canvas, trace, frame_index, -1, transform, 2, GIF_EGO);
 
     const auto& frame = trace.frames[frame_index];
+    for (const auto& scenario : frame.sampled_scenarios) {
+        for (const auto& [id, prediction] : scenario.trajectories) {
+            for (size_t k = 1; k < prediction.steps.size(); ++k) {
+                const auto [x0, y0] = transform.map(prediction.steps[k-1].mean);
+                const auto [x1, y1] = transform.map(prediction.steps[k].mean);
+                canvas.draw_line(x0, y0, x1, y1, 1, gif_obstacle_color(id));
+            }
+        }
+    }
     for (std::size_t obstacle = 0; obstacle < frame.obstacles.size(); ++obstacle) {
         const std::uint8_t color = gif_obstacle_color(obstacle);
         draw_actor_history(canvas, trace, frame_index, static_cast<int>(obstacle),
@@ -906,6 +924,27 @@ std::string write_rollout_artifacts(
                                          error.message());
             }
         }
+    }
+    {
+        // Always replace this file, including with an empty preview when disabled.
+        // Reusing a bundle must not expose forecasts from an earlier rollout.
+        std::ofstream samples(run_directory / "sampled_scenarios.csv");
+        require_open(samples, run_directory / "sampled_scenarios.csv");
+        std::ofstream summary(run_directory / "sampled_scenario_summary.csv");
+        require_open(summary, run_directory / "sampled_scenario_summary.csv");
+        summary << "step,scenario_count,max_sample_deviation\n" << std::setprecision(17);
+        for (const auto& frame : trace.frames)
+            if (frame.scenario_count > 0)
+                summary << frame.step << ',' << frame.scenario_count << ','
+                        << frame.max_sample_deviation << '\n';
+        samples << "step,obstacle_id,scenario_id,horizon_step,x,y\n" << std::setprecision(17);
+        for (const auto& frame : trace.frames)
+            for (const auto& scenario : frame.sampled_scenarios)
+                for (const auto& [id, prediction] : scenario.trajectories)
+                    for (size_t k = 0; k < prediction.steps.size(); ++k)
+                        samples << frame.step << ',' << id << ',' << scenario.scenario_id << ','
+                                << k << ',' << prediction.steps[k].mean.x() << ','
+                                << prediction.steps[k].mean.y() << '\n';
     }
     if (config.artifacts.write_trace_csv) {
         write_trace_csv(run_directory / "trace.csv", trace);

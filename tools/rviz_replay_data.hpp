@@ -39,6 +39,7 @@ struct ReplayFrame {
     double time_seconds = 0.0;
     ActorState ego;
     bool has_ego = false;
+    std::map<std::pair<int,int>, std::vector<Point2D>> sampled_scenarios;
     std::vector<ActorState> obstacles;
 };
 
@@ -211,6 +212,29 @@ inline ReplayGeometry load_geometry(const std::filesystem::path& path) {
         throw std::runtime_error("inconsistent safety margins in '" + path.string() + "'");
     }
     return geometry;
+}
+
+inline void load_sampled_scenarios(const std::filesystem::path& path,
+                                   std::vector<ReplayFrame>& frames) {
+    if (!std::filesystem::exists(path)) return; // Older bundles have no overlay.
+    std::ifstream input(path);
+    std::string line;
+    std::getline(input, line);
+    int number = 1;
+    while (std::getline(input, line)) {
+        ++number;
+        const auto fields = internal::split_csv(line);
+        if (fields.size() != 6) throw std::runtime_error("invalid sampled-scenario row");
+        const int step = internal::parse_int(fields[0], path, number);
+        const int obstacle = internal::parse_int(fields[1], path, number);
+        const int scenario = internal::parse_int(fields[2], path, number);
+        auto frame = std::find_if(frames.begin(), frames.end(),
+            [step](const ReplayFrame& f) { return f.step == step; });
+        if (frame == frames.end()) throw std::runtime_error("sample frame absent from trace");
+        frame->sampled_scenarios[{obstacle, scenario}].push_back({
+            internal::parse_double(fields[4], path, number),
+            internal::parse_double(fields[5], path, number)});
+    }
 }
 
 inline std::vector<ReplayFrame> load_trace(const std::filesystem::path& path) {

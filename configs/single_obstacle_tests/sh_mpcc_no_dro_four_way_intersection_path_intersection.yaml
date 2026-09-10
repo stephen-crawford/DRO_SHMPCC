@@ -1,0 +1,30 @@
+# Single obstacle matrix: seed 77; full controller sample sizing.
+mpc_type: sh_mpcc
+dro_enabled: false
+num_obstacles: 1
+num_modes: 4
+obs_modes: [constant_velocity, accelerating, turn_left_sharp, turn_right_sharp]
+rare_mode: ""
+rare_switch_prob: 0.0
+randomize_available_modes: false
+switch_regime: markov_jump_system
+switch_prob: 1.0
+obstacle_behavior: path_intersection
+obstacle_behavior_initial_speed: 1.0
+obstacle_behavior_path_offset: 8.0
+obstacle_process_noise: 0.0
+obstacle_prediction_noise: true
+obstacle_speed_cap: 2.0
+environment: four_way_intersection
+road_length: 25.0
+roundabout_radius: 8.0
+path_completion_fraction: 1.0
+path_completion_termination: true
+rollout_steps: 400
+scenario_tag: sh_mpcc_no_dro_four_way_intersection_path_intersection
+method_name: sh_mpcc
+artifact_write_visualization_gif: true
+artifact_gif_frame_stride: 1
+artifact_show_sampled_scenarios: true
+artifact_scenario_preview_count: 8
+artifact_write_rviz_replay: true

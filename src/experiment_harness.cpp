@@ -350,7 +350,7 @@ std::vector<ObstacleSim> construct_obstacles(
     const std::map<std::string, ModeModel>& mode_catalog,
     std::mt19937& rng
 ) {
-    const int obstacle_count = std::max(1, config.num_obstacles);
+    const int obstacle_count = config.num_obstacles == 0 ? 0 : std::max(1, config.num_obstacles);
     std::vector<ObstacleSim> obstacles(obstacle_count);
     const auto shared_modes = select_obstacle_mode_ids(
         config.obs_modes, config.rare_mode, mode_catalog,
@@ -434,6 +434,9 @@ RolloutRecord run_experiment_rollout(
     rec.requested_random_mode_count = config.obstacles.num_modes;
 
     auto mode_models = create_obstacle_mode_models(config.mpc.dt);
+    if (!config.obstacles.prediction_noise) {
+        for (auto& [id, model] : mode_models) model.G.setZero();
+    }
 
     RuntimeConfig mpc_cfg = config.to_scenario_mpc_config();
     mpc_cfg.random_seed = seeds.scenario;
@@ -475,6 +478,31 @@ RolloutRecord run_experiment_rollout(
 
     auto obs_sims = construct_obstacles(
         config.obstacles, env_setup.initial_obs, ref_path, mode_models, plant_rng);
+    // New test policies derive starts from the actual generated reference path.
+    // Existing mode-switching experiments retain their original placement.
+    const auto crossing = ref_path.get_point_at(0.5 * path_length);
+    const Eigen::Vector2d crossing_direction(-std::sin(crossing.heading), std::cos(crossing.heading));
+    if (config.obstacles.behavior != "mode_switching") {
+        for (auto& obstacle : obs_sims) {
+            const auto lead = ref_path.get_point_at(std::min(config.obstacles.behavior_path_offset, path_length));
+            Eigen::Vector2d position = lead.position;
+            Eigen::Vector2d direction(std::cos(lead.heading), std::sin(lead.heading));
+            if (config.obstacles.behavior == "path_intersection") {
+                position = crossing.position - 4.0 * crossing_direction;
+                direction = crossing_direction;
+            } else if (config.obstacles.behavior == "pursuit") {
+                position += 3.0 * Eigen::Vector2d(-direction.y(), direction.x());
+                direction = (ego.position() - position).normalized();
+            } else if (config.obstacles.behavior == "random_orientation") {
+                position = crossing.position;
+                std::uniform_real_distribution<double> angle(-M_PI, M_PI);
+                const double heading = angle(plant_rng);
+                direction = {std::cos(heading), std::sin(heading)};
+            }
+            const Eigen::Vector2d velocity = config.obstacles.behavior_initial_speed * direction;
+            obstacle.state = ObstacleState(position.x(), position.y(), velocity.x(), velocity.y());
+        }
+    }
     rec.effective_available_mode_counts.reserve(obs_sims.size());
     for (const auto& obstacle : obs_sims) {
         rec.effective_available_mode_counts.push_back(
@@ -560,6 +588,28 @@ RolloutRecord run_experiment_rollout(
             }
 
             apply_distribution_shift(config.obstacles.shift, obs_sims[oi], plant_rng);
+            if (config.obstacles.behavior == "pursuit" ||
+                config.obstacles.behavior == "path_intersection" ||
+                config.obstacles.behavior == "path_following") {
+                auto& obstacle = obs_sims[oi];
+                Eigen::Vector2d target = ego.position();
+                if (config.obstacles.behavior == "path_intersection")
+                    target = obstacle.state.position() + 4.0 * crossing_direction;
+                else if (config.obstacles.behavior == "path_following") {
+                    const double s = ref_path.is_closed_loop()
+                        ? ref_path.wrap_arc_length(path_progress + config.obstacles.behavior_path_offset)
+                        : std::min(path_length, path_progress + config.obstacles.behavior_path_offset);
+                    target = ref_path.get_position_at(s);
+                }
+                // One-step pursuit chooses an existing mode. Actual motion still
+                // uses that mode's dynamics and the ordinary plant propagation.
+                double best = std::numeric_limits<double>::infinity();
+                for (const auto& id : obstacle.available_modes) {
+                    const auto predicted = obstacle.mode_models.at(id).propagate(obstacle.state);
+                    const double score = (predicted.position() - target).squaredNorm();
+                    if (score < best) { best = score; obstacle.current_mode = id; }
+                }
+            }
 
             int obs_class = oi / per_class;
             // Timestep zero is the single real initial observation above, so
@@ -589,6 +639,28 @@ RolloutRecord run_experiment_rollout(
             config.mpc.horizon, config.mpc.dt);
         auto mpc_result = controller.solve(
             ego, obstacles, goal, trajectory_speed, path_progress, path_length);
+        // Attach forecasts to the decision-time frame, before applying its input.
+        // Select existing samples deterministically; visualization never samples RNGs.
+        if (config.artifacts.enabled() && config.artifacts.show_sampled_scenarios &&
+            !obstacles.empty()) {
+            const auto& samples = controller.scenarios();
+            auto& frame = trace.frames.back();
+            frame.scenario_count = samples.size();
+            // Diagnostic only: compare every sampled position with the first
+            // scenario at the same obstacle and horizon step, before subsetting.
+            for (const auto& sample : samples) {
+                for (const auto& [id, prediction] : sample.trajectories) {
+                    const auto& reference = samples.front().trajectories.at(id);
+                    for (size_t k = 0; k < prediction.steps.size(); ++k)
+                        frame.max_sample_deviation = std::max(frame.max_sample_deviation,
+                            (prediction.steps[k].mean - reference.steps.at(k).mean).norm());
+                }
+            }
+            const size_t count = std::min(samples.size(),
+                static_cast<size_t>(config.artifacts.scenario_preview_count));
+            for (size_t i = 0; i < count; ++i)
+                trace.frames.back().sampled_scenarios.push_back(samples[i * samples.size() / count]);
+        }
         rec.eps_wass = mpc_result.ambiguity_radius_used;
         rec.solve_times_raw.push_back(mpc_result.solve_time);
         rec.dro_risk_times_raw.push_back(mpc_result.dro_risk_evaluation_time);
@@ -681,6 +753,10 @@ RolloutRecord run_experiment_rollout(
             auto input = mpc_result.first_input().value();
             control_effort += input.a * input.a + input.omega * input.omega;
             ego = dynamics.propagate(ego, input);
+        } else {
+            rec.termination_reason = "no_admissible_control";
+            rec.failed_decision_step = step + 1;
+            break;
         }
 
         for (int oi = 0; oi < n_obs; ++oi) {
@@ -735,6 +811,7 @@ RolloutRecord run_experiment_rollout(
             path_progress >=
                 config.environment.path_completion_fraction * path_length) {
             rec.completed_path = true;
+            rec.termination_reason = "path_complete";
             break;
         }
     }

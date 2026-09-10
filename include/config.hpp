@@ -60,6 +60,7 @@ inline std::string mpc_type_name(MPCType t) {
 
 struct MPCObjectiveWeights {
     double goal_weight = 10.0;
+    double progress_weight = 10.0;  // MPCC: reward average projected arc-length rate [m/s]
     double velocity_weight = 1.0;
     double acceleration_weight = 0.1;
     double steering_weight = 0.1;
@@ -546,6 +547,8 @@ struct RuntimeConfig {
     }
 
     void validate() const {
+        if (!std::isfinite(mpc.objective.progress_weight) || mpc.objective.progress_weight < 0.0)
+            throw std::invalid_argument("progress_weight must be finite and non-negative");
         if (mpc.horizon <= 0) throw std::invalid_argument("horizon must be positive");
         if (mpc.dt <= 0) throw std::invalid_argument("dt must be positive");
         if (mpc.sampling.one_minus_chance_constraint_violation_probability <= 0 || mpc.sampling.one_minus_chance_constraint_violation_probability >= 1)

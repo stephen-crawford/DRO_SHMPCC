@@ -132,7 +132,7 @@ private:
     ) const {
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = FRAME_ID;
-        marker.header.stamp = get_clock()->now().to_msg();
+        marker.header.stamp = get_clock()->now();
         marker.ns = name;
         marker.id = id;
         marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
@@ -148,7 +148,7 @@ private:
     nav_msgs::msg::Path make_path(const std::vector<Point2D>& points) const {
         nav_msgs::msg::Path path;
         path.header.frame_id = FRAME_ID;
-        path.header.stamp = get_clock()->now().to_msg();
+        path.header.stamp = get_clock()->now();
         path.poses.reserve(points.size());
         for (const auto& point : points) {
             geometry_msgs::msg::PoseStamped pose;
@@ -166,7 +166,7 @@ private:
     ) const {
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = FRAME_ID;
-        marker.header.stamp = get_clock()->now().to_msg();
+        marker.header.stamp = get_clock()->now();
         marker.ns = name;
         marker.id = id;
         marker.type = visualization_msgs::msg::Marker::CYLINDER;
@@ -213,6 +213,9 @@ private:
         ego_path_publisher_->publish(make_path(ego_history));
 
         visualization_msgs::msg::MarkerArray markers;
+        visualization_msgs::msg::Marker clear;
+        clear.action = visualization_msgs::msg::Marker::DELETEALL;
+        markers.markers.push_back(clear);
         int marker_id = 0;
         for (const auto& road : scene_.roads) {
             markers.markers.push_back(line_marker(
@@ -228,6 +231,11 @@ private:
         const std::vector<std::array<float, 3>> obstacle_colors = {
             {1.0F, 0.55F, 0.26F}, {0.97F, 0.47F, 0.73F},
             {0.82F, 0.60F, 0.13F}, {0.64F, 0.44F, 0.97F}};
+        for (const auto& [key, points] : frame.sampled_scenarios) {
+            const auto& color = obstacle_colors[static_cast<size_t>(std::max(0, key.first)) % obstacle_colors.size()];
+            markers.markers.push_back(line_marker(marker_id++, "sampled_scenarios", points,
+                color[0], color[1], color[2], 0.025));
+        }
         for (const auto& obstacle : frame.obstacles) {
             const auto& color = obstacle_colors[
                 static_cast<std::size_t>(std::max(0, obstacle.id)) % obstacle_colors.size()];
@@ -296,7 +304,8 @@ int main(int argc, char** argv) {
         const Options options = parse_options(application_arguments);
         const ReplayScene scene = load_scene(options.artifact_directory / "scene.csv");
         const ReplayGeometry geometry = load_geometry(options.artifact_directory / "geometry.csv");
-        const std::vector<ReplayFrame> trace = load_trace(options.artifact_directory / "trace.csv");
+        std::vector<ReplayFrame> trace = load_trace(options.artifact_directory / "trace.csv");
+        dro_mpc::rviz_replay::load_sampled_scenarios(options.artifact_directory / "sampled_scenarios.csv", trace);
         rclcpp::init(argc, argv);
         const auto node = std::make_shared<RvizReplay>(
             scene, geometry, trace, options.playback_rate, options.loop);

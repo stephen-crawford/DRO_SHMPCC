@@ -2,6 +2,7 @@
 
     #include <cmath>
     #include <limits>
+    #include <numeric>
     
     namespace dro_mpc {
     

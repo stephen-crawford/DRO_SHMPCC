@@ -1,0 +1,20 @@
+# Reproducible base scenario; inherits solver/certificate settings from default.yaml.
+mpc_type: sh_mpc
+num_obstacles: 0
+environment: two_lane_highway
+road_length: 25.0
+path_completion_fraction: 1.0
+path_completion_termination: true
+rollout_steps: 400
+scenario_tag: sh_mpc_0_obstacles
+dro_enabled: false
+# A stationary obstacle on the route, with no plant process noise.
+obs_modes: [stop]
+rare_mode: ""
+switch_prob: 0.0
+rare_switch_prob: 0.0
+obstacle_initial_states: []
+obstacle_process_noise: 0.0
+artifact_write_visualization_gif: true
+artifact_gif_frame_stride: 1
+artifact_write_rviz_replay: true

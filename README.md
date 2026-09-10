@@ -154,6 +154,11 @@ reproducibility, class sharing, and velocity bounds.
 ctest --test-dir build --output-on-failure
 ```
 
+The fifteen full-route base scenarios (MPC, MPCC, SH-MPC, and SH-MPCC with zero
+or one obstacle) run with `ctest --test-dir build -L base --output-on-failure`.
+See [the base-test instructions](configs/base_tests/README.md) for reproducibility
+checks, complete-run GIFs, and RViz replay commands.
+
 `test_experiment_artifacts` is the end-to-end contract for the artifact bundle:
 it validates the manifest, resolved config, trace, CSV linkage, SVG, GIF frame
 stream, RViz scene/preset, and replayable result from a real harness run.
@@ -167,3 +172,68 @@ loaded on top of it, then normalized and validated before controller creation.
 The CSV and artifact manifest record both the requested and effective mode-set
 information, derived RNG streams, active DRO risk model, ambiguity radius, and
 solver identity.
+
+### MPCC progress objective
+
+MPCC and SH-MPCC retain contouring, lag, control-effort, and terminal-heading
+penalties, and reward average progress along the reference path over the horizon:
+
+```text
+J = sum(contour/lag penalties) + sum(control-effort penalties)
+    + terminal-heading penalty - progress_weight * (s_N - s_0) / (N * dt)
+```
+
+They have no endpoint-distance or reference-speed tracking term. MPC and SH-MPC
+retain their existing objectives. `progress_weight` defaults to 10.0 and is
+recorded in `resolved_config.yaml`; it trades progress against the remaining
+penalties. Weight 1.0 stalled before the stationary obstacle in the base MPCC
+case, while 10.0 completed that diagnostic run with 0.2577 m contouring RMS.
+
+Here `s` is the existing monotone closest-point arc length on the discretized
+reference geometry, not an independently optimized virtual progress state.
+The condensed QP chains derivatives through the selected projection segments;
+at projection kinks it uses the documented active-branch derivative. The
+nonlinear rollout/report evaluates actual projected progress. Initial guesses
+follow reference headings rather than the endpoint. This preserves the existing
+four-state dynamics, two-input interface, collision constraints, and certificate
+calculations. `test_mpcc_progress` checks projection derivatives, independence
+from endpoint/reference speed, the effect of the reward, and S-curve tracking.
+
+The plan-acceptance candidate rejects infeasible SQP plans and validates the
+existing braking fallback against sampled collision rows, road boundaries,
+input limits, and velocity bounds before allowing execution. Accepted fallbacks
+are explicitly `fallback_not_certified`; the original SQP support union is
+preserved. If neither plan is admissible, the harness stops without advancing
+the plant and records `termination_reason: no_admissible_control` and the failed
+decision number in `reproducibility.yaml`. It does not append frozen frames.
+
+The subsequent linearization candidate prepares a separate copy of the SH
+collision-normal anchors with the reference module's lateral push and circle
+Douglas–Rachford projection, before pruning and halfspace construction. The
+condensed SQP nominal remains a rollout of its controls; position-only projection
+is no longer applied to it. Sample counts and support-cap termination are unchanged.
+The projection uses a deterministic lateral direction at an exact circle center,
+where the reference implementation's normalization is undefined.
+
+With seed 77, all eight base cases complete without recorded collisions and
+reproduce exactly excluding elapsed solver time. SH-MPCC with one obstacle takes
+137 steps, with minimum disc/obstacle center separation 1.0099 m (threshold
+0.95 m), and 137/137 decisions report certified. SH-MPC takes 82 steps with
+minimum separation 0.9723 m and 82/82 decisions report certified. The user inspected and accepted these linearization changes.
+
+CTest reports 35/37 passing. The existing obstacle-class test still fails.
+`test_plan_acceptance` now fails its requirement that this scene exercise a
+fallback: the candidate avoids the obstacle without entering that branch in its
+40-step fixture. Its assertions have not been weakened or changed. The new
+`test_sh_anchor_preparation` covers lateral normals for a stationary obstacle,
+exact-center handling, preservation of the initial state, and an empty scene.
+
+Scenario previews in GIF/RViz are enabled by default with
+`artifact_show_sampled_scenarios: true` and `artifact_scenario_preview_count: 8`.
+See `configs/base_tests/README.md` for the stationary, dynamic, and dynamic DRO
+baselines and the interpretation of the recorded forecast subset.
+
+The `sh_mpcc_no_noise_dynamic_1_obstacles` case additionally disables prediction
+noise via `obstacle_prediction_noise: false` (plant noise is separately zero).
+Its test checks exact within-decision equality over all samples; the full-set
+counts and deviations are recorded in `sampled_scenario_summary.csv`.

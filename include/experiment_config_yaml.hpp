@@ -284,6 +284,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
 
         try {
             if      (k == "mpc_type")                      { cfg.mpc.type = parse_mpc(val); cfg.mpc.sync_from_type(); }
+            else if (k == "progress_weight")               cfg.mpc.objective.progress_weight = std::stod(val);
             else if (k == "horizon")                       cfg.mpc.horizon = std::stoi(val);
             else if (k == "dt")                            cfg.mpc.dt = std::stod(val);
             else if (k == "num_scenarios") {
@@ -396,6 +397,10 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "obstacle_initial_states" || k == "obstacle_starts")
                                                            cfg.obstacles.initial_obstacle_states = parse_obstacle_states(val);
             else if (k == "obs_path_fraction")             cfg.obstacles.default_arc_fraction = std::stod(val);
+            else if (k == "obstacle_behavior") cfg.obstacles.behavior = val;
+            else if (k == "obstacle_behavior_initial_speed") cfg.obstacles.behavior_initial_speed = std::stod(val);
+            else if (k == "obstacle_behavior_path_offset") cfg.obstacles.behavior_path_offset = std::stod(val);
+            else if (k == "obstacle_prediction_noise") cfg.obstacles.prediction_noise = to_bool(val);
             else if (k == "obstacle_process_noise")        cfg.obstacles.process_noise = std::stod(val);
             else if (k == "obstacle_speed_cap")            cfg.obstacles.speed_cap = std::stod(val);
             else if (k == "shift_psi" || k == "shift_rho") cfg.obstacles.shift.psi = std::stod(val);
@@ -442,6 +447,8 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "artifact_write_visualization_gif" ||
                      k == "artifact_write_gif")
                                                            cfg.artifacts.write_visualization_gif = to_bool(val);
+            else if (k == "artifact_show_sampled_scenarios") cfg.artifacts.show_sampled_scenarios = to_bool(val);
+            else if (k == "artifact_scenario_preview_count") cfg.artifacts.scenario_preview_count = std::stoi(val);
             else if (k == "artifact_gif_frame_stride")    cfg.artifacts.gif_frame_stride = std::stoi(val);
             else if (k == "artifact_gif_playback_rate")  cfg.artifacts.gif_playback_rate = std::stod(val);
             else if (k == "artifact_gif_frame_delay_ms")

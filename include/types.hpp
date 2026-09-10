@@ -392,6 +392,7 @@ enum class SafeHorizonCertificateStatus {
     SUPPORT_EXCEEDED,
     PLAN_INFEASIBLE,
     CERTIFIED,
+    FALLBACK_NOT_CERTIFIED,
 };
 
 inline const char* safe_horizon_certificate_status_name(
@@ -408,6 +409,8 @@ inline const char* safe_horizon_certificate_status_name(
             return "support_exceeded";
         case SafeHorizonCertificateStatus::PLAN_INFEASIBLE:
             return "plan_infeasible";
+        case SafeHorizonCertificateStatus::FALLBACK_NOT_CERTIFIED:
+            return "fallback_not_certified";
         case SafeHorizonCertificateStatus::CERTIFIED:
             return "certified";
     }
@@ -415,7 +418,8 @@ inline const char* safe_horizon_certificate_status_name(
 }
 
 struct MPCResult {
-    bool success;                           // Whether optimization succeeded
+    bool success;                           // Whether the returned plan is executable
+    bool used_fallback = false;
     std::vector<EgoState> ego_trajectory;   // Planned ego states over horizon
     std::vector<EgoInput> control_inputs;   // Planned control inputs
     /// Scenarios binding or violated on the returned trajectory only.

@@ -1,8 +1,5 @@
-# OT-SHMPC: canonical build, experiment runner, and deterministic test suite
-# Requires: Eigen3. Build: cmake -S . -B build && cmake --build build
-
 cmake_minimum_required(VERSION 3.14)
-project(ot_shmpc_paper VERSION 1.0.0 LANGUAGES CXX)
+project(dro_shmpcc VERSION 1.0.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -157,9 +154,22 @@ if(DRO_MPC_ENABLE_ROS2)
     find_package(nav_msgs REQUIRED)
     find_package(visualization_msgs REQUIRED)
 
-    add_executable(dro_mpc_rviz_replay tools/rviz_replay.cpp)
-    ament_target_dependencies(dro_mpc_rviz_replay
-        rclcpp geometry_msgs nav_msgs visualization_msgs)
+    add_executable(dro_mpc_rviz_replay
+        tools/rviz_replay.cpp
+    )
+
+    ament_target_dependencies(
+        dro_mpc_rviz_replay
+        rclcpp
+        geometry_msgs
+        nav_msgs
+        visualization_msgs
+    )
+
+    install(
+        TARGETS dro_mpc_rviz_replay
+        DESTINATION lib/${PROJECT_NAME}
+    )
 endif()
 
 add_executable(test_obstacle_class tests/test_obstacle_class.cpp)
@@ -234,6 +244,15 @@ target_link_libraries(test_acados_qp_solver PRIVATE scenario_mpc)
 add_executable(test_acados_reproducibility tests/test_acados_reproducibility.cpp)
 target_link_libraries(test_acados_reproducibility PRIVATE scenario_mpc)
 
+add_executable(test_sh_anchor_preparation tests/test_sh_anchor_preparation.cpp)
+target_link_libraries(test_sh_anchor_preparation PRIVATE scenario_mpc)
+
+add_executable(test_plan_acceptance tests/test_plan_acceptance.cpp)
+target_link_libraries(test_plan_acceptance PRIVATE scenario_mpc)
+
+add_executable(test_mpcc_progress tests/test_mpcc_progress.cpp)
+target_link_libraries(test_mpcc_progress PRIVATE scenario_mpc)
+
 add_executable(test_velocity_bounds tests/test_velocity_bounds.cpp)
 target_link_libraries(test_velocity_bounds PRIVATE scenario_mpc)
 
@@ -266,6 +285,9 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_risk_scoring_models unit)
     register_scenario_mpc_test(test_acados_qp_solver unit)
     register_scenario_mpc_test(test_velocity_bounds integration)
+    register_scenario_mpc_test(test_mpcc_progress integration)
+    register_scenario_mpc_test(test_sh_anchor_preparation unit)
+    register_scenario_mpc_test(test_plan_acceptance integration)
     register_scenario_mpc_test(test_experiment_statistics unit)
     register_scenario_mpc_test(test_experiment_artifacts integration)
     register_scenario_mpc_test(test_experiment_runner_cli integration)
@@ -283,4 +305,34 @@ if(BUILD_TESTING)
             LABELS "integration;ros2"
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
+endif()
+
+# Full-route base scenarios retain GIF and RViz bundles for user inspection.
+if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME test_scenario_preview_toggle
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scenario_preview_toggle.py"
+                $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_scenario_preview_toggle PROPERTIES LABELS "integration;deterministic")
+    foreach(base_mode mpc mpcc sh_mpc sh_mpcc mpc_dynamic mpcc_dynamic sh_mpc_dynamic sh_mpcc_dynamic sh_mpc_dro_dynamic sh_mpcc_dro_dynamic sh_mpcc_no_noise_dynamic)
+        foreach(obstacle_count 0 1)
+            if(base_mode MATCHES "dynamic" AND obstacle_count EQUAL 0)
+                continue()
+            endif()
+            set(base_case "${base_mode}_${obstacle_count}_obstacles")
+            add_test(NAME "base_${base_case}"
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_base_scenario.py"
+                    --runner $<TARGET_FILE:experiment_runner>
+                    --config "${CMAKE_CURRENT_SOURCE_DIR}/configs/base_tests/${base_case}.yaml"
+                    --output "${CMAKE_CURRENT_BINARY_DIR}/base-artifacts")
+            set_tests_properties("base_${base_case}" PROPERTIES
+                LABELS "base;integration;deterministic"
+                TIMEOUT 1800)
+        endforeach()
+    endforeach()
+endif()
+
+if(DRO_MPC_ENABLE_ROS2)
+    ament_package()
 endif()

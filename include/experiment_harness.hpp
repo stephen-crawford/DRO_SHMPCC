@@ -123,12 +123,24 @@ struct ObstacleExperimentConfig {
 
     double default_arc_fraction = 0.35;
     double process_noise = 0.02;
+    /// Disable model process noise in controller/predictor trajectories for deterministic fixtures.
+    bool prediction_noise = true;
     double speed_cap = 2.0;
+    /// Test-plant policy; does not modify the controller's mode models.
+    std::string behavior = "mode_switching";
+    double behavior_initial_speed = 1.0;
+    double behavior_path_offset = 8.0;
 
     void apply_layout() {
+        if (behavior != "mode_switching" && behavior != "random_orientation" &&
+            behavior != "pursuit" && behavior != "path_intersection" && behavior != "path_following")
+            throw std::invalid_argument("unknown obstacle_behavior: " + behavior);
+        if (!std::isfinite(behavior_initial_speed) || behavior_initial_speed <= 0 ||
+            !std::isfinite(behavior_path_offset) || behavior_path_offset <= 0)
+            throw std::invalid_argument("obstacle behavior speed and offset must be finite and positive");
         num_modes = std::max(1, num_modes);
         if (num_obstacles <= 1) {
-            num_obstacles = 1;
+            num_obstacles = num_obstacles == 0 ? 0 : 1;
             if (obstacles_per_class <= 0) obstacles_per_class = 1;
             return;
         }
@@ -322,6 +334,8 @@ struct ExperimentArtifactConfig {
     /// Retain every Nth trace frame in rollout.gif; one preserves every recorded
     /// execution state, including the initial and final states.
     int gif_frame_stride = 1;
+    bool show_sampled_scenarios = true;
+    int scenario_preview_count = 8;
     /// Replay-rate multiplier for recorded trace timestamps: one means the GIF
     /// spans the simulation's elapsed execution time exactly (up to GIF's
     /// centisecond resolution); two replays twice as fast.
@@ -333,6 +347,7 @@ struct ExperimentArtifactConfig {
     bool enabled() const noexcept { return !output_directory.empty(); }
 
     void validate() const {
+        if (scenario_preview_count < 1) throw std::invalid_argument("scenario_preview_count must be positive");
         if (gif_frame_stride < 1) {
             throw std::invalid_argument("artifact_gif_frame_stride must be at least one");
         }
@@ -569,6 +584,8 @@ struct RolloutRecord {
 
     double total_progress = 0.0;
     bool completed_path = false;
+    std::string termination_reason = "step_limit";
+    int failed_decision_step = -1;
     double control_effort = 0.0;
     double sum_contouring_sq = 0.0;
     double sum_lag_sq = 0.0;

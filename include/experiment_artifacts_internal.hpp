@@ -18,6 +18,9 @@ struct RolloutTraceFrame {
     int step = 0;
     double time_seconds = 0.0;
     EgoState ego;
+    std::vector<Scenario> sampled_scenarios;
+    size_t scenario_count = 0;
+    double max_sample_deviation = 0.0;
     std::vector<ObstacleState> obstacles;
     std::vector<std::string> obstacle_modes;
     double path_progress = 0.0;

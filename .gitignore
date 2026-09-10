@@ -1,14 +1,7 @@
-# Build
 build/
-*.o
-*.a
-*.so
-
-# Generated experiment artifacts (regenerate with experiment_runner)
-artifacts/
-
-# IDE / OS
-.idea/
-.vscode/
-.DS_Store
-*~
+install/
+log/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile

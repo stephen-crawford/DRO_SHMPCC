@@ -266,6 +266,13 @@ std::vector<Scenario> prune_dominated_scenarios(
     double reachable_radius_growth_per_step = 0.0
 );
 
+/// Prepare SH normal anchors using the reference module's lateral push and
+/// circle Douglas-Rachford projection. These positions are not a dynamics rollout.
+void prepare_safe_horizon_anchors(
+    std::vector<EgoState>& trajectory,
+    const std::vector<Scenario>& scenarios,
+    double combined_radius, int num_discs, double vehicle_length);
+
 /**
  * @brief Project a warmstart trajectory to satisfy collision constraints.
  *

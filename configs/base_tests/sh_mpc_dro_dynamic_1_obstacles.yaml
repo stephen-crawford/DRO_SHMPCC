@@ -1,0 +1,20 @@
+# Reproducible base scenario; inherits solver/certificate settings from default.yaml.
+mpc_type: sh_mpc
+num_obstacles: 1
+environment: two_lane_highway
+road_length: 25.0
+path_completion_fraction: 1.0
+path_completion_termination: true
+rollout_steps: 400
+scenario_tag: sh_mpc_dro_dynamic_1_obstacles
+dro_enabled: true
+# Constant-velocity obstacle; deterministic plant motion.
+obs_modes: [constant_velocity]
+rare_mode: ""
+switch_prob: 0.0
+rare_switch_prob: 0.0
+obstacle_initial_states: [12.5,0,0.5,0]
+obstacle_process_noise: 0.0
+artifact_write_visualization_gif: true
+artifact_gif_frame_stride: 1
+artifact_write_rviz_replay: true

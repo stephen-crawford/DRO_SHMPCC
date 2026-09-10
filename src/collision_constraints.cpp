@@ -145,6 +145,82 @@ DiscCenterLinearization linearize_disc_center(
     return out;
 }
 
+void prepare_safe_horizon_anchors(
+    std::vector<EgoState>& trajectory,
+    const std::vector<Scenario>& scenarios,
+    double combined_radius, int num_discs, double vehicle_length
+) {
+    // Reference: scenario_module SafeHorizon::PushAlgorithm / DRProjection.
+    // Each disc module prepares all stages before the next disc is processed.
+    for (int disc = 0; disc < num_discs; ++disc) {
+        const double offset = get_disc_longitudinal_offset(disc, num_discs, vehicle_length);
+        for (size_t k = 1; k < trajectory.size(); ++k) {
+            auto& state = trajectory[k];
+            Eigen::Vector2d pose = linearize_disc_center(state, offset).center;
+            std::map<int, std::vector<Eigen::Vector2d>> samples;
+            for (const auto& scenario : scenarios) {
+                for (const auto& [id, prediction] : scenario.trajectories) {
+                    if (k < prediction.steps.size()) samples[id].push_back(prediction.steps[k].mean);
+                }
+            }
+            const Eigen::Vector2d lateral(-std::sin(state.theta), std::cos(state.theta));
+            for (const auto& [id, points] : samples) {
+                Eigen::Vector2d outward = Eigen::Vector2d::Zero();
+                for (size_t s = 0; s < points.size(); s += 5) outward += pose - points[s];
+                const Eigen::Vector2d direction = outward.dot(lateral) >= 0.0 ? lateral : -lateral;
+                double push = 0.0;
+                for (const auto& point : points) {
+                    if ((pose - point).norm() < combined_radius)
+                        push = std::max(push, direction.dot(point - pose) + combined_radius);
+                }
+                pose += push * direction;
+            }
+            state.x = pose.x() - offset * std::cos(state.theta);
+            state.y = pose.y() - offset * std::sin(state.theta);
+        }
+        for (size_t k = 1; k < trajectory.size(); ++k) {
+            auto& state = trajectory[k];
+            Eigen::Vector2d pose = linearize_disc_center(state, offset).center;
+            const Eigen::Vector2d start = k > 1
+                ? linearize_disc_center(trajectory[k - 1], offset).center : pose;
+            std::map<int, std::vector<Eigen::Vector2d>> samples;
+            for (const auto& scenario : scenarios) {
+                for (const auto& [id, prediction] : scenario.trajectories) {
+                    if (k < prediction.steps.size()) samples[id].push_back(prediction.steps[k].mean);
+                }
+            }
+            if (samples.empty()) continue;
+            const Eigen::Vector2d anchor = samples.begin()->second.front();
+            const double radius = combined_radius + 1e-3;
+            const Eigen::Vector2d lateral(-std::sin(state.theta), std::cos(state.theta));
+            // Deterministic direction at a circle center, where the reference's
+            // normalization is undefined. Used only for geometric preparation.
+            auto radial = [&](const Eigen::Vector2d& delta) -> Eigen::Vector2d {
+                const double distance = delta.norm();
+                if (distance == 0.0) return lateral;
+                return delta / distance;
+            };
+            for (int iteration = 0; iteration < 5; ++iteration) {
+                const Eigen::Vector2d previous = pose;
+                for (const auto& [id, points] : samples) {
+                    for (size_t s = 0; s < points.size(); ++s) {
+                        if (id == samples.begin()->first && s == 0) continue;
+                        Eigen::Vector2d update = pose;
+                        if ((update - anchor).norm() < radius)
+                            update = 2.0 * (anchor + radius * radial(update - anchor)) - update;
+                        if ((update - points[s]).norm() < radius)
+                            update = 2.0 * (points[s] + radius * radial(start - points[s])) - update;
+                        pose = 0.5 * (pose + update);
+                    }
+                }
+                if ((previous - pose).norm() < 1e-5) break;
+            }
+            state.x = pose.x() - offset * std::cos(state.theta);
+            state.y = pose.y() - offset * std::sin(state.theta);
+        }
+    }
+}
+
 std::vector<CollisionConstraint> compute_linearized_constraints(
     const std::vector<EgoState>& reference_trajectory,
     const std::vector<Scenario>& scenarios,

@@ -5,6 +5,7 @@
 
 #include "mpc_controller.hpp"
 #include "reference_path.hpp"
+#include "path_progress_linearization.hpp"
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -401,14 +402,20 @@ MPCResult MPCController::solve(
     // reduction is only a local constraint-construction optimization for this
     // numerical linearization; the next receding-horizon solve draws a fresh,
     // state-conditioned set above.
+    auto constraint_reference = reference_trajectory_;
+    if (config_.mpc.uses_safe_horizon()) {
+        prepare_safe_horizon_anchors(
+            constraint_reference, scenarios_, combined_radius,
+            config_.mpc.ego.num_discs, config_.mpc.ego.length);
+    }
     const auto constraint_scenarios = prune_dominated_scenarios(
-        scenarios_, reference_trajectory_, combined_radius,
+        scenarios_, constraint_reference, combined_radius,
         config_.mpc.ego.num_discs, config_.mpc.ego.length,
         disc_span, reach_growth);
 
 
     auto constraints = compute_linearized_constraints(
-        reference_trajectory_,
+        constraint_reference,
         constraint_scenarios,
         config_.mpc.ego.radius,
         config_.obstacle_radius,
@@ -451,6 +458,8 @@ MPCResult MPCController::solve(
             SafeHorizonCertificateStatus::INSUFFICIENT_SCENARIOS;
     } else if (!result.sampled_constraints_satisfied) {
         result.certificate_status = SafeHorizonCertificateStatus::PLAN_INFEASIBLE;
+    } else if (result.used_fallback) {
+        result.certificate_status = SafeHorizonCertificateStatus::FALLBACK_NOT_CERTIFIED;
     } else if (result.support_cap_status == SupportCapStatus::NOT_EVALUATED) {
         result.certificate_status =
             SafeHorizonCertificateStatus::SUPPORT_NOT_EVALUATED;
@@ -551,8 +560,16 @@ std::vector<EgoState> MPCController::generate_straight_line_trajectory(
             desired_theta = current.theta;
         }
 
-        // Simple propagation - use reference_velocity as cap instead of hardcoded 2.0
-        double v = std::min(current.v + 0.5 * config_.mpc.dt, reference_velocity);
+        // MPCC seeds follow the reference geometry, independently of an endpoint
+        // or a requested tracking speed; its objective rewards spline progress.
+        const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
+                             config_.mpc.type == MPCType::SH_MPCC;
+        if (is_mpcc && reference_path_.has_value()) {
+            desired_theta = reference_path_->get_heading_at(current.s);
+        }
+        const double seed_speed = is_mpcc ? config_.mpc.ego.dynamics.max_velocity
+                                         : reference_velocity;
+        double v = std::min(current.v + 0.5 * config_.mpc.dt, seed_speed);
 
         EgoState next_state(
             current.x + v * std::cos(desired_theta) * config_.mpc.dt,
@@ -654,11 +671,9 @@ MPCResult MPCController::solve_optimization_sqp(
         }
     }
 
-    // Cyclic rojection: ensure warmstart satisfies collision constraints
-    if (!constraints.empty()) {
-        project_warmstart_to_safety(
-            x_ref, constraints, /*max_projection_sweeps=*/10, /*tolerance=*/1e-3);
-    }
+    // Keep the condensed-QP nominal dynamically consistent: its sensitivity-only
+    // recursion assumes x_ref[k+1] == f(x_ref[k], u_ref[k]). Geometric preparation
+    // belongs to the separate normal anchors, never to this control rollout.
 
     // de Groot's online support estimate is the union of distinct scenarios
     // that are active OR violated at each SQP iterate.  It is intentionally
@@ -791,7 +806,10 @@ MPCResult MPCController::solve_optimization_sqp(
     // different trajectory than the one handed to the caller.
     account_support_evaluation(x_ref);
 
-    const double effective_goal_weight = config_.mpc.objective.goal_weight;
+    const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
+                         config_.mpc.type == MPCType::SH_MPCC;
+    const double effective_goal_weight = is_mpcc ? 0.0 : config_.mpc.objective.goal_weight;
+    const double effective_velocity_weight = is_mpcc ? 0.0 : config_.mpc.objective.velocity_weight;
     (void)path_progress; (void)path_length;
 
     // Compute final cost
@@ -803,7 +821,7 @@ MPCResult MPCController::solve_optimization_sqp(
         if (k == N) weight *= 2.0;
         cost += weight * pos_diff.squaredNorm();
 
-        double w_vel = config_.mpc.objective.velocity_weight;
+        double w_vel = effective_velocity_weight;
         double v_diff = x_ref[k].v - reference_velocity;
         cost += w_vel * v_diff * v_diff;
 
@@ -845,6 +863,11 @@ MPCResult MPCController::solve_optimization_sqp(
         while (heading_err > M_PI) heading_err -= 2 * M_PI;
         while (heading_err < -M_PI) heading_err += 2 * M_PI;
         cost += config_.mpc.objective.terminal_heading_weight * heading_err * heading_err;
+    }
+
+    if (is_mpcc) {
+        cost -= config_.mpc.objective.progress_weight *
+            (x_ref[N].s - x_ref[0].s) / (N * config_.mpc.dt);
     }
 
     // Check feasibility
@@ -903,17 +926,42 @@ MPCResult MPCController::solve_optimization_sqp(
     if (!feasible) {
         auto fallback = generate_safe_fallback(ego_state);
         auto [fb_viol, __] = evaluate_constraint_violation(constraints, fallback.ego_trajectory);
-        // Use SQP result if it's better than fallback, even if not perfectly feasible
-        if (final_violation < fb_viol || final_violation < 0.1) {
-            result.success = true;  // Approximately feasible
-        } else {
-            populate_active_scenarios(fallback.ego_trajectory, fallback);
-            // The fallback is not an SQP iterate.  Preserve the support union
-            // observed while solving the original scenario problem so a
-            // physically safe fallback cannot hide a SUPPORT_EXCEEDED status.
-            populate_support_accounting(fallback);
-            return fallback;
+        // An infeasible SQP plan is never executable. Validate the existing
+        // braking fallback against the sampled collision rows and hard limits.
+        fallback.used_fallback = true;
+        fallback.sampled_constraints_satisfied = std::isfinite(fb_viol) && fb_viol <= 0.01;
+        bool admissible = fallback.sampled_constraints_satisfied;
+        for (const auto& input : fallback.control_inputs) {
+            admissible = admissible && input.to_array().allFinite() &&
+                input.a >= config_.mpc.ego.dynamics.min_acceleration &&
+                input.a <= config_.mpc.ego.dynamics.max_acceleration &&
+                std::abs(input.omega) <= config_.mpc.ego.dynamics.max_omega;
         }
+        double fallback_s = ego_state.s;
+        if (reference_path_.has_value() && fallback_s < 0.0)
+            fallback_s = reference_path_->find_closest_point(ego_state.position());
+        for (std::size_t k = 0; k < fallback.ego_trajectory.size(); ++k) {
+            const auto& state = fallback.ego_trajectory[k];
+            admissible = admissible && state.to_array().allFinite();
+            if (k > 0 && config_.mpc.constraints.enable_velocity_bounds) {
+                admissible = admissible && state.v >= config_.mpc.ego.dynamics.min_velocity &&
+                    state.v <= config_.mpc.ego.dynamics.max_velocity;
+            }
+            if (config_.mpc.enable_contouring_constraints && reference_path_.has_value()) {
+                fallback_s = reference_path_->find_closest_point(state.position(), fallback_s);
+                const auto point = reference_path_->get_point_at(fallback_s);
+                const Eigen::Vector2d normal(-std::sin(point.heading), std::cos(point.heading));
+                if (k > 0)
+                    admissible = admissible && std::abs(normal.dot(state.position() - point.position))
+                        <= config_.mpc.constraints.road_width / 2.0;
+            }
+        }
+        fallback.success = admissible;
+        populate_active_scenarios(fallback.ego_trajectory, fallback);
+        // Preserve the original SQP support union; a fallback does not inherit
+        // a certificate for a different optimization result.
+        populate_support_accounting(fallback);
+        return fallback;
     }
 
     return result;
@@ -1011,7 +1059,10 @@ QPProblem MPCController::build_condensed_qp(
     //       + sum_k w_vel * V[k,i]^T * V[k,j]
     //       + diag(w_accel, w_steer, w_accel, w_steer, ...)
 
-    const double effective_goal_weight = config_.mpc.objective.goal_weight;
+    const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
+                         config_.mpc.type == MPCType::SH_MPCC;
+    const double effective_goal_weight = is_mpcc ? 0.0 : config_.mpc.objective.goal_weight;
+    const double effective_velocity_weight = is_mpcc ? 0.0 : config_.mpc.objective.velocity_weight;
     (void)path_progress; (void)path_length;
 
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n_dec, n_dec);
@@ -1025,7 +1076,7 @@ QPProblem MPCController::build_condensed_qp(
         H += w_goal * P_all[k].transpose() * P_all[k];
 
         // Velocity tracking: w_vel * V[k]^T * V[k]
-        double w_vel = config_.mpc.objective.velocity_weight;
+        double w_vel = effective_velocity_weight;
         H += w_vel * V_all[k].transpose() * V_all[k];
     }
 
@@ -1115,9 +1166,25 @@ QPProblem MPCController::build_condensed_qp(
         g += w_goal * P_all[k].transpose() * pos_err;
 
         // Velocity error at reference: v_ref[k] - v_target
-        double w_vel = config_.mpc.objective.velocity_weight;
+        double w_vel = effective_velocity_weight;
         double vel_err = x_ref[k].v - reference_velocity;
         g += w_vel * V_all[k].transpose() * vel_err;
+    }
+
+    if (is_mpcc && reference_path_.has_value()) {
+        // s_k = projection(p_k, s_{k-1}); chain through the active projection
+        // branch and the existing condensed dynamics. The initial s is fixed.
+        Eigen::RowVectorXd progress_sensitivity = Eigen::RowVectorXd::Zero(n_dec);
+        for (int k = 1; k <= N; ++k) {
+            const auto derivative = linearize_path_progress(
+                *reference_path_, x_ref[k].position(), x_ref[k - 1].s);
+            progress_sensitivity = derivative.position * P_all[k] +
+                derivative.previous_progress * progress_sensitivity;
+        }
+        // Existing quadratic terms represent half the reported squared costs.
+        // Apply the same 1/2 scaling to the linear progress reward.
+        g -= (0.5 * config_.mpc.objective.progress_weight /
+              (N * config_.mpc.dt)) * progress_sensitivity.transpose();
     }
 
     // Step 5: Build constraint matrix C and RHS d
@@ -1141,7 +1208,7 @@ QPProblem MPCController::build_condensed_qp(
         // Anchor the row at x_ref[k], the SAME point P_all/THETA_all differentiate
         // about. con.linearization_point records where the NORMAL was frozen, which
         // is a different (earlier) trajectory: x_ref is re-rolled from the current
-        // ego state with clamped warm inputs, Douglas-Rachford projected, then moved
+        // ego state with clamped warm inputs, then moved
         // each SQP iteration. Anchoring on it would make the row mis-state clearance
         // by a^T(c_bar_frozen - c_d(x_ref[k])) in an uncontrolled direction.
         const auto row = linearize_constraint_at_state(con, x_ref[k]);
