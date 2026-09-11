@@ -1,6 +1,22 @@
-// pipeline_verify: verify each stage of the WDRO scenario-MPC pipeline on MAIN, in order.
-// Controlled head-on scenario with a non-uniform mode history so the belief, risk, and
-// reweighting are all non-trivial and checkable.
+// pipeline_verify:
+// Verify the WDRO Safe-Horizon scenario-MPC pipeline end-to-end.
+//
+// Stages checked:
+//   1. Reference path, obstacle state, nominal mode belief, and risk scoring.
+//   2. WDRO worst-case reweighting.
+//   3. Scenario sampling from q*.
+//   4. Safe-Horizon collision geometry:
+//        dynamic reference
+//          -> collision-feasible anchor reference
+//          -> all sampled half-spaces
+//          -> free-space polygon facet reduction.
+//   5. Full controller solve.
+//   6. First control availability.
+//
+// The old whole-scenario prune_dominated_scenarios() stage is intentionally
+// absent. The updated implementation preserves the complete sampled scenario
+// set and reduces redundant COLLISION HALF-SPACES instead.
+
 #include "mpc_controller.hpp"
 #include "dro.hpp"
 #include "mode_weights.hpp"
@@ -8,125 +24,799 @@
 #include "collision_constraints.hpp"
 #include "dynamics.hpp"
 #include "reference_path.hpp"
-#include <cstdio>
-#include <map>
-#include <string>
-#include <vector>
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <map>
+#include <random>
+#include <string>
+#include <vector>
 
 using namespace dro_mpc;
-static int fails = 0;
-static void check(bool ok, const char* msg) {
-    std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", msg); if(!ok) ++fails;
+
+namespace {
+
+int fails = 0;
+
+void check(bool ok, const char* msg)
+{
+    std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", msg);
+
+    if (!ok) {
+        ++fails;
+    }
 }
 
-int main() {
-    auto mode_models = create_obstacle_mode_models(0.1);
-    std::vector<std::string> modes; for (auto& kv : mode_models) modes.push_back(kv.first);
-    const int M = (int)modes.size();
+bool satisfies_group(
+    const std::vector<CollisionConstraint>& constraints,
+    int k,
+    int disc_index,
+    const Eigen::Vector2d& point,
+    double tolerance = 1e-9)
+{
+    for (const auto& constraint : constraints) {
+        if (constraint.k != k ||
+            constraint.disc_index != disc_index) {
+            continue;
+        }
 
-    // Head-on: ego drives +x toward an obstacle ahead drifting slowly +x.
-    ObstacleState obs(5.0, 0.0, 0.5, 0.0);
-    std::vector<EgoState> ego_ref; for (int k=0;k<=15;++k) ego_ref.emplace_back(k*0.34,0.0,0.0,1.5);
-
-    // Non-uniform history: mostly constant_velocity, some decelerating, few others.
-    ModeHistory hist(0, mode_models);
-    for (int t=0;t<30;++t) {
-        std::string m = (t%2==0)?"constant_velocity":(t%5==0?"decelerating":"turn_left");
-        hist.record_observation(t, m);
+        if (constraint.evaluate(point) < -tolerance) {
+            return false;
+        }
     }
 
-    std::printf("=== STEP 1: ego/spline, obstacle, nominal belief, Bonferroni-VaR risk ===\n");
-    // ego spline
-    ReferencePath path = ReferencePath::create_s_curve(25.0,3.0,200);
-    double s0 = path.find_closest_point(Eigen::Vector2d(0,0));
-    check(std::isfinite(s0), "reference-path spline position computed for ego");
-    check(obs.position().x()==5.0, "obstacle position determined");
-    // nominal belief
-    auto nominal = compute_mode_weights(hist);
-    double nsum=0; bool allpos=true; for(auto&kv:nominal){nsum+=kv.second; if(kv.second<=0)allpos=false;}
-    check((int)nominal.size()==M && allpos, "nominal belief: every mode strictly positive (Dirichlet)");
-    check(std::abs(nsum-1.0)<1e-9, "nominal belief normalized to 1");
-    // risk scores (Bonferroni VaR) vs plain VaR
-    auto risk_of = [&](DRORiskMeasure rm){ DROConfig c; c.radius_calibration.risk_measure=rm;
-        DRO d(c); return d.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2); };
-    DROResult bonf = risk_of(DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
-    DROResult var  = risk_of(DRORiskMeasure::SURROGATE_VAR);
-    double rmin=1e9,rmax=-1e9; std::string danger; for(auto&kv:bonf.risk_per_mode){ if(kv.second>rmax){rmax=kv.second;danger=kv.first;} rmin=std::min(rmin,kv.second);}
-    check(rmax-rmin>1e-6, "per-mode risk scores are DIFFERENTIATED across modes");
-    double bsum=0,vsum=0; for(auto&kv:bonf.risk_per_mode)bsum+=kv.second; for(auto&kv:var.risk_per_mode)vsum+=kv.second;
-    check(std::abs(bsum-vsum)>1e-9, "Bonferroni VaR differs from plain VaR (Bonferroni level active)");
-    std::printf("    most-dangerous mode = %s (r=%.4f); risk range [%.4f, %.4f]\n", danger.c_str(), rmax, rmin, rmax);
+    return true;
+}
 
-    std::printf("=== STEP 2: WDRO reweighting redistributes mass toward high-risk modes ===\n");
-    double q_danger = bonf.worst_case_weights[danger], p_danger = nominal[danger];
-    double qsum=0; bool qvalid=true; for(auto&kv:bonf.worst_case_weights){qsum+=kv.second; if(kv.second<-1e-9||kv.second>1+1e-9)qvalid=false;}
-    check(qvalid && std::abs(qsum-1.0)<1e-6, "q* is a valid probability distribution");
-    check(q_danger > p_danger + 1e-6, "q* UP-WEIGHTS the most-dangerous mode vs nominal");
-    check(bonf.rho_used > 0.0, "ambiguity radius rho_used > 0 (reweighting is active)");
-    std::printf("    q*[%s]=%.4f vs nominal=%.4f  (rho=%.4f)\n", danger.c_str(), q_danger, p_danger, bonf.rho_used);
+}  // namespace
 
-    std::printf("=== STEP 3: sample S scenarios from q*; empirical dist must match q* ===\n");
+
+int main()
+{
+    constexpr double dt = 0.1;
+    constexpr int horizon = 15;
+
+    auto mode_models =
+        create_obstacle_mode_models(dt);
+
+    std::vector<std::string> modes;
+    for (const auto& [mode_name, model] : mode_models) {
+        (void)model;
+        modes.push_back(mode_name);
+    }
+
+    const int mode_count =
+        static_cast<int>(modes.size());
+
+    // Ego drives +x toward an obstacle ahead drifting slowly +x.
+    const ObstacleState obstacle(
+        5.0,
+        0.0,
+        0.5,
+        0.0);
+
+    std::vector<EgoState> ego_reference;
+    for (int k = 0; k <= horizon; ++k) {
+        ego_reference.emplace_back(
+            static_cast<double>(k) * 0.34,
+            0.0,
+            0.0,
+            1.5);
+    }
+
+    // Non-uniform mode history: mostly constant_velocity, with some
+    // decelerating and turn_left observations.
+    ModeHistory history(
+        0,
+        mode_models);
+
+    for (int t = 0; t < 30; ++t) {
+        const std::string mode =
+            (t % 2 == 0)
+                ? "constant_velocity"
+                : ((t % 5 == 0)
+                    ? "decelerating"
+                    : "turn_left");
+
+        history.record_observation(
+            t,
+            mode);
+    }
+
+
+    // -------------------------------------------------------------------------
+    // STEP 1
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== STEP 1: reference path, obstacle, nominal belief, "
+        "and Bonferroni-VaR risk ===\n");
+
+    const ReferencePath path =
+        ReferencePath::create_s_curve(
+            25.0,
+            3.0,
+            200);
+
+    const double s0 =
+        path.find_closest_point(
+            Eigen::Vector2d(0.0, 0.0));
+
+    check(
+        std::isfinite(s0),
+        "reference-path spline position computed for ego");
+
+    check(
+        obstacle.position().x() == 5.0,
+        "obstacle position determined");
+
+    const auto nominal =
+        compute_mode_weights(history);
+
+    double nominal_sum = 0.0;
+    bool all_positive = true;
+
+    for (const auto& [mode, probability] : nominal) {
+        (void)mode;
+        nominal_sum += probability;
+
+        if (probability <= 0.0) {
+            all_positive = false;
+        }
+    }
+
+    check(
+        static_cast<int>(nominal.size()) == mode_count &&
+        all_positive,
+        "nominal belief gives every mode positive Dirichlet mass");
+
+    check(
+        std::abs(nominal_sum - 1.0) < 1e-9,
+        "nominal belief normalized to one");
+
+    auto risk_of =
+        [&](DRORiskMeasure risk_measure) {
+            DROConfig config;
+            config.radius_calibration.risk_measure =
+                risk_measure;
+
+            DRO dro(config);
+
+            return dro.compute_worst_case_weights(
+                nominal,
+                obstacle,
+                mode_models,
+                ego_reference,
+                horizon,
+                0.5,
+                0.35,
+                0.2);
+        };
+
+    DROResult bonferroni =
+        risk_of(
+            DRORiskMeasure::SURROGATE_VAR_BONFERRONI);
+
+    DROResult plain_var =
+        risk_of(
+            DRORiskMeasure::SURROGATE_VAR);
+
+    double risk_min = 1e9;
+    double risk_max = -1e9;
+    std::string dangerous_mode;
+
+    for (const auto& [mode, risk] :
+         bonferroni.risk_per_mode) {
+
+        if (risk > risk_max) {
+            risk_max = risk;
+            dangerous_mode = mode;
+        }
+
+        risk_min =
+            std::min(
+                risk_min,
+                risk);
+    }
+
+    check(
+        risk_max - risk_min > 1e-6,
+        "per-mode risk scores are differentiated");
+
+    double bonferroni_sum = 0.0;
+    double var_sum = 0.0;
+
+    for (const auto& [mode, risk] :
+         bonferroni.risk_per_mode) {
+        (void)mode;
+        bonferroni_sum += risk;
+    }
+
+    for (const auto& [mode, risk] :
+         plain_var.risk_per_mode) {
+        (void)mode;
+        var_sum += risk;
+    }
+
+    check(
+        std::abs(bonferroni_sum - var_sum) > 1e-9,
+        "Bonferroni VaR differs from plain VaR");
+
+    std::printf(
+        "    most-dangerous mode = %s (r=%.4f); "
+        "risk range [%.4f, %.4f]\n",
+        dangerous_mode.c_str(),
+        risk_max,
+        risk_min,
+        risk_max);
+
+
+    // -------------------------------------------------------------------------
+    // STEP 2
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== STEP 2: WDRO reweighting shifts probability mass "
+        "toward high-risk modes ===\n");
+
+    const double q_danger =
+        bonferroni.worst_case_weights.at(
+            dangerous_mode);
+
+    const double p_danger =
+        nominal.at(
+            dangerous_mode);
+
+    double q_sum = 0.0;
+    bool q_valid = true;
+
+    for (const auto& [mode, probability] :
+         bonferroni.worst_case_weights) {
+
+        (void)mode;
+        q_sum += probability;
+
+        if (probability < -1e-9 ||
+            probability > 1.0 + 1e-9) {
+            q_valid = false;
+        }
+    }
+
+    check(
+        q_valid &&
+        std::abs(q_sum - 1.0) < 1e-6,
+        "q* is a valid probability distribution");
+
+    check(
+        q_danger > p_danger + 1e-6,
+        "q* up-weights the most-dangerous mode");
+
+    check(
+        bonferroni.rho_used > 0.0,
+        "ambiguity radius rho_used is positive");
+
+    std::printf(
+        "    q*[%s]=%.4f vs nominal=%.4f (rho=%.4f)\n",
+        dangerous_mode.c_str(),
+        q_danger,
+        p_danger,
+        bonferroni.rho_used);
+
+
+    // -------------------------------------------------------------------------
+    // STEP 3
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== STEP 3: sample scenarios from q* and verify empirical "
+        "mode frequency ===\n");
+
     std::mt19937 rng(12345);
-    std::map<int,ObstacleState> obstacles{{0,obs}};
-    std::map<int,ModeHistory> histories{{0,hist}};
-    const int S=400;  // large S to check the empirical distribution converges to q*
-    std::map<int,std::map<std::string,double>> qmap{{0,bonf.worst_case_weights}};
-    auto scen_q = sample_scenarios(obstacles, histories, &qmap, 15, S, {}, nullptr, &rng);
-    std::map<std::string,int> cnt; for(auto&sc:scen_q){auto it=sc.trajectories.find(0); if(it!=sc.trajectories.end())cnt[it->second.mode_id]++;}
-    double emp_danger = cnt[danger]/(double)scen_q.size();
-    check((int)scen_q.size()==S, "sampler returned S scenarios");
-    check(std::abs(emp_danger - q_danger) < 0.06, "empirical mode freq of dangerous mode matches q* (sampling uses q*)");
-    // and it differs from nominal sampling
-    std::map<int,std::map<std::string,double>> pmap{{0,nominal}};
-    auto scen_p = sample_scenarios(obstacles, histories, &pmap, 15, S, {}, nullptr, &rng);
-    std::map<std::string,int> cntp; for(auto&sc:scen_p){auto it=sc.trajectories.find(0); if(it!=sc.trajectories.end())cntp[it->second.mode_id]++;}
-    double empp_danger = cntp[danger]/(double)scen_p.size();
-    check(emp_danger > empp_danger + 0.03, "q*-sampling over-represents dangerous mode vs nominal sampling");
-    std::printf("    dangerous-mode freq: q*-sampled=%.3f  nominal-sampled=%.3f  (q*=%.3f)\n", emp_danger, empp_danger, q_danger);
 
-    std::printf("=== STEP 4: linearized halfspace constraints from scenarios ===\n");
-    auto cons = compute_linearized_constraints(ego_ref, scen_q, 0.5, 0.35, 0.1, 1, 1.5);
-    bool proper=true; for(auto&c:cons){ if(std::abs(c.a.norm()-1.0)>1e-6 || !std::isfinite(c.b)) proper=false; }
-    check(!cons.empty(), "constraints generated from scenarios");
-    check(proper, "each constraint is a proper unit-normal affine halfspace");
-    auto pruned = prune_dominated_scenarios(scen_q, ego_ref);
-    auto cons_pruned = compute_linearized_constraints(ego_ref, pruned, 0.5, 0.35, 0.1, 1, 1.5);
-    std::printf("    scenarios: %zu -> %zu after de Groot dominance pruning; constraints %zu -> %zu (non-distorting)\n",
-                scen_q.size(), pruned.size(), cons.size(), cons_pruned.size());
-    check(pruned.size() <= scen_q.size() && !pruned.empty(), "dominance pruning ran (inspect the reduction above)");
+    const std::map<int, ObstacleState> obstacles{
+        {0, obstacle}
+    };
 
-    std::printf("=== STEP 5+6: full controller solve + apply control ===\n");
-    RuntimeConfig cfg; cfg.dro.enabled=true;
-    cfg.mpc.sampling.set_manual_sample_count(40); cfg.mpc.ego.num_discs=1; cfg.mpc.ego.length=1.5;
-    MPCController ctrl(cfg);
-    ctrl.set_reference_path(path);
-    EgoState ego(0,0,0,1.5); Eigen::Vector2d goal(25,0);
-    MPCResult res = ctrl.solve(ego, obstacles, goal, 1.5, 0.0, path.total_length());
-    check(res.success, "controller.solve() succeeded end-to-end with DRO on");
-    check(res.first_input().has_value(), "a control input was produced (Step 6 applies it)");
-    check(!ctrl.scenarios().empty(), "controller populated its scenario set from the pipeline");
+    const std::map<int, ModeHistory> histories{
+        {0, history}
+    };
 
-    std::printf("=== DIAGNOSIS: raw-LP q* collapses to ONE mode (no diversity) vs entropic ===\n");
-    auto scenario_support = [&](DROResult& r)->int{
-        std::map<int,std::map<std::string,double>> qm{{0,r.worst_case_weights}};
-        std::mt19937 rr(7); auto sc=sample_scenarios(obstacles, histories, &qm, 15, S, {}, nullptr, &rr);
-        std::map<std::string,int> c; for(auto&s:sc){auto it=s.trajectories.find(0); if(it!=s.trajectories.end())c[it->second.mode_id]++;}
-        int nz=0; for(auto&kv:c) if(kv.second>0)++nz; return nz; };
-    int raw_support = scenario_support(bonf);
-    DROConfig ec; ec.radius_calibration.risk_measure=DRORiskMeasure::SURROGATE_VAR_BONFERRONI; ec.radius_calibration.use_entropic_allocator=true; ec.radius_calibration.entropic_tau=0.05;
-    DRO ed(ec);
-    DROResult ent = ed.compute_worst_case_weights(nominal,obs,mode_models,ego_ref,15,0.5,0.35,0.2);
-    int ent_support = scenario_support(ent);
-    std::printf("    distinct modes appearing in the S sampled scenarios:\n");
-    std::printf("      raw-LP q* (default) : %d / %d modes   <-- bang-bang: planner sees ONLY the worst mode\n", raw_support, M);
-    std::printf("      entropic q* (tau=.05): %d / %d modes   <-- graded: dangerous up-weighted, others still covered\n", ent_support, M);
-    std::printf("  ROOT FINDING: every stage is individually correct, but Step-2 raw-LP reweighting is\n");
-    std::printf("  DEGENERATE (q*=e_argmax, Thm 2) -> Step-3 draws a single-mode scenario set -> Step-4\n");
-    std::printf("  constraints guard only that one mode. Under switching obstacles this removes the\n");
-    std::printf("  diversity needed to cover the modes actually taken. Entropic/support-floor fixes it.\n");
+    constexpr int sample_count = 400;
 
-    std::printf("\n%s (%d checks failed)\n", fails==0?"ALL PIPELINE STAGES VERIFIED":"SOME STAGES FAILED", fails);
-    return fails==0?0:1;
+    const std::map<
+        int,
+        std::map<std::string, double>> q_map{
+            {0, bonferroni.worst_case_weights}
+        };
+
+    const auto scenarios_q =
+        sample_scenarios(
+            obstacles,
+            histories,
+            &q_map,
+            horizon,
+            sample_count,
+            {},
+            nullptr,
+            &rng);
+
+    std::map<std::string, int> q_counts;
+
+    for (const auto& scenario : scenarios_q) {
+        const auto it =
+            scenario.trajectories.find(0);
+
+        if (it != scenario.trajectories.end()) {
+            ++q_counts[it->second.mode_id];
+        }
+    }
+
+    const double empirical_q_danger =
+        q_counts[dangerous_mode] /
+        static_cast<double>(
+            scenarios_q.size());
+
+    check(
+        static_cast<int>(scenarios_q.size()) ==
+        sample_count,
+        "sampler returned S scenarios");
+
+    check(
+        std::abs(
+            empirical_q_danger -
+            q_danger) < 0.06,
+        "empirical dangerous-mode frequency matches q*");
+
+    const std::map<
+        int,
+        std::map<std::string, double>> p_map{
+            {0, nominal}
+        };
+
+    const auto scenarios_p =
+        sample_scenarios(
+            obstacles,
+            histories,
+            &p_map,
+            horizon,
+            sample_count,
+            {},
+            nullptr,
+            &rng);
+
+    std::map<std::string, int> p_counts;
+
+    for (const auto& scenario : scenarios_p) {
+        const auto it =
+            scenario.trajectories.find(0);
+
+        if (it != scenario.trajectories.end()) {
+            ++p_counts[it->second.mode_id];
+        }
+    }
+
+    const double empirical_p_danger =
+        p_counts[dangerous_mode] /
+        static_cast<double>(
+            scenarios_p.size());
+
+    check(
+        empirical_q_danger >
+        empirical_p_danger + 0.03,
+        "q*-sampling over-represents the dangerous mode "
+        "relative to nominal sampling");
+
+    std::printf(
+        "    dangerous-mode frequency: "
+        "q*=%.3f nominal=%.3f target=%.3f\n",
+        empirical_q_danger,
+        empirical_p_danger,
+        q_danger);
+
+
+    // -------------------------------------------------------------------------
+    // STEP 4
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== STEP 4: Safe-Horizon anchor, sampled half-spaces, "
+        "and free-space polygon reduction ===\n");
+
+    constexpr double ego_radius = 0.5;
+    constexpr double obstacle_radius = 0.35;
+    constexpr double safety_margin = 0.1;
+    constexpr int num_discs = 1;
+    constexpr double vehicle_length = 1.5;
+
+    const double combined_radius =
+        ego_radius +
+        obstacle_radius +
+        safety_margin;
+
+    /*
+     * Preserve the dynamically consistent reference. The collision anchor is
+     * a separate copy because prepare_safe_horizon_anchors() is a geometric
+     * operation and is not itself a dynamics rollout.
+     */
+    const auto dynamic_reference =
+        ego_reference;
+
+    auto anchor_reference =
+        dynamic_reference;
+
+    const bool anchor_ok =
+        prepare_safe_horizon_anchors(
+            anchor_reference,
+            scenarios_q,
+            combined_radius,
+            num_discs,
+            vehicle_length);
+
+    check(
+        anchor_ok,
+        "Safe-Horizon collision anchor is feasible against sampled circles");
+
+    const auto all_constraints =
+        compute_linearized_constraints(
+            anchor_reference,
+            scenarios_q,
+            ego_radius,
+            obstacle_radius,
+            safety_margin,
+            num_discs,
+            vehicle_length);
+
+    bool all_constraints_proper = true;
+
+    for (const auto& constraint :
+         all_constraints) {
+
+        if (std::abs(
+                constraint.a.norm() -
+                1.0) > 1e-6 ||
+            !std::isfinite(
+                constraint.b)) {
+
+            all_constraints_proper =
+                false;
+            break;
+        }
+    }
+
+    check(
+        !all_constraints.empty(),
+        "complete sampled half-space set generated");
+
+    check(
+        all_constraints_proper,
+        "every sampled constraint is a finite unit-normal half-space");
+
+    /*
+     * Use the same type of conservative bound as the controller:
+     * an absolute hard speed limit plus the anchor displacement term handled
+     * internally by reduce_to_free_space_polytopes().
+     *
+     * 3 m/s is deliberately conservative relative to this test trajectory.
+     */
+    constexpr double max_abs_velocity = 3.0;
+
+    const auto reduced_constraints =
+        reduce_to_free_space_polytopes(
+            all_constraints,
+            anchor_reference,
+            dynamic_reference,
+            num_discs,
+            vehicle_length,
+            max_abs_velocity,
+            dt,
+            20);
+
+    check(
+        reduced_constraints.size() <=
+        all_constraints.size(),
+        "free-space reduction never increases the collision-row count");
+
+    check(
+        !reduced_constraints.empty(),
+        "free-space reduction retains active collision facets");
+
+    std::printf(
+        "    scenarios preserved: %zu\n",
+        scenarios_q.size());
+
+    std::printf(
+        "    collision rows: %zu -> %zu after free-space reduction\n",
+        all_constraints.size(),
+        reduced_constraints.size());
+
+    /*
+     * Verify the key reduction invariant on one representative (k, disc)
+     * reachable square:
+     *
+     *     D_k^d ∩ H_all = D_k^d ∩ H_reduced.
+     *
+     * This test has one ego disc, so ell = 0.
+     */
+    constexpr int test_k = 8;
+    constexpr int test_disc = 0;
+
+    const auto anchor_discs =
+        compute_ego_disc_positions(
+            anchor_reference[test_k],
+            num_discs,
+            vehicle_length);
+
+    const auto dynamic_discs =
+        compute_ego_disc_positions(
+            dynamic_reference[test_k],
+            num_discs,
+            vehicle_length);
+
+    const Eigen::Vector2d domain_center =
+        anchor_discs[test_disc];
+
+    const double anchor_shift =
+        (anchor_discs[test_disc] -
+         dynamic_discs[test_disc]).norm();
+
+    const double disc_offset =
+        std::abs(
+            get_disc_longitudinal_offset(
+                test_disc,
+                num_discs,
+                vehicle_length));
+
+    const double rho =
+        2.0 *
+        max_abs_velocity *
+        static_cast<double>(test_k) *
+        dt
+        + 2.0 * disc_offset
+        + anchor_shift
+        + 1e-6;
+
+    bool equivalent_on_domain = true;
+
+    /*
+     * Sample the exact square used as the clipping domain.
+     * A coarse grid is enough for a pipeline regression check; dedicated
+     * polygon unit tests should exercise exact facet geometry more aggressively.
+     */
+    constexpr int grid_count = 20;
+
+    for (int ix = 0;
+         ix <= grid_count &&
+         equivalent_on_domain;
+         ++ix) {
+
+        const double x =
+            domain_center.x() -
+            rho +
+            2.0 * rho *
+                static_cast<double>(ix) /
+                static_cast<double>(grid_count);
+
+        for (int iy = 0;
+             iy <= grid_count;
+             ++iy) {
+
+            const double y =
+                domain_center.y() -
+                rho +
+                2.0 * rho *
+                    static_cast<double>(iy) /
+                    static_cast<double>(grid_count);
+
+            const Eigen::Vector2d point(
+                x,
+                y);
+
+            const bool full_safe =
+                satisfies_group(
+                    all_constraints,
+                    test_k,
+                    test_disc,
+                    point);
+
+            const bool reduced_safe =
+                satisfies_group(
+                    reduced_constraints,
+                    test_k,
+                    test_disc,
+                    point);
+
+            if (full_safe != reduced_safe) {
+                std::printf(
+                    "    free-space mismatch at k=%d "
+                    "point=(%.3f, %.3f): "
+                    "full=%d reduced=%d\n",
+                    test_k,
+                    x,
+                    y,
+                    static_cast<int>(
+                        full_safe),
+                    static_cast<int>(
+                        reduced_safe));
+
+                equivalent_on_domain =
+                    false;
+                break;
+            }
+        }
+    }
+
+    check(
+        equivalent_on_domain,
+        "full and reduced half-spaces agree inside the certified "
+        "reachable domain");
+
+
+    // -------------------------------------------------------------------------
+    // STEP 5 + 6
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== STEP 5+6: full controller solve and first-control output ===\n");
+
+    RuntimeConfig config;
+    config.dro.enabled = true;
+
+    config.mpc.sampling.set_manual_sample_count(
+        40);
+
+    config.mpc.ego.num_discs = 1;
+    config.mpc.ego.length = 1.5;
+
+    MPCController controller(config);
+
+    controller.set_reference_path(
+        path);
+
+    const EgoState ego(
+        0.0,
+        0.0,
+        0.0,
+        1.5);
+
+    const Eigen::Vector2d goal(
+        25.0,
+        0.0);
+
+    const MPCResult result =
+        controller.solve(
+            ego,
+            obstacles,
+            goal,
+            1.5,
+            0.0,
+            path.total_length());
+
+    check(
+        result.success,
+        "controller.solve() succeeded end-to-end with DRO enabled");
+
+    check(
+        result.first_input().has_value(),
+        "controller produced a first control input");
+
+    check(
+        !controller.scenarios().empty(),
+        "controller populated its scenario set");
+
+
+    // -------------------------------------------------------------------------
+    // DIAGNOSTIC
+    // -------------------------------------------------------------------------
+
+    std::printf(
+        "=== DIAGNOSTIC: sampled support under raw-LP vs entropic allocator ===\n");
+
+    auto sampled_mode_support =
+        [&](const DROResult& result) -> int {
+
+            const std::map<
+                int,
+                std::map<std::string, double>> weights{
+                    {0, result.worst_case_weights}
+                };
+
+            std::mt19937 local_rng(7);
+
+            const auto scenarios =
+                sample_scenarios(
+                    obstacles,
+                    histories,
+                    &weights,
+                    horizon,
+                    sample_count,
+                    {},
+                    nullptr,
+                    &local_rng);
+
+            std::map<std::string, int> counts;
+
+            for (const auto& scenario : scenarios) {
+                const auto it =
+                    scenario.trajectories.find(0);
+
+                if (it != scenario.trajectories.end()) {
+                    ++counts[it->second.mode_id];
+                }
+            }
+
+            int support = 0;
+
+            for (const auto& [mode, count] :
+                 counts) {
+                (void)mode;
+
+                if (count > 0) {
+                    ++support;
+                }
+            }
+
+            return support;
+        };
+
+    const int raw_support =
+        sampled_mode_support(
+            bonferroni);
+
+    DROConfig entropic_config;
+    entropic_config.radius_calibration.risk_measure =
+        DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+
+    entropic_config.radius_calibration.use_entropic_allocator =
+        true;
+
+    entropic_config.radius_calibration.entropic_tau =
+        0.05;
+
+    DRO entropic_dro(
+        entropic_config);
+
+    const DROResult entropic =
+        entropic_dro.compute_worst_case_weights(
+            nominal,
+            obstacle,
+            mode_models,
+            ego_reference,
+            horizon,
+            0.5,
+            0.35,
+            0.2);
+
+    const int entropic_support =
+        sampled_mode_support(
+            entropic);
+
+    std::printf(
+        "    distinct modes represented in S sampled scenarios:\n");
+
+    std::printf(
+        "      raw-LP q*            : %d / %d modes\n",
+        raw_support,
+        mode_count);
+
+    std::printf(
+        "      entropic q* (tau=.05): %d / %d modes\n",
+        entropic_support,
+        mode_count);
+
+    /*
+     * Keep this as a diagnostic rather than a hard pass/fail assertion:
+     * allocator behaviour can legitimately change as the DRO implementation
+     * evolves, whereas Steps 1-6 above define the pipeline contract.
+     */
+
+
+    std::printf(
+        "\n%s (%d checks failed)\n",
+        fails == 0
+            ? "ALL PIPELINE STAGES VERIFIED"
+            : "SOME PIPELINE STAGES FAILED",
+        fails);
+
+    return fails == 0 ? 0 : 1;
 }

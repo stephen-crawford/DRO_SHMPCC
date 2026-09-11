@@ -55,9 +55,12 @@ int main() {
               !fs::exists(inherited / "rollout.svg"),
           "runner preserves YAML-selected GIF/RViz outputs without CLI visualization flags");
 
+    check(fs::exists(inherited / "linearized_constraints.csv"),
+          "runner enables linearized constraint diagnostics by default");
+
     const int override_result = run(
         "--config configs/visualization_demo.yaml --seed 914 --output " + output_arg +
-        " --label cli_override --svg --no-gif --no-rviz");
+        " --label cli_override --svg --no-gif --no-rviz --no-linearized-constraints");
     const fs::path overridden = output / "cli_override";
     check(override_result == 0, "experiment_runner accepts explicit visualization overrides");
     check(fs::exists(overridden / "rollout.svg") && !fs::exists(overridden / "rollout.gif") &&
@@ -65,6 +68,8 @@ int main() {
               !fs::exists(overridden / "rollout.rviz"),
           "explicit CLI visualization flags override YAML settings precisely");
 
+    check(!fs::exists(overridden / "linearized_constraints.csv"),
+          "runner accepts constraint visualization opt-out");
     fs::remove_all(output, error);
     check(!error && !fs::exists(output),
           "runner CLI regression cleanup removes its isolated temporary output");

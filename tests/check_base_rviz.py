@@ -14,13 +14,15 @@ from visualization_msgs.msg import MarkerArray
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build', required=True, type=Path)
 parser.add_argument('--case', help='Check only this artifact case')
+parser.add_argument('--artifacts-root', type=Path, help='Override the base-artifacts directory')
 args = parser.parse_args()
 build = args.build.resolve()
 rclpy.init()
 qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                  durability=DurabilityPolicy.TRANSIENT_LOCAL)
 try:
-    for case in sorted((build / 'base-artifacts').iterdir()):
+    artifact_root = args.artifacts_root.resolve() if args.artifacts_root else build / 'base-artifacts'
+    for case in sorted(artifact_root.iterdir()):
         if args.case and case.name != args.case:
             continue
         bundle = case / case.name

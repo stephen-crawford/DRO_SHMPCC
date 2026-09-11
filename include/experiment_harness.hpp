@@ -42,6 +42,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <iostream>
 
 namespace dro_mpc {
 
@@ -334,6 +335,7 @@ struct ExperimentArtifactConfig {
     /// Retain every Nth trace frame in rollout.gif; one preserves every recorded
     /// execution state, including the initial and final states.
     int gif_frame_stride = 1;
+    bool show_linearized_constraints = true;
     bool show_sampled_scenarios = true;
     int scenario_preview_count = 8;
     /// Replay-rate multiplier for recorded trace timestamps: one means the GIF

@@ -25,6 +25,7 @@ void print_usage(const char* executable) {
         << " [--config FILE] [--seed N] [--rollouts N] [--output DIRECTORY]"
            " [--label NAME] [--manifest|--no-manifest] [--trace|--no-trace]"
            " [--svg|--no-svg] [--gif|--no-gif] [--rviz|--no-rviz]"
+           " [--linearized-constraints|--no-linearized-constraints]"
            " [--gif-frame-stride N] [--gif-playback-rate R]\n\n"
            "Runs the canonical experiment harness. Each rollout writes a deterministic\n"
            "artifact bundle containing resolved_config.yaml, reproducibility.yaml,\n"
@@ -82,6 +83,7 @@ int main(int argc, char** argv) {
         std::optional<bool> write_svg;
         std::optional<bool> write_gif;
         std::optional<bool> write_rviz;
+        std::optional<bool> show_linearized_constraints;
         std::optional<int> gif_frame_stride;
         std::optional<double> gif_playback_rate;
 
@@ -109,6 +111,8 @@ int main(int argc, char** argv) {
             else if (argument == "--no-svg") write_svg = false;
             else if (argument == "--gif") write_gif = true;
             else if (argument == "--no-gif") write_gif = false;
+            else if (argument == "--linearized-constraints") show_linearized_constraints = true;
+            else if (argument == "--no-linearized-constraints") show_linearized_constraints = false;
             else if (argument == "--rviz") write_rviz = true;
             else if (argument == "--no-rviz") write_rviz = false;
             else if (argument == "--gif-frame-stride") {
@@ -134,6 +138,8 @@ int main(int argc, char** argv) {
         if (write_trace.has_value()) config.artifacts.write_trace_csv = *write_trace;
         if (write_svg.has_value()) config.artifacts.write_visualization_svg = *write_svg;
         if (write_gif.has_value()) config.artifacts.write_visualization_gif = *write_gif;
+        if (show_linearized_constraints.has_value())
+            config.artifacts.show_linearized_constraints = *show_linearized_constraints;
         if (write_rviz.has_value()) config.artifacts.write_rviz_replay_bundle = *write_rviz;
         if (gif_frame_stride.has_value()) config.artifacts.gif_frame_stride = *gif_frame_stride;
         if (gif_playback_rate.has_value()) config.artifacts.gif_playback_rate = *gif_playback_rate;

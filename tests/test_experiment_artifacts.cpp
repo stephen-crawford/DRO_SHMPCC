@@ -7,6 +7,7 @@
 #include "experiment_config_yaml.hpp"
 #include "rviz_replay_data.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -161,6 +162,11 @@ int main() {
     const std::string resolved = read_file(run_directory / "resolved_config.yaml");
     const std::string trace = read_file(run_directory / "trace.csv");
     const std::string svg = read_file(run_directory / "rollout.svg");
+    const std::string constraints = read_file(run_directory / "linearized_constraints.csv");
+    check(constraints.find("step,time_s,horizon_step,obstacle_id,scenario_id,disc_index") == 0 &&
+              std::count(constraints.begin(), constraints.end(), '\n') > 1 &&
+              svg.find("id=\"linearized-constraints\"") != std::string::npos,
+          "default visualization exports retained rows and draws SVG boundaries");
     const std::string gif = read_file(run_directory / "rollout.gif");
     const std::string scene = read_file(run_directory / "scene.csv");
     const std::string geometry = read_file(run_directory / "geometry.csv");
@@ -231,13 +237,15 @@ int main() {
               replay_config.artifacts.run_name == "single_run" &&
               replay_config.artifacts.write_reproducibility_manifest &&
               replay_config.artifacts.write_trace_csv &&
+              replay_config.artifacts.show_linearized_constraints &&
               replay_config.artifacts.write_visualization_svg &&
               replay_config.artifacts.write_visualization_gif &&
               replay_config.artifacts.gif_frame_stride == 1 &&
               std::abs(replay_config.artifacts.gif_playback_rate - 1.0) < 1e-12 &&
               replay_config.artifacts.write_rviz_replay_bundle,
           "artifact settings survive resolved-YAML loading");
-    replay_config.artifacts.output_directory.clear();
+    replay_config.artifacts.show_linearized_constraints = false;
+    replay_config.artifacts.run_name = "constraints_disabled";
     const RolloutRecord replay = run_experiment_rollout(replay_config, seed);
     check(replay.collision == record.collision &&
               replay.collision_step == record.collision_step &&
@@ -247,6 +255,12 @@ int main() {
               std::abs(replay.control_effort - record.control_effort) < 1e-12,
           "resolved configuration replays the model-driven rollout outcome");
 
+    check(read_file(output / "constraints_disabled" / "rollout.gif") != gif,
+          "constraint option changes rendered GIF frames");
+    check(!fs::exists(output / "constraints_disabled" / "linearized_constraints.csv") &&
+              read_file(output / "constraints_disabled" / "rollout.svg").find(
+                  "id=\"linearized-constraints\"") == std::string::npos,
+          "disabled constraint visualization omits CSV and overlay");
     fs::remove_all(output, error);
     check(!error && !fs::exists(output),
           "artifact regression cleanup removes its isolated temporary directory");

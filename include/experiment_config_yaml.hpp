@@ -447,6 +447,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "artifact_write_visualization_gif" ||
                      k == "artifact_write_gif")
                                                            cfg.artifacts.write_visualization_gif = to_bool(val);
+            else if (k == "artifact_show_linearized_constraints") cfg.artifacts.show_linearized_constraints = to_bool(val);
             else if (k == "artifact_show_sampled_scenarios") cfg.artifacts.show_sampled_scenarios = to_bool(val);
             else if (k == "artifact_scenario_preview_count") cfg.artifacts.scenario_preview_count = std::stoi(val);
             else if (k == "artifact_gif_frame_stride")    cfg.artifacts.gif_frame_stride = std::stoi(val);

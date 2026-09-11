@@ -117,6 +117,12 @@ public:
     /// Get the configuration
     const RuntimeConfig& config() const { return config_; }
 
+    /// Optional diagnostic copy of retained disc-space half-spaces supplied to optimization.
+    void set_capture_linearized_constraints(bool enabled) { capture_linearized_constraints_ = enabled; }
+    const std::vector<CollisionConstraint>& last_linearized_constraints() const {
+        return last_linearized_constraints_;
+    }
+
     /// Get current scenarios
     const std::vector<Scenario>& scenarios() const { return scenarios_; }
 
@@ -147,6 +153,8 @@ public:
                            const Eigen::Matrix4d& G_new);
 
 private:
+    bool capture_linearized_constraints_ = false;
+    std::vector<CollisionConstraint> last_linearized_constraints_;
     /**
      * @brief Initialize reference trajectory for constraint linearization.
      * Uses previous solution shifted forward, or straight-line to goal.

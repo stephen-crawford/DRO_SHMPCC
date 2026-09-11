@@ -72,7 +72,7 @@ use_entropic_allocator: true
 entropic_tau: 0.05
 
 # --- solver ---
-sqp_max_iterations: 5
+sqp_max_iterations: 10
 sqp_convergence_tol: 1.0e-3
 # Both values are passed directly to the deterministic acados/HPIPM dense QP
 # backend (iteration cap and all residual tolerances, respectively).
@@ -157,6 +157,7 @@ artifact_write_visualization_svg: true
 artifact_write_visualization_gif: false
 artifact_gif_frame_stride: 1
 # Display a deterministic subset of the actual obstacle forecasts.
+artifact_show_linearized_constraints: true
 artifact_show_sampled_scenarios: true
 artifact_scenario_preview_count: 8
 artifact_gif_playback_rate: 1.0

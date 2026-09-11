@@ -247,6 +247,11 @@ target_link_libraries(test_acados_reproducibility PRIVATE scenario_mpc)
 add_executable(test_sh_anchor_preparation tests/test_sh_anchor_preparation.cpp)
 target_link_libraries(test_sh_anchor_preparation PRIVATE scenario_mpc)
 
+add_executable(test_bounded_braking tests/test_bounded_braking.cpp)
+target_link_libraries(test_bounded_braking PRIVATE scenario_mpc)
+# Test the private fallback directly without changing the controller interface.
+target_compile_options(test_bounded_braking PRIVATE -fno-access-control)
+
 add_executable(test_plan_acceptance tests/test_plan_acceptance.cpp)
 target_link_libraries(test_plan_acceptance PRIVATE scenario_mpc)
 
@@ -287,6 +292,7 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_velocity_bounds integration)
     register_scenario_mpc_test(test_mpcc_progress integration)
     register_scenario_mpc_test(test_sh_anchor_preparation unit)
+    register_scenario_mpc_test(test_bounded_braking unit)
     register_scenario_mpc_test(test_plan_acceptance integration)
     register_scenario_mpc_test(test_experiment_statistics unit)
     register_scenario_mpc_test(test_experiment_artifacts integration)

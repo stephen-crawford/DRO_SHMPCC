@@ -282,6 +282,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_bool(out, "artifact_write_manifest",
                config.artifacts.write_reproducibility_manifest);
     write_bool(out, "artifact_write_trace_csv", config.artifacts.write_trace_csv);
+    write_bool(out, "artifact_show_linearized_constraints",
+               config.artifacts.show_linearized_constraints);
     write_bool(out, "artifact_write_visualization_svg",
                config.artifacts.write_visualization_svg);
     write_bool(out, "artifact_write_visualization_gif",
@@ -578,6 +580,20 @@ void draw_current_actor(IndexedCanvas& canvas, const Eigen::Vector2d& position,
                      y - 2.2 * radius * std::sin(heading), 2, GIF_WHITE);
 }
 
+// Disc-space boundary segments (2 m), with a 0.35 m tick into a.dot(c) >= b.
+// These are retained collision rows, not a projection of the entire QP feasible set.
+bool constraint_glyph(const CollisionConstraint& row, Eigen::Vector2d& center,
+                      Eigen::Vector2d& tangent, Eigen::Vector2d& inward) {
+    const double norm = row.a.norm();
+    if (!std::isfinite(norm) || norm <= 0.0 || !std::isfinite(row.b) ||
+        !row.linearization_point.allFinite()) return false;
+    inward = row.a / norm;
+    center = row.linearization_point + inward *
+        ((row.b - row.a.dot(row.linearization_point)) / norm);
+    tangent = Eigen::Vector2d(-inward.y(), inward.x());
+    return center.allFinite();
+}
+
 void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
                       std::size_t frame_index, const SvgTransform& transform) {
     canvas.clear(GIF_BACKGROUND);
@@ -588,6 +604,16 @@ void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
     draw_actor_history(canvas, trace, frame_index, -1, transform, 2, GIF_EGO);
 
     const auto& frame = trace.frames[frame_index];
+    for (const auto& row : frame.linearized_constraints) {
+        Eigen::Vector2d center, tangent, inward;
+        if (!constraint_glyph(row, center, tangent, inward)) continue;
+        const auto [x0, y0] = transform.map(center - tangent);
+        const auto [x1, y1] = transform.map(center + tangent);
+        const auto [cx, cy] = transform.map(center);
+        const auto [nx, ny] = transform.map(center + 0.35 * inward);
+        canvas.draw_line(x0, y0, x1, y1, 1, GIF_WHITE);
+        canvas.draw_line(cx, cy, nx, ny, 1, GIF_WHITE);
+    }
     for (const auto& scenario : frame.sampled_scenarios) {
         for (const auto& [id, prediction] : scenario.trajectories) {
             for (size_t k = 1; k < prediction.steps.size(); ++k) {
@@ -861,6 +887,27 @@ void write_visualization_svg(const fs::path& path, const ExperimentConfig& confi
         << " / seed " << record.seed << "</text>\n";
     for (const auto& road : trace.road_centerlines) write_path_polyline(out, road, transform, "road");
     write_path_polyline(out, trace.route, transform, "route");
+    if (config.artifacts.show_linearized_constraints) {
+        for (auto frame = trace.frames.rbegin(); frame != trace.frames.rend(); ++frame) {
+            if (frame->linearized_constraints.empty()) continue;
+            out << "<g id=\"linearized-constraints\" stroke=\"#e6edf3\" stroke-width=\"1\">\n";
+            for (const auto& row : frame->linearized_constraints) {
+                Eigen::Vector2d center, tangent, inward;
+                if (!constraint_glyph(row, center, tangent, inward)) continue;
+                const auto [x0, y0] = transform.map(center - tangent);
+                const auto [x1, y1] = transform.map(center + tangent);
+                const auto [cx, cy] = transform.map(center);
+                const auto [nx, ny] = transform.map(center + 0.35 * inward);
+                out << "<path d=\"M " << x0 << ' ' << y0 << " L " << x1 << ' ' << y1
+                    << " M " << cx << ' ' << cy << " L " << nx << ' ' << ny << "\"><title>decision "
+                    << frame->step << ", horizon " << row.k << ", disc " << row.disc_index
+                    << ", scenario " << row.scenario_id << "</title></path>\n";
+            }
+            out << "</g><text x=\"30\" y=\"55\" class=\"legend\">White: disc-space boundaries, ticks into feasible side; decision "
+                << frame->step << "</text>\n";
+            break;
+        }
+    }
     write_trace_polyline(out, trace, -1, transform, "ego");
     const std::array<const char*, 4> obstacle_classes = {"obs0", "obs1", "obs2", "obs3"};
     const std::size_t obstacle_count = trace.frames.empty() ? 0 : trace.frames.front().obstacles.size();
@@ -948,6 +995,21 @@ std::string write_rollout_artifacts(
     }
     if (config.artifacts.write_trace_csv) {
         write_trace_csv(run_directory / "trace.csv", trace);
+    }
+    if (config.artifacts.show_linearized_constraints) {
+        const auto path = run_directory / "linearized_constraints.csv";
+        std::ofstream out(path);
+        require_open(out, path);
+        out << std::setprecision(17)
+            << "step,time_s,horizon_step,obstacle_id,scenario_id,disc_index,disc_offset,a_x,a_y,b,anchor_x,anchor_y\n";
+        for (const auto& frame : trace.frames) {
+            for (const auto& row : frame.linearized_constraints) {
+                out << frame.step << ',' << frame.time_seconds << ',' << row.k << ','
+                    << row.obstacle_id << ',' << row.scenario_id << ',' << row.disc_index << ','
+                    << row.disc_offset << ',' << row.a.x() << ',' << row.a.y() << ',' << row.b << ','
+                    << row.linearization_point.x() << ',' << row.linearization_point.y() << '\n';
+            }
+        }
     }
     if (config.artifacts.write_visualization_svg) {
         write_visualization_svg(run_directory / "rollout.svg", config, artifact_record, trace);

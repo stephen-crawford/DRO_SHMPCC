@@ -237,3 +237,25 @@ The `sh_mpcc_no_noise_dynamic_1_obstacles` case additionally disables prediction
 noise via `obstacle_prediction_noise: false` (plant noise is separately zero).
 Its test checks exact within-decision equality over all samples; the full-set
 counts and deviations are recorded in `sampled_scenario_summary.csv`.
+
+The braking fallback now decelerates at up to 1 m/s² only until rest, then holds
+zero speed. This user-approved change prevents the fallback from rejecting
+itself by predicting negative velocity. Full-horizon collision, road, input and
+velocity checks still apply; admitted fallbacks remain uncertified and trigger
+fresh MPC solves on subsequent rollout steps. `test_bounded_braking` exercises
+the actual fallback at zero, low and cruising speeds, including recorded failure
+states, and checks its returned trajectory against vehicle propagation.
+
+Linearized collision constraint diagnostics are enabled by default. Set
+`artifact_show_linearized_constraints: false` in YAML, or pass
+`--no-linearized-constraints` to `experiment_runner` or
+`tests/run_single_obstacle_matrix.py` to disable them (`--linearized-constraints`
+enables them explicitly). GIF frames draw all retained horizon/disc collision
+boundaries in white, with short ticks pointing into `a.dot(disc_center) >= b`.
+The 2 m segments are boundary markers, not finite constraint extents. SVG shows
+the latest decision with retained rows; hover a boundary for decision, horizon,
+disc and scenario IDs. `linearized_constraints.csv` records all retained rows,
+anchors and IDs by decision time. These are disc-space collision half-spaces
+before solver state/input mapping, not the complete QP feasible set. RViz is
+unchanged. The matrix `--resume` option retains old artifacts; omit it to
+regenerate existing cases with this overlay.

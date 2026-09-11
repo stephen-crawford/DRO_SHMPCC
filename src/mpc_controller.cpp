@@ -10,6 +10,9 @@
 #include <cmath>
 #include <chrono>
 #include <set>
+#include <iostream>
+#include <limits>
+#include <string>
 
 namespace dro_mpc {
 
@@ -163,6 +166,7 @@ MPCResult MPCController::solve(
     // current obstacle states at every receding-horizon solve.  Retaining old
     // trajectories would leave their k=0 state anchored to a past measurement.
     scenarios_.clear();
+    last_linearized_constraints_.clear();
 
     if (!reference_path_.has_value()) {
         reference_path_ = ReferencePath::create_straight(ego_state.position(), goal);
@@ -391,38 +395,57 @@ MPCResult MPCController::solve(
 
     const double combined_radius = config_.combined_radius();
 
-    const double disc_span = (config_.mpc.ego.num_discs > 1)
-                                    ? config_.mpc.ego.length
-                                    : 0.0;
-    const double reach_growth =
-        2.0 * config_.mpc.ego.dynamics.max_velocity * config_.mpc.dt;
-
     // Preserve the complete i.i.d. draw set in `scenarios_` for this decision
     // problem: S and scenario identity define its certificate.  Dominance
     // reduction is only a local constraint-construction optimization for this
     // numerical linearization; the next receding-horizon solve draws a fresh,
     // state-conditioned set above.
-    auto constraint_reference = reference_trajectory_;
+   // This remains dynamically consistent.
+    const auto dynamic_reference = reference_trajectory_;
+
+    // Separate copy used only for collision geometry.
+    auto constraint_reference = dynamic_reference;
+
     if (config_.mpc.uses_safe_horizon()) {
-        prepare_safe_horizon_anchors(
-            constraint_reference, scenarios_, combined_radius,
-            config_.mpc.ego.num_discs, config_.mpc.ego.length);
+        const bool anchor_ok =
+            prepare_safe_horizon_anchors(
+                constraint_reference,
+                scenarios_,
+                combined_radius,
+                config_.mpc.ego.num_discs,
+                config_.mpc.ego.length);
+
+        if (!anchor_ok) {
+            throw std::runtime_error(
+                "Safe-Horizon anchor projection failed.");
+        }
     }
-    const auto constraint_scenarios = prune_dominated_scenarios(
-        scenarios_, constraint_reference, combined_radius,
-        config_.mpc.ego.num_discs, config_.mpc.ego.length,
-        disc_span, reach_growth);
 
+    auto all_constraints =
+        compute_linearized_constraints(
+            constraint_reference,
+            scenarios_,
+            config_.mpc.ego.radius,
+            config_.obstacle_radius,
+            config_.mpc.constraints.safety_margin,
+            config_.mpc.ego.num_discs,
+            config_.mpc.ego.length);
 
-    auto constraints = compute_linearized_constraints(
-        constraint_reference,
-        constraint_scenarios,
-        config_.mpc.ego.radius,
-        config_.obstacle_radius,
-        config_.mpc.constraints.safety_margin,
-        config_.mpc.ego.num_discs,
-        config_.mpc.ego.length
-    );
+    const double max_abs_velocity =
+        std::max(
+            std::abs(config_.mpc.ego.dynamics.min_velocity),
+            std::abs(config_.mpc.ego.dynamics.max_velocity));
+
+    auto constraints =
+        reduce_to_free_space_polytopes(
+            all_constraints,
+            constraint_reference,
+            dynamic_reference,
+            config_.mpc.ego.num_discs,
+            config_.mpc.ego.length,
+            max_abs_velocity,
+            config_.mpc.dt,
+            20);
 
     // Safe Horizon refers to support-bounded joint-risk
     // certification across the *complete* MPC horizon.  Do not erase late
@@ -435,6 +458,8 @@ MPCResult MPCController::solve(
             constraints, reference_trajectory_,
             config_.mpc.constraints.clearance_filter_distance);
     }
+
+    if (capture_linearized_constraints_) last_linearized_constraints_ = constraints;
 
     auto constraint_end = std::chrono::high_resolution_clock::now();
 
@@ -705,8 +730,79 @@ MPCResult MPCController::solve_optimization_sqp(
         QPSettings qp_settings;
         qp_settings.max_iterations = config_.solver.qp_max_iterations;
         qp_settings.tolerance = config_.solver.qp_tolerance;
+        
+        std::cerr
+        << "[SQP] before_solve"
+        << " iter=" << sqp_iter
+        << " vars=" << qp.H.rows()
+        << " constraints=" << qp.C.rows()
+        << " max_d=" << (qp.d.size() ? qp.d.maxCoeff() : 0.0)
+        << std::endl;
+
+        double max_d = -std::numeric_limits<double>::infinity();
+        int worst_row = -1;
+
+        for (int i = 0; i < qp.d.size(); ++i) {
+            if (qp.d(i) > max_d) {
+                max_d = qp.d(i);
+                worst_row = i;
+            }
+        }
+
+        const int n_collision =
+            static_cast<int>(constraints.size());
+
+        const int n_road =
+            (config_.mpc.enable_contouring_constraints &&
+            reference_path_.has_value())
+                ? 2 * N
+                : 0;
+
+        std::string worst_type = "unknown";
+
+        if (worst_row >= 0) {
+            if (worst_row < n_collision) {
+                worst_type = "collision";
+            } else if (worst_row < n_collision + n_road) {
+                worst_type = "road";
+            } else {
+                worst_type = "velocity";
+            }
+        }
+
+        std::cerr
+            << "[QP WORST]"
+            << " iter=" << sqp_iter
+            << " row=" << worst_row
+            << " type=" << worst_type
+            << " d=" << max_d
+            << std::endl;
+
+        if (worst_row >= 0 && worst_row < n_collision) {
+            const auto& con = constraints[worst_row];
+
+            std::cerr
+                << "[QP WORST COLLISION]"
+                << " scenario=" << con.scenario_id
+                << " k=" << con.k
+                << " obstacle=" << con.obstacle_id
+                << " disc=" << con.disc_index
+                << std::endl;
+        }
 
         QPResult qp_result = qp_solver_.solve(qp, qp_settings);
+
+        std::cerr
+        << "[SQP] after_solve"
+        << " iter=" << sqp_iter
+        << " converged=" << qp_result.converged
+        << " status=" << qp_result.status
+        << " iterations=" << qp_result.iterations
+        << " primal_residual=" << qp_result.primal_residual
+        << " dual_residual=" << qp_result.dual_residual
+        << " x_size=" << qp_result.x.size()
+        << " x_finite=" << qp_result.x.allFinite()
+        << std::endl;
 
         Eigen::VectorXd delta_u = qp_result.x;
 
@@ -722,49 +818,165 @@ MPCResult MPCController::solve_optimization_sqp(
             break;
         }
 
-        // Line search: try full step, then half, then quarter
+        // Line search: try full step, then half, then quarter.// Line search: try full step, then half, then quarter.
+        //
+        // If the current iterate violates collision constraints, require the
+        // line search to reduce that violation.
+        //
+        // If the current iterate is already collision-feasible, accept the
+        // largest trial step that remains collision-feasible. This allows the
+        // QP objective (MPCC contouring/progress/etc.) to actually move the
+        // trajectory.
+        auto [current_violation, _current_violated] =
+            evaluate_constraint_violation(constraints, x_ref);
+
         double alpha = 1.0;
+
         std::vector<EgoInput> best_inputs = u_ref;
         std::vector<EgoState> best_traj = x_ref;
-        double best_violation = std::numeric_limits<double>::max();
+        double best_violation = current_violation;
+
+        bool accepted = false;
+        double accepted_alpha = 0.0;
 
         for (int ls = 0; ls < 3; ++ls) {
             std::vector<EgoInput> trial_inputs;
             trial_inputs.reserve(N);
+
             for (int k = 0; k < N; ++k) {
-                double a_new = u_ref[k].a + alpha * delta_u(2 * k);
-                double w_new = u_ref[k].omega + alpha * delta_u(2 * k + 1);
-                a_new = std::clamp(a_new, config_.mpc.ego.dynamics.min_acceleration, config_.mpc.ego.dynamics.max_acceleration);
-                w_new = std::clamp(w_new, -config_.mpc.ego.dynamics.max_omega, config_.mpc.ego.dynamics.max_omega);
+                double a_new =
+                    u_ref[k].a + alpha * delta_u(2 * k);
+
+                double w_new =
+                    u_ref[k].omega + alpha * delta_u(2 * k + 1);
+
+                a_new = std::clamp(
+                    a_new,
+                    config_.mpc.ego.dynamics.min_acceleration,
+                    config_.mpc.ego.dynamics.max_acceleration);
+
+                w_new = std::clamp(
+                    w_new,
+                    -config_.mpc.ego.dynamics.max_omega,
+                    config_.mpc.ego.dynamics.max_omega);
+
                 trial_inputs.emplace_back(a_new, w_new);
             }
 
             std::vector<EgoState> trial_traj;
-            if (reference_path_.has_value()) {
-                trial_traj = ego_dynamics_.rollout_with_spline(ego_state, trial_inputs, *reference_path_);
-            } else {
-                trial_traj = ego_dynamics_.rollout(ego_state, trial_inputs);
-            }
-            auto [max_viol, _] = evaluate_constraint_violation(constraints, trial_traj);
 
-            if (max_viol < best_violation || ls == 0) {
-                best_violation = max_viol;
-                best_inputs = trial_inputs;
-                best_traj = trial_traj;
-                if (max_viol <= 0) break;  // Feasible — accept
+            if (reference_path_.has_value()) {
+                trial_traj = ego_dynamics_.rollout_with_spline(
+                    ego_state,
+                    trial_inputs,
+                    *reference_path_);
+            } else {
+                trial_traj = ego_dynamics_.rollout(
+                    ego_state,
+                    trial_inputs);
             }
+
+            auto [trial_violation, _trial_violated] =
+                evaluate_constraint_violation(
+                    constraints,
+                    trial_traj);
+
+            if (current_violation <= 0.0) {
+                // Current trajectory is collision-feasible.
+                //
+                // Take the largest QP step that preserves feasibility.
+                // Since alpha decreases each iteration, the first feasible
+                // candidate is the preferred one.
+                if (trial_violation <= 0.0) {
+                    best_violation = trial_violation;
+                    best_inputs = trial_inputs;
+                    best_traj = trial_traj;
+                    accepted = true;
+                    accepted_alpha = alpha;
+                    break;
+                }
+            } else {
+                // Current trajectory is infeasible.
+                // Only accept a candidate that actually improves feasibility.
+                if (trial_violation < best_violation) {
+                    best_violation = trial_violation;
+                    best_inputs = trial_inputs;
+                    best_traj = trial_traj;
+                    accepted = true;
+                    accepted_alpha = alpha;
+                }
+
+                if (best_violation <= 0.0) {
+                    break;
+                }
+            }
+
             alpha *= 0.5;
         }
 
-        // Update reference for next SQP iteration
+        std::cerr
+            << "[SQP LINESEARCH]"
+            << " iter=" << sqp_iter
+            << " current_violation=" << current_violation
+            << " accepted_violation=" << best_violation
+            << " accepted=" << accepted
+            << " alpha=" << accepted_alpha
+            << " delta_u_norm=" << delta_u.norm()
+            << std::endl;
+
+        // If the current trajectory is infeasible and no candidate improves it,
+        // stop rather than deliberately making feasibility worse.
+        if (!accepted && current_violation > 0.0) {
+            std::cerr
+                << "[SQP] line search stalled"
+                << " iter=" << sqp_iter
+                << " violation=" << current_violation
+                << std::endl;
+
+            break;
+        }
+
+        // If current_violation == 0 and no candidate is feasible, retaining the
+        // existing feasible iterate is preferable to stepping into collision.
+        if (!accepted && current_violation <= 0.0) {
+            std::cerr
+            << "[SQP] no additional feasible SQP step; "
+            << "keeping current collision-feasible iterate"
+            << " iter=" << sqp_iter
+            << std::endl;
+        }
+
+        // Apply accepted SQP step.
         u_ref = best_inputs;
         x_ref = best_traj;
 
-        // As soon as the aggregate
-        // support exceeds its cap, later SQP iterations cannot restore the
-        // certificate because support is a monotone union.
-        if (!account_support_evaluation(x_ref)) {
-            break;
+        std::set<int> before = support_scenarios;
+
+        const bool support_ok =
+            account_support_evaluation(x_ref);
+
+        for (int id : support_scenarios) {
+            if (before.find(id) == before.end()) {
+                std::cerr
+                    << "[SQP SUPPORT ADD]"
+                    << " iter=" << sqp_iter
+                    << " scenario=" << id
+                    << std::endl;
+            }
+        }
+        std::cerr
+        << "[SQP SUPPORT]"
+        << " iter=" << sqp_iter
+        << " support_size=" << support_scenarios.size()
+        << " support_limit=" << support_limit
+        << " support_ok=" << support_ok
+        << std::endl;
+
+        if (!support_ok) {
+            std::cerr
+                << "[SQP] support cap exceeded; "
+                << "continuing optimization without certificate"
+                << std::endl;
         }
     }
 
@@ -809,7 +1021,7 @@ MPCResult MPCController::solve_optimization_sqp(
     const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
                          config_.mpc.type == MPCType::SH_MPCC;
     const double effective_goal_weight = is_mpcc ? 0.0 : config_.mpc.objective.goal_weight;
-    const double effective_velocity_weight = is_mpcc ? 0.0 : config_.mpc.objective.velocity_weight;
+    const double effective_velocity_weight = config_.mpc.objective.velocity_weight;
     (void)path_progress; (void)path_length;
 
     // Compute final cost
@@ -871,8 +1083,60 @@ MPCResult MPCController::solve_optimization_sqp(
     }
 
     // Check feasibility
-    auto [final_violation, _] = evaluate_constraint_violation(constraints, x_ref);
-    bool feasible = (final_violation <= 0.01);  // small tolerance
+    auto [final_violation, violated_constraints] =
+    evaluate_constraint_violation(constraints, x_ref);
+
+    std::cerr
+    << "[SQP FINAL]"
+    << " final_violation=" << final_violation
+    << " violated_constraints=" << violated_constraints.size()
+    << std::endl;
+
+    const auto final_active_scenarios =
+    sorted_scenario_ids(
+        constraints,
+        x_ref);
+
+    std::cerr
+    << "[SUPPORT FINAL]"
+    << " sqp_union=" << support_scenarios.size()
+    << " final_active=" << final_active_scenarios.size()
+    << " support_limit=" << support_limit
+    << std::endl;
+
+    std::cerr << "[SUPPORT FINAL IDS]";
+
+    for (int id : final_active_scenarios) {
+        std::cerr << " " << id;
+    }
+
+    std::cerr << std::endl;
+
+    std::cerr << "[SUPPORT UNION IDS]";
+
+    for (int id : support_scenarios) {
+        std::cerr << " " << id;
+    }
+
+    std::cerr << std::endl;
+
+    for (const auto& con : violated_constraints) {
+        const Eigen::Vector2d disc_center =
+            compute_collision_disc_center(x_ref.at(con.k), con);
+
+    const double signed_clearance =
+        con.evaluate(disc_center);
+
+    std::cerr
+    << "[FINAL VIOL]"
+    << " scenario=" << con.scenario_id
+    << " k=" << con.k
+    << " obstacle=" << con.obstacle_id
+    << " disc=" << con.disc_index
+    << " signed_clearance=" << signed_clearance
+    << std::endl;
+}
+    bool feasible = (final_violation <= 0.01);
 
     MPCResult result;
     result.success = feasible;
@@ -925,9 +1189,17 @@ MPCResult MPCController::solve_optimization_sqp(
     // If infeasible, try safe fallback
     if (!feasible) {
         auto fallback = generate_safe_fallback(ego_state);
-        auto [fb_viol, __] = evaluate_constraint_violation(constraints, fallback.ego_trajectory);
+        auto [fb_viol, fb_violated] = evaluate_constraint_violation(constraints, fallback.ego_trajectory);
         // An infeasible SQP plan is never executable. Validate the existing
         // braking fallback against the sampled collision rows and hard limits.
+
+        std::cerr
+        << "[SQP FALLBACK]"
+        << " final_violation=" << final_violation
+        << " fallback_violation=" << fb_viol
+        << " fallback_violated_constraints="
+        << fb_violated.size()
+        << std::endl;
         fallback.used_fallback = true;
         fallback.sampled_constraints_satisfied = std::isfinite(fb_viol) && fb_viol <= 0.01;
         bool admissible = fallback.sampled_constraints_satisfied;
@@ -1062,7 +1334,7 @@ QPProblem MPCController::build_condensed_qp(
     const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
                          config_.mpc.type == MPCType::SH_MPCC;
     const double effective_goal_weight = is_mpcc ? 0.0 : config_.mpc.objective.goal_weight;
-    const double effective_velocity_weight = is_mpcc ? 0.0 : config_.mpc.objective.velocity_weight;
+    const double effective_velocity_weight = config_.mpc.objective.velocity_weight;
     (void)path_progress; (void)path_length;
 
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n_dec, n_dec);
@@ -1324,8 +1596,12 @@ MPCResult MPCController::generate_safe_fallback(const EgoState& ego_state) {
     EgoState current = ego_state;
 
     for (int k = 0; k < config_.mpc.horizon; ++k) {
-        // Brake gently
-        EgoInput input(-1.0, 0.0);
+        // Brake gently to zero, then hold instead of predicting reverse motion.
+        double acceleration = std::max(-1.0, -current.v / config_.mpc.dt);
+        // Avoid a negative terminal speed caused solely by division rounding.
+        if (current.v >= 0.0 && current.v + config_.mpc.dt * acceleration < 0.0)
+            acceleration = std::nextafter(acceleration, 0.0);
+        EgoInput input(acceleration, 0.0);
         inputs.push_back(input);
 
         EgoState next_state = ego_dynamics_.propagate(current, input);
@@ -1373,6 +1649,7 @@ void MPCController::reset() {
     mode_histories_.clear();
     obstacle_class_ids_.clear();
     scenarios_.clear();
+    last_linearized_constraints_.clear();
     reference_trajectory_.clear();
     solve_times_.clear();
     custom_per_obstacle_weights_.clear();

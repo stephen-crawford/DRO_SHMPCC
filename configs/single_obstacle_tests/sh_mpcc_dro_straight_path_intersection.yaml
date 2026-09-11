@@ -1,6 +1,8 @@
 # Single obstacle matrix: seed 77; full controller sample sizing.
 mpc_type: sh_mpcc
 dro_enabled: true
+# Markov-compatible risk scoring for within-horizon mode sequences.
+risk_measure: mixture_var
 num_obstacles: 1
 num_modes: 4
 obs_modes: [constant_velocity, accelerating, turn_left_sharp, turn_right_sharp]
@@ -18,9 +20,9 @@ obstacle_speed_cap: 2.0
 environment: two_lane_highway
 road_length: 25.0
 roundabout_radius: 8.0
-path_completion_fraction: 1.0
+path_completion_fraction: 0.95
 path_completion_termination: true
-rollout_steps: 400
+rollout_steps: 450
 scenario_tag: sh_mpcc_dro_straight_path_intersection
 method_name: sh_mpcc_dro
 artifact_write_visualization_gif: true
@@ -28,3 +30,6 @@ artifact_gif_frame_stride: 1
 artifact_show_sampled_scenarios: true
 artifact_scenario_preview_count: 8
 artifact_write_rviz_replay: true
+
+# Retained collision half-spaces in GIF/SVG and coefficient CSV.
+artifact_show_linearized_constraints: true

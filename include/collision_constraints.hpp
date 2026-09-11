@@ -227,67 +227,21 @@ std::vector<CollisionConstraint> filter_constraints_by_clearance(
     double max_distance = 50.0
 );
 
-/**
- * @brief Geometric dominance pruning — de Groot 2023 Definition 2 (shadow / redundancy).
- *
- * Removes scenario s_j iff some scenario s_i DOMINATES it: every collision half-space
- * of s_i IMPLIES the matching half-space of s_j on the reachable ball, so
- * Theta_{s_i} ⊆ Theta_{s_j} and s_j is redundant.
- *
- * @param scenarios         Sampled scenario set.
- * @param reference_trajectory Reference ego trajectory (half-spaces linearized here).
- * @param combined_radius   Ego + obstacle radius + safety margin R (must match the
- *                          value passed to compute_linearized_constraints).
- * @param num_discs         Number of ego collision discs (per-disc dominance).
- * @param vehicle_length    Vehicle length used to place the discs.
- * @param reachable_radius  Conservative UPPER bound on how far a disc center can move
- *                          from its reference within the horizon. Larger => more
- *                          conservative (prunes less); soundness holds for any value
- *                          that over-estimates the true reachable displacement. The
- *                          large default reduces pruning to essentially-collinear
- *                          closer obstacles (always safe).
- * @param reachable_radius_growth_per_step  Optional linear growth, so the ball used at
- *                          step k has radius `reachable_radius + k * growth`. The
- *                          planned and reference trajectories share x_0 exactly, so the
- *                          reachable displacement is ~0 at k=0 and grows with k;
- *                          a single horizon-end scalar over-estimates every earlier
- *                          step. The caller derives the growth from the actual speed
- *                          bound (2 * v_max * dt per step). Default 0 reproduces the
- *                          previous constant-ball behaviour exactly.
- * @return The non-dominated subset of the supplied sampled scenarios.
- */
-std::vector<Scenario> prune_dominated_scenarios(
-    const std::vector<Scenario>& scenarios,
-    const std::vector<EgoState>& reference_trajectory,
-    double combined_radius = 1.0,
-    int num_discs = 1,
-    double vehicle_length = 0.0,
-    double reachable_radius = 1.0e6,
-    double reachable_radius_growth_per_step = 0.0
-);
+std::vector<CollisionConstraint> reduce_to_free_space_polytopes(
+    const std::vector<CollisionConstraint>& all_constraints,
+    const std::vector<EgoState>& anchor_reference,
+    const std::vector<EgoState>& dynamic_reference,
+    int num_discs,
+    double vehicle_length,
+    double max_abs_velocity,
+    double dt,
+    int max_facets = 20);
 
-/// Prepare SH normal anchors using the reference module's lateral push and
-/// circle Douglas-Rachford projection. These positions are not a dynamics rollout.
-void prepare_safe_horizon_anchors(
-    std::vector<EgoState>& trajectory,
-    const std::vector<Scenario>& scenarios,
-    double combined_radius, int num_discs, double vehicle_length);
-
-/**
- * @brief Project a warmstart trajectory to satisfy collision constraints.
- *
- * @param trajectory Warmstart trajectory (modified in-place)
- * @param constraints Collision constraints to satisfy (radii already baked into b)
- * @param max_projection_sweeps Max Douglas-Rachford sweeps over the constraints
- * @param tolerance Convergence tolerance on the projection residual
- * @return Number of positions projected
- */
-int project_warmstart_to_safety(
-    std::vector<EgoState>& trajectory,
-    const std::vector<CollisionConstraint>& constraints,
-    int max_projection_sweeps = 10,
-    double tolerance = 1e-3
-);
+bool prepare_safe_horizon_anchors(
+        std::vector<EgoState>& trajectory,
+        const std::vector<Scenario>& scenarios,
+        double combined_radius, int num_discs, double vehicle_length
+    );
 
 }  // namespace dro_mpc
 

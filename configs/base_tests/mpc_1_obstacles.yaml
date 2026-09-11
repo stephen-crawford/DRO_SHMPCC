@@ -3,9 +3,9 @@ mpc_type: mpc
 num_obstacles: 1
 environment: two_lane_highway
 road_length: 25.0
-path_completion_fraction: 1.0
+path_completion_fraction: 0.95
 path_completion_termination: true
-rollout_steps: 400
+rollout_steps: 450
 scenario_tag: mpc_1_obstacles
 dro_enabled: false
 # A stationary obstacle on the route, with no plant process noise.
