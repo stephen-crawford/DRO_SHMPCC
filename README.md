@@ -259,3 +259,9 @@ anchors and IDs by decision time. These are disc-space collision half-spaces
 before solver state/input mapping, not the complete QP feasible set. RViz is
 unchanged. The matrix `--resume` option retains old artifacts; omit it to
 regenerate existing cases with this overlay.
+
+The [analysis matrix](configs/analysis_matrix/README.md) provides 480 repeatable
+obstacle/class/environment/mode/solver combinations, shared seed schedules,
+collision and SH certification rates, complete sampled-mode coverage, timing,
+control effort and signed conservatism metrics. Generate or mass-run it with
+`python3 tests/run_analysis_matrix.py --output build-base/analysis-matrix`.

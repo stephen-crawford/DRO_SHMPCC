@@ -102,6 +102,15 @@ struct ObstacleExperimentConfig {
     int num_obstacles = 1;
     /// <= 0 derives classes from `history`; a positive YAML value is preserved.
     int obstacles_per_class = 0;
+    /// Explicit balanced class assignment i % num_classes; zero retains legacy layout.
+    int num_classes = 0;
+    /// Use seeded arc placement even for a single obstacle (paired matrix fixtures).
+    bool place_on_path = false;
+
+    int class_id(int obstacle_id) const {
+        return num_classes > 0 ? obstacle_id % num_classes
+                               : obstacle_id / std::max(1, obstacles_per_class);
+    }
 
     std::vector<std::string> obs_modes = {
         "constant_velocity", "turn_left", "turn_right", "decelerating"
@@ -133,6 +142,8 @@ struct ObstacleExperimentConfig {
     double behavior_path_offset = 8.0;
 
     void apply_layout() {
+        if (num_classes < 0 || (num_classes > 0 && num_classes > num_obstacles))
+            throw std::invalid_argument("num_classes must be between zero and num_obstacles");
         if (behavior != "mode_switching" && behavior != "random_orientation" &&
             behavior != "pursuit" && behavior != "path_intersection" && behavior != "path_following")
             throw std::invalid_argument("unknown obstacle_behavior: " + behavior);
@@ -329,6 +340,8 @@ struct ExperimentArtifactConfig {
     std::string run_name;
     bool write_reproducibility_manifest = true;
     bool write_trace_csv = true;
+    /// Decision timings/certificates and complete sampled mode coverage for matrix analysis.
+    bool write_analysis_csv = false;
     bool write_visualization_svg = true;
     /// Native, dependency-free animated playback of the realized rollout.
     bool write_visualization_gif = false;
@@ -336,6 +349,8 @@ struct ExperimentArtifactConfig {
     /// execution state, including the initial and final states.
     int gif_frame_stride = 1;
     bool show_linearized_constraints = true;
+    /// Show all solver-reported support forecasts instead of constraint glyphs or a preview.
+    bool show_support_scenarios = false;
     bool show_sampled_scenarios = true;
     int scenario_preview_count = 8;
     /// Replay-rate multiplier for recorded trace timestamps: one means the GIF

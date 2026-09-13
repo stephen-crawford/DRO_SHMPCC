@@ -175,7 +175,9 @@ ObstacleTrajectory sample_trajectory_with_mode_sequence(
         }
     }
 
-    return ObstacleTrajectory(obstacle_id, dominant_mode, steps);
+    ObstacleTrajectory trajectory(obstacle_id, dominant_mode, steps);
+    trajectory.sampled_mode_sequence = std::move(sequence);
+    return trajectory;
 }
 
 }  // anonymous namespace

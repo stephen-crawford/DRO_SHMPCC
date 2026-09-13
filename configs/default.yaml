@@ -87,6 +87,10 @@ num_obstacles: 1
 # to every obstacle and form the DRO mode support.
 num_modes: 4
 obstacles_per_class: 0
+# Zero keeps legacy layout; positive assigns obstacle i to class i % num_classes.
+num_classes: 0
+# Apply seeded arc placement to the single-obstacle case as well.
+obstacle_place_on_path: false
 obstacle_history: independent_history
 switch_regime: hold
 switch_prob: 0.1
@@ -153,11 +157,14 @@ artifact_output_directory: ""
 artifact_run_name: ""
 artifact_write_manifest: true
 artifact_write_trace_csv: true
+# Complete mode-support evidence and per-decision timing/certificate records.
+artifact_write_analysis_csv: false
 artifact_write_visualization_svg: true
 artifact_write_visualization_gif: false
 artifact_gif_frame_stride: 1
 # Display a deterministic subset of the actual obstacle forecasts.
 artifact_show_linearized_constraints: true
+artifact_show_support_scenarios: false
 artifact_show_sampled_scenarios: true
 artifact_scenario_preview_count: 8
 artifact_gif_playback_rate: 1.0

@@ -386,6 +386,8 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "obstacle_history" || k == "history_configuration")
                                                            cfg.obstacles.history = parse_obstacle_history(val);
             else if (k == "num_obstacles")                 cfg.obstacles.num_obstacles = std::stoi(val);
+            else if (k == "num_classes") cfg.obstacles.num_classes = std::stoi(val);
+            else if (k == "obstacle_place_on_path") cfg.obstacles.place_on_path = to_bool(val);
             else if (k == "num_modes")                     cfg.obstacles.num_modes = std::stoi(val);
             else if (k == "obstacles_per_class")           cfg.obstacles.obstacles_per_class = std::stoi(val);
             else if (k == "obs_modes")                     cfg.obstacles.obs_modes = split_csv(val);
@@ -441,12 +443,14 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "artifact_run_name" || k == "artifact_label")
                                                            cfg.artifacts.run_name = val;
             else if (k == "artifact_write_manifest")       cfg.artifacts.write_reproducibility_manifest = to_bool(val);
+            else if (k == "artifact_write_analysis_csv") cfg.artifacts.write_analysis_csv = to_bool(val);
             else if (k == "artifact_write_trace_csv")      cfg.artifacts.write_trace_csv = to_bool(val);
             else if (k == "artifact_write_visualization_svg")
                                                            cfg.artifacts.write_visualization_svg = to_bool(val);
             else if (k == "artifact_write_visualization_gif" ||
                      k == "artifact_write_gif")
                                                            cfg.artifacts.write_visualization_gif = to_bool(val);
+            else if (k == "artifact_show_support_scenarios") cfg.artifacts.show_support_scenarios = to_bool(val);
             else if (k == "artifact_show_linearized_constraints") cfg.artifacts.show_linearized_constraints = to_bool(val);
             else if (k == "artifact_show_sampled_scenarios") cfg.artifacts.show_sampled_scenarios = to_bool(val);
             else if (k == "artifact_scenario_preview_count") cfg.artifacts.scenario_preview_count = std::stoi(val);

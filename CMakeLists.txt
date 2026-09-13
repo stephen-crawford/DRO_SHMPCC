@@ -193,6 +193,12 @@ target_link_libraries(test_primal_ot PRIVATE scenario_mpc)
 add_executable(test_scenario_sampler tests/test_scenario_sampler.cpp)
 target_link_libraries(test_scenario_sampler PRIVATE scenario_mpc)
 
+add_executable(test_traffic_turns tests/test_traffic_turns.cpp)
+target_link_libraries(test_traffic_turns PRIVATE scenario_mpc)
+
+add_executable(test_analysis_diagnostics tests/test_analysis_diagnostics.cpp)
+target_link_libraries(test_analysis_diagnostics PRIVATE scenario_mpc)
+
 add_executable(test_experiment_statistics tests/test_experiment_statistics.cpp)
 target_link_libraries(test_experiment_statistics PRIVATE scenario_mpc)
 
@@ -294,6 +300,9 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_sh_anchor_preparation unit)
     register_scenario_mpc_test(test_bounded_braking unit)
     register_scenario_mpc_test(test_plan_acceptance integration)
+    add_test(NAME test_traffic_turns COMMAND test_traffic_turns "${CMAKE_CURRENT_BINARY_DIR}/traffic-turn-artifacts")
+    set_tests_properties(test_traffic_turns PROPERTIES LABELS "integration;deterministic")
+    register_scenario_mpc_test(test_analysis_diagnostics unit)
     register_scenario_mpc_test(test_experiment_statistics unit)
     register_scenario_mpc_test(test_experiment_artifacts integration)
     register_scenario_mpc_test(test_experiment_runner_cli integration)
@@ -316,6 +325,17 @@ endif()
 # Full-route base scenarios retain GIF and RViz bundles for user inspection.
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME test_analysis_matrix
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_analysis_matrix.py")
+    set_tests_properties(test_analysis_matrix PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_analysis_matrix_smoke
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_analysis_matrix.py"
+                --runner $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_analysis_matrix_smoke PROPERTIES LABELS "integration;deterministic" TIMEOUT 300)
+    add_test(NAME test_support_scenario_preview
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_support_scenario_preview.py"
+                $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_support_scenario_preview PROPERTIES LABELS "integration;deterministic")
     add_test(NAME test_scenario_preview_toggle
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scenario_preview_toggle.py"
                 $<TARGET_FILE:experiment_runner>)

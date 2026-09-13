@@ -387,7 +387,7 @@ namespace dro_mpc {
 
             if (i < static_cast<int>(config.initial_obstacle_states.size())) {
                 obstacle.state = config.initial_obstacle_states[i];
-            } else if (obstacle_count == 1 && config.initial_obstacle_states.empty()) {
+            } else if (obstacle_count == 1 && config.initial_obstacle_states.empty() && !config.place_on_path) {
                 obstacle.state = environment_default;
             } else {
                 double fraction = config.default_arc_fraction;
@@ -450,9 +450,24 @@ namespace dro_mpc {
         RuntimeConfig mpc_cfg = config.to_scenario_mpc_config();
         mpc_cfg.random_seed = seeds.scenario;
 
-        MPCController controller(mpc_cfg);
+        MPCController controller(mpc_cfg);  
+        const bool capture_collision_halfspaces =
+        config.artifacts.enabled() &&
+        (config.artifacts.show_linearized_constraints ||
+        config.artifacts.show_support_scenarios);
+
         controller.set_capture_linearized_constraints(
-            config.artifacts.enabled() && config.artifacts.show_linearized_constraints);
+            capture_collision_halfspaces);
+
+        const bool capture_collision_visualization =
+            config.artifacts.enabled() &&
+            (
+                config.artifacts.show_linearized_constraints ||
+                config.artifacts.show_support_scenarios
+            );
+
+        controller.set_capture_linearized_constraints(
+            capture_collision_visualization);
 
         const double metrics_v_ref = config.rollout.metrics_v_ref;
         const double dt = config.mpc.dt;
@@ -525,7 +540,6 @@ namespace dro_mpc {
                 static_cast<int>(obstacle.available_modes.size()));
         }
         const int n_obs = static_cast<int>(obs_sims.size());
-        const int per_class = std::max(1, config.obstacles.obstacles_per_class);
 
         detail::RolloutTrace trace;
         trace.route = ref_path;
@@ -554,7 +568,7 @@ namespace dro_mpc {
         };
 
         for (int i = 0; i < n_obs; ++i) {
-            int obs_class = i / per_class;
+            int obs_class = config.obstacles.class_id(i);
             controller.initialize_obstacle(i, obs_class, obs_sims[i].mode_models);
         }
 
@@ -563,7 +577,7 @@ namespace dro_mpc {
         // for the categorical belief and caused calibrated DRO radii to shrink as
         // though those copies were independent samples.
         for (int oi = 0; oi < n_obs; ++oi) {
-            const int obs_class = oi / per_class;
+            const int obs_class = config.obstacles.class_id(oi);
             controller.update_mode_observation(
                 oi, obs_class, obs_sims[oi].current_mode, /*timestep=*/0);
         }
@@ -630,7 +644,7 @@ namespace dro_mpc {
                     }
                 }
 
-                int obs_class = oi / per_class;
+                int obs_class = config.obstacles.class_id(oi);
                 // Timestep zero is the single real initial observation above, so
                 // subsequent plant observations advance naturally from one.  The
                 // previous +5 offset only existed to follow five synthetic
@@ -659,6 +673,48 @@ namespace dro_mpc {
             auto mpc_result = controller.solve(
                 ego, obstacles, goal, trajectory_speed, path_progress, path_length);
 
+            if (config.artifacts.enabled() &&
+                (
+                    config.artifacts.show_linearized_constraints ||
+                    config.artifacts.show_support_scenarios
+                )) {
+
+                auto& frame = trace.frames.back();
+
+                frame.linearized_constraints =
+                    controller.last_linearized_constraints();
+
+                frame.predicted_ego =
+                    mpc_result.ego_trajectory;
+            }
+
+            if (config.artifacts.enabled() && config.artifacts.write_analysis_csv) {
+                detail::DecisionRecord decision;
+                decision.step = step;
+                decision.solve_ms = 1000.0 * mpc_result.solve_time;
+                decision.success = mpc_result.success;
+                decision.certificate_requested = mpc_result.certificate_status !=
+                    SafeHorizonCertificateStatus::NOT_REQUESTED;
+                decision.certified = mpc_result.certificate_status ==
+                    SafeHorizonCertificateStatus::CERTIFIED;
+                decision.scenario_count = controller.scenarios().size();
+                if (mpc_result.success && mpc_result.first_input().has_value()) {
+                    const auto input = *mpc_result.first_input();
+                    decision.applied_control_effort = input.a * input.a + input.omega * input.omega;
+                }
+                for (int oi = 0; oi < n_obs; ++oi) {
+                    detail::ModeCoverageRecord coverage;
+                    coverage.obstacle_id = oi;
+                    coverage.class_id = config.obstacles.class_id(oi);
+                    coverage.true_mode = obs_sims[oi].current_mode;
+                    coverage.sampled_modes = detail::sampled_mode_support(controller.scenarios(), oi);
+                    coverage.represented = std::find(coverage.sampled_modes.begin(),
+                        coverage.sampled_modes.end(), coverage.true_mode) != coverage.sampled_modes.end();
+                    decision.mode_coverage.push_back(std::move(coverage));
+                }
+                trace.decisions.push_back(std::move(decision));
+            }
+
             std::cerr
                 << "[HARNESS RESULT]"
                 << " step=" << step
@@ -666,12 +722,27 @@ namespace dro_mpc {
                 << " controls=" << mpc_result.control_inputs.size()
                 << " first_input_present=" << mpc_result.first_input().has_value()
                 << std::endl;
-            if (config.artifacts.enabled() && config.artifacts.show_linearized_constraints) {
-                trace.frames.back().linearized_constraints = controller.last_linearized_constraints();
+            if (config.artifacts.enabled() &&
+                (config.artifacts.show_linearized_constraints ||
+                config.artifacts.show_support_scenarios)) {
+
+                trace.frames.back().linearized_constraints =
+                    controller.last_linearized_constraints();
+
+                trace.frames.back().predicted_ego =
+                    mpc_result.ego_trajectory;
+            }
+            if (config.artifacts.enabled()) {
+                auto& frame = trace.frames.back();
+                frame.has_decision = true;
+                frame.show_support_scenarios = config.artifacts.show_support_scenarios;
+                frame.support_evaluated = mpc_result.support_cap_status != SupportCapStatus::NOT_EVALUATED;
+                frame.support_scenario_ids = mpc_result.support_scenarios;
             }
             // Attach forecasts to the decision-time frame, before applying its input.
             // Select existing samples deterministically; visualization never samples RNGs.
-            if (config.artifacts.enabled() && config.artifacts.show_sampled_scenarios &&
+            if (config.artifacts.enabled() &&
+                (config.artifacts.show_sampled_scenarios || config.artifacts.show_support_scenarios) &&
                 !obstacles.empty()) {
                 const auto& samples = controller.scenarios();
                 auto& frame = trace.frames.back();
@@ -686,10 +757,18 @@ namespace dro_mpc {
                             (prediction.steps[k].mean - reference.steps.at(k).mean).norm());
                     }
                 }
-                const size_t count = std::min(samples.size(),
-                    static_cast<size_t>(config.artifacts.scenario_preview_count));
-                for (size_t i = 0; i < count; ++i)
-                trace.frames.back().sampled_scenarios.push_back(samples[i * samples.size() / count]);
+                if (config.artifacts.show_support_scenarios) {
+                    for (const auto& sample : samples) {
+                        if (std::find(frame.support_scenario_ids.begin(), frame.support_scenario_ids.end(),
+                                      sample.scenario_id) != frame.support_scenario_ids.end())
+                            frame.sampled_scenarios.push_back(sample);
+                    }
+                } else {
+                    const size_t count = std::min(samples.size(),
+                        static_cast<size_t>(config.artifacts.scenario_preview_count));
+                    for (size_t i = 0; i < count; ++i)
+                        frame.sampled_scenarios.push_back(samples[i * samples.size() / count]);
+                }
             }
             rec.eps_wass = mpc_result.ambiguity_radius_used;
             rec.solve_times_raw.push_back(mpc_result.solve_time);

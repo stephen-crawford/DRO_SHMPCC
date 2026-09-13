@@ -282,6 +282,9 @@ struct PredictionStep {
  */
 struct ObstacleTrajectory {
     int obstacle_id;                   // Unique obstacle identifier
+    // Diagnostic metadata only: actual Markov draws, one per propagation step.
+    // Empty for a held-mode trajectory, whose mode_id is its exact mode.
+    std::vector<std::string> sampled_mode_sequence;
     std::string mode_id;               // Mode used for this trajectory
     std::vector<PredictionStep> steps; // Prediction steps over horizon
 

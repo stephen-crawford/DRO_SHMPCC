@@ -4,6 +4,7 @@
  */
 
 #include "experiment_artifacts_internal.hpp"
+#include "collision_constraints.hpp"
 
 #include "schuurmans_ambiguity.hpp"
 #include "simple_gif_encoder.hpp"
@@ -18,7 +19,10 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <set>
 #include <stdexcept>
+#include <map>
+#include <tuple>
 
 namespace dro_mpc {
 namespace detail {
@@ -223,6 +227,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_scalar(out, "obstacle_radius", config.obstacle_radius);
     write_scalar(out, "num_obstacles", obstacle.num_obstacles);
     write_scalar(out, "num_modes", obstacle.num_modes);
+    write_scalar(out, "num_classes", obstacle.num_classes);
+    write_bool(out, "obstacle_place_on_path", obstacle.place_on_path);
     write_scalar(out, "obstacles_per_class", obstacle.obstacles_per_class);
     write_scalar(out, "obstacle_history", obstacle_history_yaml_name(obstacle.history));
     write_scalar(out, "switch_regime", switch_regime_yaml_name(obstacle.switch_regime));
@@ -282,6 +288,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_bool(out, "artifact_write_manifest",
                config.artifacts.write_reproducibility_manifest);
     write_bool(out, "artifact_write_trace_csv", config.artifacts.write_trace_csv);
+    write_bool(out, "artifact_write_analysis_csv", config.artifacts.write_analysis_csv);
+    write_bool(out, "artifact_show_support_scenarios", config.artifacts.show_support_scenarios);
     write_bool(out, "artifact_show_linearized_constraints",
                config.artifacts.show_linearized_constraints);
     write_bool(out, "artifact_write_visualization_svg",
@@ -387,6 +395,13 @@ struct WorldBounds {
         for (const auto& frame : trace.frames) {
             include(frame.ego.position());
             for (const auto& obstacle : frame.obstacles) include(obstacle.position());
+            if (!frame.show_support_scenarios) {
+                for (const auto& row : frame.linearized_constraints) {
+                    if (row.k < 0 || static_cast<size_t>(row.k) >= frame.predicted_ego.size()) continue;
+                    const Eigen::Vector2d disc = compute_collision_disc_center(frame.predicted_ego[row.k], row);
+                    if (disc.allFinite()) include(disc);
+                }
+            }
         }
     }
 
@@ -442,8 +457,8 @@ enum GifPaletteIndex : std::uint8_t {
     GIF_START = 8,
     GIF_COLLISION = 9,
     GIF_WHITE = 10,
-    GIF_UNUSED_11 = 11,
-    GIF_UNUSED_12 = 12,
+    GIF_SUPPORT = 11,
+    GIF_SUPPORT_HALFSPACE = 12,
     GIF_UNUSED_13 = 13,
     GIF_UNUSED_14 = 14,
     GIF_UNUSED_15 = 15,
@@ -461,8 +476,8 @@ constexpr std::array<gif::Color, 16> GIF_PALETTE = {{
     {87, 217, 163},  // start/final no-collision
     {248, 81, 73},   // collision
     {230, 237, 243}, // white
-    {16, 24, 32}, {16, 24, 32}, {16, 24, 32},
-    {16, 24, 32}, {16, 24, 32},
+    {0, 229, 255}, {190, 195, 200}, {150, 155, 160},
+    {110, 115, 120}, {70, 75, 80},
 }};
 
 constexpr int GIF_WIDTH = 800;
@@ -583,16 +598,66 @@ void draw_current_actor(IndexedCanvas& canvas, const Eigen::Vector2d& position,
 // Disc-space boundary segments (2 m), with a 0.35 m tick into a.dot(c) >= b.
 // These are retained collision rows, not a projection of the entire QP feasible set.
 bool constraint_glyph(const CollisionConstraint& row, Eigen::Vector2d& center,
-                      Eigen::Vector2d& tangent, Eigen::Vector2d& inward) {
+                      Eigen::Vector2d& tangent, Eigen::Vector2d& inward,
+                      const RolloutTraceFrame* frame = nullptr) {
     const double norm = row.a.norm();
     if (!std::isfinite(norm) || norm <= 0.0 || !std::isfinite(row.b) ||
         !row.linearization_point.allFinite()) return false;
     inward = row.a / norm;
-    center = row.linearization_point + inward *
-        ((row.b - row.a.dot(row.linearization_point)) / norm);
+    Eigen::Vector2d anchor = row.linearization_point;
+    if (frame && row.obstacle_id >= 0 && static_cast<size_t>(row.obstacle_id) < frame->obstacles.size())
+        anchor = frame->obstacles[row.obstacle_id].position();
+    center = anchor + inward * ((row.b - row.a.dot(anchor)) / norm);
     tangent = Eigen::Vector2d(-inward.y(), inward.x());
     return center.allFinite();
 }
+
+// White is the first predicted stage; four gray bands represent later stages.
+std::uint8_t constraint_stage_color(int k, int horizon) {
+    if (k <= 1) return GIF_WHITE;
+    return static_cast<std::uint8_t>(12 + std::min(3, 4 * (k - 2) / std::max(1, horizon - 1)));
+}
+
+std::optional<Eigen::Vector2d> predicted_constraint_disc(
+    const RolloutTraceFrame& frame, const CollisionConstraint& row) {
+    if (row.k < 0 || static_cast<size_t>(row.k) >= frame.predicted_ego.size()) return std::nullopt;
+    const Eigen::Vector2d disc = compute_collision_disc_center(frame.predicted_ego[row.k], row);
+    if (!disc.allFinite()) return std::nullopt;
+    return disc;
+}
+
+bool is_support_constraint(
+    const RolloutTraceFrame& frame,
+    const CollisionConstraint& row)
+{
+    return std::find(
+               frame.support_scenario_ids.begin(),
+               frame.support_scenario_ids.end(),
+               row.scenario_id)
+           != frame.support_scenario_ids.end();
+}
+
+bool frame_decision_failed(
+    const RolloutTrace& trace,
+    const RolloutTraceFrame& frame)
+{
+    const auto it = std::find_if(
+        trace.decisions.begin(),
+        trace.decisions.end(),
+        [&](const auto& decision) {
+            return decision.step == frame.step;
+        });
+
+    return it != trace.decisions.end() &&
+           !it->success;
+}
+
+int constraint_horizon(const RolloutTraceFrame& frame) {
+    int horizon = 1;
+    for (const auto& row : frame.linearized_constraints) horizon = std::max(horizon, row.k);
+    return horizon;
+}
+
 
 void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
                       std::size_t frame_index, const SvgTransform& transform) {
@@ -604,25 +669,171 @@ void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
     draw_actor_history(canvas, trace, frame_index, -1, transform, 2, GIF_EGO);
 
     const auto& frame = trace.frames[frame_index];
+
+const bool failed_decision =
+    frame.has_decision &&
+    frame_decision_failed(trace, frame);
+
+constexpr double kViolationDisplayTolerance = 1e-6;
+
+    // A disappearing group fades over two recorded frames. These gray lines
+    // retain the previous decision's exact geometry; they are not current rows.
+    std::set<std::pair<int, int>> visible_groups;
     for (const auto& row : frame.linearized_constraints) {
-        Eigen::Vector2d center, tangent, inward;
-        if (!constraint_glyph(row, center, tangent, inward)) continue;
-        const auto [x0, y0] = transform.map(center - tangent);
-        const auto [x1, y1] = transform.map(center + tangent);
-        const auto [cx, cy] = transform.map(center);
-        const auto [nx, ny] = transform.map(center + 0.35 * inward);
-        canvas.draw_line(x0, y0, x1, y1, 1, GIF_WHITE);
-        canvas.draw_line(cx, cy, nx, ny, 1, GIF_WHITE);
+        if (row.k == 1 && (!frame.show_support_scenarios || is_support_constraint(frame, row)))
+            visible_groups.emplace(row.obstacle_id, row.disc_index);
     }
-    for (const auto& scenario : frame.sampled_scenarios) {
-        for (const auto& [id, prediction] : scenario.trajectories) {
-            for (size_t k = 1; k < prediction.steps.size(); ++k) {
-                const auto [x0, y0] = transform.map(prediction.steps[k-1].mean);
-                const auto [x1, y1] = transform.map(prediction.steps[k].mean);
-                canvas.draw_line(x0, y0, x1, y1, 1, gif_obstacle_color(id));
+    if (!failed_decision) {
+        for (size_t age = 1; age <= 2 && age <= frame_index; ++age) {
+            const auto& prior = trace.frames[frame_index - age];
+            std::set<std::pair<int, int>> fading_groups;
+            for (const auto& row : prior.linearized_constraints) {
+                const auto key = std::make_pair(row.obstacle_id, row.disc_index);
+                if (row.k != 1 || visible_groups.count(key) ||
+                    (frame.show_support_scenarios && !is_support_constraint(prior, row))) continue;
+                Eigen::Vector2d center, tangent, inward;
+                if (!constraint_glyph(row, center, tangent, inward, &prior)) continue;
+                const auto [x0, y0] = transform.map(center - 1.5 * tangent);
+                const auto [x1, y1] = transform.map(center + 1.5 * tangent);
+                const auto [cx, cy] = transform.map(center);
+                const auto [nx, ny] = transform.map(center + .35 * inward);
+                const std::uint8_t color = age == 1 ? 14 : 15;
+                canvas.draw_line(x0, y0, x1, y1, 1, color);
+                canvas.draw_line(cx, cy, nx, ny, 1, color);
+                fading_groups.insert(key);
             }
+            visible_groups.insert(fading_groups.begin(), fading_groups.end());
         }
     }
+
+
+        for (const auto& row : frame.linearized_constraints) {
+
+            /*
+            * Evaluate this exact retained halfspace against its matching
+            * predicted ego disc.
+            */
+            const auto predicted_disc =
+                predicted_constraint_disc(frame, row);
+
+            double signed_clearance =
+                std::numeric_limits<double>::infinity();
+
+            if (predicted_disc) {
+                signed_clearance =
+                    row.evaluate(*predicted_disc);
+            }
+
+            const bool violated =
+                predicted_disc.has_value() &&
+                std::isfinite(signed_clearance) &&
+                signed_clearance < -kViolationDisplayTolerance;
+
+            /*
+            * Normal animation:
+            *     only show k=1.
+            *
+            * Failed MPC decision:
+            *     additionally show violated future rows, regardless of k.
+            */
+            const bool show_normal_row =
+                row.k == 1;
+
+            const bool show_failed_row =
+                failed_decision && violated;
+
+            if (!show_normal_row &&
+                !show_failed_row) {
+                continue;
+            }
+
+            /*
+            * In support-scenario mode, ordinary k=1 rows are restricted
+            * to support scenarios. A violated row on a failed decision is
+            * ALWAYS shown so that the actual failure cannot be hidden.
+            */
+            if (frame.show_support_scenarios &&
+                !show_failed_row &&
+                !is_support_constraint(frame, row)) {
+                continue;
+            }
+
+            Eigen::Vector2d center;
+            Eigen::Vector2d tangent;
+            Eigen::Vector2d inward;
+
+            if (!constraint_glyph(
+                    row,
+                    center,
+                    tangent,
+                    inward, &frame)) {
+                continue;
+            }
+
+            const auto [x0, y0] =
+                transform.map(center - 1.5 * tangent);
+
+            const auto [x1, y1] =
+                transform.map(center + 1.5 * tangent);
+
+            const auto [cx, cy] =
+                transform.map(center);
+
+            const auto [nx, ny] =
+                transform.map(
+                    center + 0.35 * inward);
+
+            /*
+            * Red = the halfspace that the returned trajectory
+            *       actually violates on a failed solve.
+            *
+            * Gray/white = ordinary immediately relevant constraint.
+            */
+            const std::uint8_t color =
+                show_failed_row
+                    ? static_cast<std::uint8_t>(GIF_COLLISION)
+                    : frame.show_support_scenarios
+                        ? static_cast<std::uint8_t>(
+                            GIF_SUPPORT_HALFSPACE)
+                        : static_cast<std::uint8_t>(
+                            GIF_WHITE);
+
+            const int thickness =
+                show_failed_row ? 3 : 2;
+
+            canvas.draw_line(
+                x0, y0,
+                x1, y1,
+                thickness,
+                color);
+
+            canvas.draw_line(
+                cx, cy,
+                nx, ny,
+                thickness,
+                color);
+        }
+    const auto draw_forecasts = [&]() {
+        for (const auto& scenario : frame.sampled_scenarios) {
+            for (const auto& [id, prediction] : scenario.trajectories) {
+                const std::uint8_t color =
+                frame.show_support_scenarios
+                    ? static_cast<std::uint8_t>(GIF_SUPPORT)
+                    : gif_obstacle_color(id);
+                for (size_t k = 1; k < prediction.steps.size(); ++k) {
+                    const auto [x0, y0] = transform.map(prediction.steps[k-1].mean);
+                    const auto [x1, y1] = transform.map(prediction.steps[k].mean);
+                    canvas.draw_line(x0, y0, x1, y1, frame.show_support_scenarios ? 3 : 1, color);
+                }
+                if (frame.show_support_scenarios && !prediction.steps.empty()) {
+                    const auto [x, y] = transform.map(prediction.steps.back().mean);
+                    canvas.draw_disk(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)),
+                                     4, GIF_SUPPORT);
+                }
+            }
+        }
+    };
+    if (!frame.show_support_scenarios) draw_forecasts();
     for (std::size_t obstacle = 0; obstacle < frame.obstacles.size(); ++obstacle) {
         const std::uint8_t color = gif_obstacle_color(obstacle);
         draw_actor_history(canvas, trace, frame_index, static_cast<int>(obstacle),
@@ -632,7 +843,9 @@ void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
         draw_current_actor(canvas, state.position(), heading, transform, 5, color);
     }
     draw_current_actor(canvas, frame.ego.position(), frame.ego.theta, transform, 7, GIF_EGO);
-}
+    // Draw support forecasts last: short predictions must not disappear under actor markers.
+        if (frame.show_support_scenarios) draw_forecasts();
+    }
 
 std::uint64_t scaled_trace_elapsed_centiseconds(
     const ExperimentArtifactConfig& artifacts, const RolloutTrace& trace,
@@ -728,6 +941,19 @@ void write_visualization_gif(const fs::path& path, const ExperimentConfig& confi
         }
     }
     if (!terminal_tick_reserved) frame_delays_centiseconds.back() = 1U;
+    // Hold failed terminal decisions long enough to inspect the
+    // violated future halfspaces.
+    if (!trace.frames.empty() &&
+        frame_decision_failed(
+            trace,
+            trace.frames.back())) {
+
+        constexpr std::uint64_t
+            kFailureHoldCentiseconds = 200U;
+
+        frame_delays_centiseconds.back() =
+            kFailureHoldCentiseconds;
+    }
 
     for (std::size_t output_index = 0; output_index < frame_indices.size(); ++output_index) {
         render_gif_frame(canvas, trace, frame_indices[output_index], transform);
@@ -887,24 +1113,53 @@ void write_visualization_svg(const fs::path& path, const ExperimentConfig& confi
         << " / seed " << record.seed << "</text>\n";
     for (const auto& road : trace.road_centerlines) write_path_polyline(out, road, transform, "road");
     write_path_polyline(out, trace.route, transform, "route");
-    if (config.artifacts.show_linearized_constraints) {
+    if (config.artifacts.show_linearized_constraints && !config.artifacts.show_support_scenarios) {
         for (auto frame = trace.frames.rbegin(); frame != trace.frames.rend(); ++frame) {
-            if (frame->linearized_constraints.empty()) continue;
-            out << "<g id=\"linearized-constraints\" stroke=\"#e6edf3\" stroke-width=\"1\">\n";
+            if (!frame->has_decision) continue;
+            out << "<g id=\"linearized-constraints\" stroke=\"#e6edf3\" stroke-width=\"2\">\n";
+            const int stage_horizon = constraint_horizon(*frame);
             for (const auto& row : frame->linearized_constraints) {
                 Eigen::Vector2d center, tangent, inward;
-                if (!constraint_glyph(row, center, tangent, inward)) continue;
-                const auto [x0, y0] = transform.map(center - tangent);
-                const auto [x1, y1] = transform.map(center + tangent);
+                if (!constraint_glyph(row, center, tangent, inward, &*frame)) continue;
+                const auto [x0, y0] = transform.map(center - 1.5 * tangent);
+                const auto [x1, y1] = transform.map(center + 1.5 * tangent);
                 const auto [cx, cy] = transform.map(center);
                 const auto [nx, ny] = transform.map(center + 0.35 * inward);
-                out << "<path d=\"M " << x0 << ' ' << y0 << " L " << x1 << ' ' << y1
+                const auto color = GIF_PALETTE[constraint_stage_color(row.k, stage_horizon)];
+                const std::string shade = "rgb(" + std::to_string(color.red) + "," +
+                    std::to_string(color.green) + "," + std::to_string(color.blue) + ")";
+                out << "<path stroke=\"" << shade << "\" d=\"M " << x0 << ' ' << y0 << " L " << x1 << ' ' << y1
                     << " M " << cx << ' ' << cy << " L " << nx << ' ' << ny << "\"><title>decision "
                     << frame->step << ", horizon " << row.k << ", disc " << row.disc_index
-                    << ", scenario " << row.scenario_id << "</title></path>\n";
+                    << ", obstacle " << row.obstacle_id << ", scenario " << row.scenario_id << "</title></path>\n";
+
             }
-            out << "</g><text x=\"30\" y=\"55\" class=\"legend\">White: disc-space boundaries, ticks into feasible side; decision "
-                << frame->step << "</text>\n";
+            out << "</g><text x=\"30\" y=\"55\" class=\"legend\">White: k=0/1; darker gray: later stages. Disc coordinates/residuals: CSV. Decision "
+                << frame->step << "</text><text x=\"30\" y=\"75\" class=\"legend\">Blue: executed history; compare each boundary only to its same-stage predicted disc. Ticks: feasible side.</text>\n";
+            if (frame->predicted_ego.empty())
+                out << "<text x=\"30\" y=\"95\" class=\"legend\">No returned predicted trajectory; disc evaluation unavailable.</text>\n";
+            break;
+        }
+    }
+    if (config.artifacts.show_support_scenarios) {
+        for (auto frame = trace.frames.rbegin(); frame != trace.frames.rend(); ++frame) {
+            if (!frame->has_decision) continue;
+            out << "<g id=\"support-scenarios\" fill=\"none\" stroke=\"#00e5ff\" stroke-width=\"3\">\n";
+            for (const auto& scenario : frame->sampled_scenarios) {
+                for (const auto& [id, prediction] : scenario.trajectories) {
+                    out << "<polyline points=\"";
+                    for (const auto& step : prediction.steps) {
+                        const auto [x, y] = transform.map(step.mean);
+                        out << x << ',' << y << ' ';
+                    }
+                    out << "\"><title>support scenario " << scenario.scenario_id
+                        << ", obstacle " << id << "</title></polyline>\n";
+                }
+            }
+            out << "</g><text x=\"30\" y=\"55\" class=\"legend\">Cyan: support forecasts: "
+                << frame->support_scenario_ids.size() << "; decision " << frame->step
+                << (frame->support_evaluated ? " (SQP support estimate)" : " (support not evaluated)")
+                << "</text>\n";
             break;
         }
     }
@@ -993,6 +1248,46 @@ std::string write_rollout_artifacts(
                                 << k << ',' << prediction.steps[k].mean.x() << ','
                                 << prediction.steps[k].mean.y() << '\n';
     }
+    {
+        const auto path = run_directory / "support_scenarios.csv";
+        std::ofstream out(path);
+        require_open(out, path);
+        out << "step,support_evaluated,support_count,scenario_ids\n";
+        for (const auto& frame : trace.frames) {
+            if (!frame.has_decision) continue;
+            out << frame.step << ',' << frame.support_evaluated << ',' << frame.support_scenario_ids.size() << ',';
+            for (size_t i = 0; i < frame.support_scenario_ids.size(); ++i) {
+                if (i) out << ';';
+                out << frame.support_scenario_ids[i];
+            }
+            out << '\n';
+        }
+    }
+    if (config.artifacts.write_analysis_csv) {
+        const auto decisions_path = run_directory / "decisions.csv";
+        const auto coverage_path = run_directory / "mode_coverage.csv";
+        std::ofstream decisions(decisions_path), coverage(coverage_path);
+        require_open(decisions, decisions_path);
+        require_open(coverage, coverage_path);
+        decisions << std::setprecision(17)
+            << "step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count\n";
+        coverage << "step,obstacle_id,class_id,true_mode,sampled_modes,represented,scenario_count\n";
+        for (const auto& decision : trace.decisions) {
+            decisions << decision.step << ',' << decision.solve_ms << ',' << decision.success << ','
+                << decision.certificate_requested << ',' << decision.certified << ','
+                << decision.applied_control_effort << ',' << decision.scenario_count << '\n';
+            for (const auto& item : decision.mode_coverage) {
+                coverage << decision.step << ',' << item.obstacle_id << ',' << item.class_id << ','
+                    << item.true_mode << ',';
+                for (size_t i = 0; i < item.sampled_modes.size(); ++i) {
+                    if (i) coverage << ';';
+                    coverage << item.sampled_modes[i];
+                }
+                coverage << ',' << item.represented << ',' << decision.scenario_count << '\n';
+            }
+        }
+        write_rviz_geometry_csv(run_directory / "geometry.csv", config);
+    }
     if (config.artifacts.write_trace_csv) {
         write_trace_csv(run_directory / "trace.csv", trace);
     }
@@ -1001,13 +1296,17 @@ std::string write_rollout_artifacts(
         std::ofstream out(path);
         require_open(out, path);
         out << std::setprecision(17)
-            << "step,time_s,horizon_step,obstacle_id,scenario_id,disc_index,disc_offset,a_x,a_y,b,anchor_x,anchor_y\n";
+            << "step,time_s,horizon_step,obstacle_id,scenario_id,disc_index,disc_offset,a_x,a_y,b,anchor_x,anchor_y,predicted_disc_x,predicted_disc_y,geometric_residual\n";
         for (const auto& frame : trace.frames) {
             for (const auto& row : frame.linearized_constraints) {
                 out << frame.step << ',' << frame.time_seconds << ',' << row.k << ','
                     << row.obstacle_id << ',' << row.scenario_id << ',' << row.disc_index << ','
                     << row.disc_offset << ',' << row.a.x() << ',' << row.a.y() << ',' << row.b << ','
-                    << row.linearization_point.x() << ',' << row.linearization_point.y() << '\n';
+                    << row.linearization_point.x() << ',' << row.linearization_point.y() << ',';
+                const auto disc = predicted_constraint_disc(frame, row);
+                if (disc) out << disc->x() << ',' << disc->y() << ',' << row.evaluate(*disc);
+                else out << ",,";
+                out << '\n';
             }
         }
     }

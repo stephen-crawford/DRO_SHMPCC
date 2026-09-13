@@ -1,0 +1,25 @@
+# Short approaching-vehicle scene for testing support-only forecast visualization.
+mpc_type: sh_mpcc
+dro_enabled: false
+environment: two_lane_highway
+road_length: 25.0
+num_obstacles: 1
+num_classes: 1
+obs_modes: [constant_velocity, turn_left, turn_right]
+num_modes: 3
+rare_mode: ""
+rare_switch_prob: 0.0
+randomize_available_modes: false
+switch_regime: hold
+switch_prob: 0.0
+obstacle_initial_states: [6.0,0.0,0.2,0.0]
+obstacle_process_noise: 0.0
+horizon: 15
+rollout_steps: 8
+artifact_show_support_scenarios: true
+artifact_show_linearized_constraints: true
+artifact_write_visualization_svg: true
+artifact_write_visualization_gif: true
+artifact_write_analysis_csv: true
+
+obstacle_prediction_noise: false

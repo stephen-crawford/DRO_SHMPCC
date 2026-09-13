@@ -4,6 +4,7 @@
  */
 
 #include "experiment_harness.hpp"
+#include "experiment_artifacts_internal.hpp"
 #include "experiment_config_yaml.hpp"
 #include "rviz_replay_data.hpp"
 
@@ -255,12 +256,60 @@ int main() {
               std::abs(replay.control_effort - record.control_effort) < 1e-12,
           "resolved configuration replays the model-driven rollout outcome");
 
-    check(read_file(output / "constraints_disabled" / "rollout.gif") != gif,
-          "constraint option changes rendered GIF frames");
     check(!fs::exists(output / "constraints_disabled" / "linearized_constraints.csv") &&
               read_file(output / "constraints_disabled" / "rollout.svg").find(
                   "id=\"linearized-constraints\"") == std::string::npos,
           "disabled constraint visualization omits CSV and overlay");
+    // Known stage/disc geometry checks the visualization against the indexed point,
+    // rather than against the current ego center or its executed history.
+    detail::RolloutTrace staged;
+    staged.route = ReferencePath::create_straight({0, 0}, {10, 0});
+    detail::RolloutTraceFrame staged_frame;
+    staged_frame.has_decision = true;
+    staged_frame.predicted_ego.resize(5);
+    staged_frame.predicted_ego[1] = EgoState(3, 4, M_PI / 2, 0);
+    staged_frame.predicted_ego[4] = EgoState(8, 5, 0, 0);
+    CollisionConstraint near(1, 0, 10, {1, 0}, 2);
+    near.disc_offset = 2;
+    CollisionConstraint far(4, 0, 20, {1, 0}, 7);
+    far.disc_offset = -2;
+    staged_frame.linearized_constraints = {near, far};
+    staged.frames.push_back(staged_frame);
+    auto stage_config = config;
+    stage_config.artifacts.run_name = "staged_geometry";
+    stage_config.artifacts.show_linearized_constraints = true;
+    detail::write_rollout_artifacts(stage_config, record, derive_seeds(seed, 0), staged);
+    std::istringstream stage_csv(read_file(output / "staged_geometry" / "linearized_constraints.csv"));
+    std::string stage_line;
+    std::getline(stage_csv, stage_line);
+    bool stage_points_match = true;
+    const double expected_points[2][3] = {{3, 6, 1}, {6, 5, -1}};
+    for (int i = 0; i < 2; ++i) {
+        std::getline(stage_csv, stage_line);
+        std::istringstream columns(stage_line);
+        std::string value;
+        for (int j = 0; j < 15; ++j) {
+            std::getline(columns, value, ',');
+            if (j >= 12) stage_points_match = stage_points_match &&
+                std::abs(std::stod(value) - expected_points[i][j - 12]) < 1e-12;
+        }
+    }
+    const auto stage_svg = read_file(output / "staged_geometry" / "rollout.svg");
+    check(stage_points_match && stage_svg.find("class=\"predicted-disc\"") == std::string::npos &&
+              stage_svg.find("rgb(230,237,243)") != std::string::npos &&
+              stage_svg.find("rgb(110,115,120)") != std::string::npos,
+          "stage-matched disc diagnostics remain available without drawing predicted-disc circles");
+
+    // The rollout fixture above has only future-stage rows. Use the explicit
+    // k=1 fixture to check the GIF boundary toggle after removing disc dots.
+    auto hidden_staged = staged;
+    hidden_staged.frames.front().linearized_constraints.clear();
+    stage_config.artifacts.run_name = "staged_hidden";
+    detail::write_rollout_artifacts(stage_config, record, derive_seeds(seed, 0), hidden_staged);
+    check(read_file(output / "staged_geometry" / "rollout.gif") !=
+              read_file(output / "staged_hidden" / "rollout.gif"),
+          "constraint option changes rendered GIF frames");
+
     fs::remove_all(output, error);
     check(!error && !fs::exists(output),
           "artifact regression cleanup removes its isolated temporary directory");
