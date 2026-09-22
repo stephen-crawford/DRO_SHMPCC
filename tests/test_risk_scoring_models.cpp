@@ -5,6 +5,7 @@
 // JOINT_CVAR reference, measured risk-vector time, and the mathematical
 // properties carried in DROResult::risk_diagnostics.
 #include "dro.hpp"
+#include "mode_count_test_utils.hpp"
 #include "dynamics.hpp"
 
 #include <algorithm>
@@ -139,9 +140,10 @@ DROResult evaluate(
     config.radius_calibration.mixture_sequence_samples = 256;
 
     DRO dro(config);
-    dro.set_observation_count(120);
+    const auto nominal = uniform_nominal(fixture);
     return dro.compute_worst_case_weights(
-        uniform_nominal(fixture), fixture.obstacle, fixture.modes, fixture.ego,
+        nominal, test::uniform_mode_counts(nominal, 120),
+        fixture.obstacle, fixture.modes, fixture.ego,
         fixture.horizon, /*ego radius=*/0.5, /*obstacle radius=*/0.35,
         /*margin=*/0.1, /*risk horizon=*/-1, /*discs=*/1,
         /*vehicle length=*/4.0, transition);

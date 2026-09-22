@@ -186,75 +186,143 @@ struct ModeModel {
 // =============================================================================
 // Section 4: Mode History and Weights
 // =============================================================================
+/**
+ * @brief One realized mode observation.
+ *
+ * Only ACTUAL plant/environment behavior is stored here.
+ * Modes sampled inside an MPC prediction horizon must never be inserted.
+ *
+ * source_obstacle_id is required because histories are pooled class-wide:
+ * two obstacles of the same class may contribute distinct observations at
+ * the same realized timestep.
+ */
+struct ModeObservation {
+    int timestep = 0;
+    int source_obstacle_id = -1;
+    std::string mode_id;
+
+    bool operator<(const ModeObservation& other) const {
+        if (timestep != other.timestep) {
+            return timestep < other.timestep;
+        }
+        if (source_obstacle_id != other.source_obstacle_id) {
+            return source_obstacle_id < other.source_obstacle_id;
+        }
+        return mode_id < other.mode_id;
+    }
+
+    bool operator==(const ModeObservation& other) const {
+        return timestep == other.timestep &&
+               source_obstacle_id == other.source_obstacle_id &&
+               mode_id == other.mode_id;
+    }
+};
 
 /**
- * @brief Track observed modes for an obstacle over time.
+ * @brief Track realized modes for an obstacle class over time.
+ *
+ * Histories are broadcast class-wide. Each entry corresponds to exactly one
+ * actually realized obstacle mode at one actual rollout timestep.
+ *
+ * Prediction-horizon modes sampled by the MPC are not observations and must
+ * not be inserted here.
  */
 struct ModeHistory {
-    int obstacle_id;                                    // Unique obstacle identifier
-    int obstacle_class_id = 0;                          // Class identifier (shared across obstacles)
-    std::map<std::string, ModeModel> available_modes;   // Mode ID to ModeModel
-    std::vector<std::pair<int, std::string>> observed_modes;  // (timestep, mode_id)
+    int obstacle_id;
+    int obstacle_class_id = 0;
+    std::map<std::string, ModeModel> available_modes;
+
+    // Class-wide realized observations.
+    std::vector<ModeObservation> observed_modes;
+
     /// Positive values keep a rolling window; -1 retains all observations.
     int max_history_length = -1;
 
     ModeHistory() : obstacle_id(0) {}
-    ModeHistory(int obstacle_id, const std::map<std::string, ModeModel>& modes,
-                int obstacle_class_id = 0)
-            : obstacle_id(obstacle_id), obstacle_class_id(obstacle_class_id),
+
+    ModeHistory(
+        int obstacle_id,
+        const std::map<std::string, ModeModel>& modes,
+        int obstacle_class_id = 0
+    )
+        : obstacle_id(obstacle_id),
+          obstacle_class_id(obstacle_class_id),
           available_modes(modes) {}
 
-    /// Record a mode observation at the given timestep
-    void record_observation(int timestep, const std::string& mode_id) {
-        observed_modes.emplace_back(timestep, mode_id);
-        // Only a positive value enables a rolling window.  In particular, -1
-        // is the documented "retain all" setting rather than an implicit
-        // horizon-dependent cap.
+    /**
+     * @brief Record one REALIZED obstacle mode.
+     *
+     * This should be called once for each obstacle at each real rollout
+     * timestep, using the mode actually governing that obstacle's motion.
+     */
+    void record_observation(
+        int timestep,
+        int source_obstacle_id,
+        const std::string& mode_id
+    ) {
+        observed_modes.push_back(
+            {timestep, source_obstacle_id, mode_id}
+        );
+
         if (max_history_length > 0 &&
-            static_cast<int>(observed_modes.size()) > max_history_length) {
-            observed_modes.erase(observed_modes.begin(),
-            observed_modes.begin() + (observed_modes.size() - max_history_length));
+            static_cast<int>(observed_modes.size()) >
+                max_history_length) {
+
+            observed_modes.erase(
+                observed_modes.begin(),
+                observed_modes.begin() +
+                    (observed_modes.size() -
+                     static_cast<std::size_t>(max_history_length))
+            );
         }
     }
 
-    /// Conservative amount of independent-looking evidence available for an
-    /// ambiguity-radius calibration.  Repeated reports of a held mode are one
-    /// mode episode, not fresh IID categorical observations.  This deliberately
-    /// under-counts an unchanged mode after a possible switch, which is safer
-    /// than shrinking a concentration radius from temporally correlated data.
+    /**
+     * @brief Number of realized mode observations used for radius calibration.
+     *
+     * Every realized obstacle-timestep observation counts exactly once.
+     * Prediction-horizon samples do not appear in observed_modes and therefore
+     * cannot affect this count.
+     */
     int ambiguity_radius_sample_count() const noexcept {
-        if (observed_modes.empty()) return 0;
-
-        int episodes = 1;
-        const std::string* previous_mode = &observed_modes.front().second;
-        for (std::size_t i = 1; i < observed_modes.size(); ++i) {
-            if (observed_modes[i].second != *previous_mode) {
-                ++episodes;
-                previous_mode = &observed_modes[i].second;
-            }
-        }
-        return episodes;
+        return static_cast<int>(observed_modes.size());
     }
 
-    /// Count occurrences of each mode in history
+    /// Count occurrences of each realized mode in the class-wide history.
     std::map<std::string, int> get_mode_counts() const {
         std::map<std::string, int> counts;
+
         for (const auto& [mode_id, _] : available_modes) {
             counts[mode_id] = 0;
         }
-        for (const auto& [_, mode_id] : observed_modes) {
-            counts[mode_id]++;
+
+        for (const auto& observation : observed_modes) {
+            ++counts[observation.mode_id];
         }
+
         return counts;
     }
 
-    /// Get the n most recent observed modes
+    /// Get the n most recent realized modes.
     std::vector<std::string> get_recent_modes(int n) const {
         std::vector<std::string> recent;
-        int start = std::max(0, static_cast<int>(observed_modes.size()) - n);
-        for (size_t i = start; i < observed_modes.size(); ++i) {
-            recent.push_back(observed_modes[i].second);
+
+        const int start =
+            std::max(
+                0,
+                static_cast<int>(observed_modes.size()) - n
+            );
+
+        for (std::size_t i =
+                 static_cast<std::size_t>(start);
+             i < observed_modes.size();
+             ++i) {
+
+            recent.push_back(
+                observed_modes[i].mode_id
+            );
         }
+
         return recent;
     }
 };
@@ -420,9 +488,26 @@ inline const char* safe_horizon_certificate_status_name(
     return "unknown";
 }
 
+// Observational diagnostics only. -1 means not evaluated; 0/1 mean false/true.
+struct FailureDiagnostics {
+    int backup_available = -1;
+    int backup_removal_budget_exceeded = -1;
+    int backup_dro_failed = -1;
+    int braking_collision_feasible = -1;
+    int any_homotopy_geometrically_feasible = -1;
+    int last_qp_converged = -1;
+    int sqp_sampled_collision_feasible = -1;
+    int fallback_sampled_collision_feasible = -1;
+};
+
 struct MPCResult {
+    FailureDiagnostics failure_diagnostics;
     bool success;                           // Whether the returned plan is executable
     bool used_fallback = false;
+    /// A nominal retry follows exhaustion of the DRO solve and its recovery.
+    bool nominal_fallback_attempted = false;
+    /// Executable result from that retry; its certificate is nominal, not DRO.
+    bool used_nominal_fallback = false;
     std::vector<EgoState> ego_trajectory;   // Planned ego states over horizon
     std::vector<EgoInput> control_inputs;   // Planned control inputs
     /// Scenarios binding or violated on the returned trajectory only.
@@ -506,6 +591,42 @@ enum class DROGroundCostType {
     ZERO_ONE,       // D[i][j] = (i!=j) ? 1 : 0  ⇒  W_D = total variation
     EUCLIDEAN_MEAN  // ||mu_i - mu_j|| averaged over horizon (mode-to-mode)
 };
+
+enum class WassersteinRadiusCalibrationMethod {
+    BHC_DMAX,               // Existing D_max * sqrt(r_TV)
+    CLOPPER_PEARSON,        // Finite-sample simultaneous CP region -> W ball
+    EXACT_MULTINOMIAL_GRID  // Exact multinomial test on finite simplex lattice
+};
+
+inline const char* wasserstein_radius_method_name(
+    WassersteinRadiusCalibrationMethod method
+) {
+    switch (method) {
+        case WassersteinRadiusCalibrationMethod::BHC_DMAX:
+            return "bhc_dmax";
+
+        case WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON:
+            return "clopper_pearson";
+
+        case WassersteinRadiusCalibrationMethod::EXACT_MULTINOMIAL_GRID:
+            return "exact_multinomial_grid";
+    }
+
+    return "unknown";
+}
+
+inline bool is_valid_wasserstein_radius_method(
+    WassersteinRadiusCalibrationMethod method
+) noexcept {
+    switch (method) {
+        case WassersteinRadiusCalibrationMethod::BHC_DMAX:
+        case WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON:
+        case WassersteinRadiusCalibrationMethod::EXACT_MULTINOMIAL_GRID:
+            return true;
+    }
+
+    return false;
+}
 
 /**
  * @brief Divergence-based ambiguity families over the discrete mode simplex.

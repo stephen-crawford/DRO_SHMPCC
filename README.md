@@ -265,3 +265,11 @@ obstacle/class/environment/mode/solver combinations, shared seed schedules,
 collision and SH certification rates, complete sampled-mode coverage, timing,
 control effort and signed conservatism metrics. Generate or mass-run it with
 `python3 tests/run_analysis_matrix.py --output build-base/analysis-matrix`.
+
+### Comparison matrix
+
+The [comparison matrix](configs/comparison_matrix/README.md) searches seed-paired
+SH-MPCC versus SH-MPCC with DRO outcomes under distribution shift and mode boost.
+It lists cases where non-DRO collides and DRO completes collision-free, alongside
+reverse and incomplete outcomes. Run
+`python3 tests/run_comparison_matrix.py --output build-base/comparison-matrix`.

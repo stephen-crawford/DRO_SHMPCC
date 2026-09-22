@@ -16,7 +16,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENTS = {'straight': 'two_lane_highway', 's_curve': 's_curve',
                 'four_way_intersection': 'four_way_intersection', 'roundabout': 'two_lane_roundabout'}
-STYLES = ('sh_mpcc', 'sh_mpcc_dro')
+STYLES = ('sh_mpcc', 'sh_mpcc_dro', 'sh_mpcc_dro_fallback')
 
 
 def digest(data):
@@ -85,7 +85,7 @@ def config_text(case, settings):
             key, value = line.split(':', 1)
             entries[key.strip()] = value.strip()
     common = {
-        'rare_mode': '', 'rare_switch_prob': 0.0, 'randomize_available_modes': False,
+        'rare_mode': '', 'rare_mode_probability': 0.0, 'randomize_available_modes': False,
         'randomize_modes_per_obstacle': False, 'obstacle_behavior': 'mode_switching',
         'obstacles_per_class': 0, 'obstacle_history': 'shared_history_classes',
         'obstacle_place_on_path': True, 'obstacle_initial_states': [],
@@ -97,12 +97,13 @@ def config_text(case, settings):
     # Prevent settings from silently invalidating the matrix axes or paired plant policy.
     protected = {'mpc_type', 'dro_enabled', 'num_obstacles', 'num_classes', 'num_modes',
                  'obs_modes', 'randomize_available_modes', 'randomize_modes_per_obstacle',
-                 'rare_mode', 'rare_switch_prob', 'obstacle_behavior', 'environment',
+                 'rare_mode', 'rare_mode_probability', 'obstacle_behavior', 'environment',
                  'obstacle_place_on_path', 'obstacle_initial_states', 'obstacles_per_class'}
     if protected.intersection(settings.get('overrides', {})):
         raise ValueError('overrides may not replace matrix axes, mode supports, or placement policy')
     common.update({
-        'mpc_type': 'sh_mpcc', 'dro_enabled': case['solver_style'] == 'sh_mpcc_dro',
+        'mpc_type': ('sh_mpcc_dro_fallback' if case['solver_style'] == 'sh_mpcc_dro_fallback'
+                     else 'sh_mpcc'), 'dro_enabled': case['solver_style'] != 'sh_mpcc',
         'num_obstacles': case['obstacles'], 'num_classes': case['classes'],
         'num_modes': case['modes_per_class'],
         'obs_modes': settings['mode_catalog'][:case['modes_per_class']],
@@ -121,6 +122,45 @@ def numeric_trace(bundle):
     result = rows(bundle / 'trace.csv')
     for row in result:
         row.pop('solve_time_ms')
+    return result
+
+
+FAILURE_FIELDS = (
+    'backup_available', 'backup_removal_budget_exceeded', 'backup_dro_failed',
+    'braking_collision_feasible', 'any_homotopy_geometrically_feasible',
+    'last_qp_converged', 'sqp_sampled_collision_feasible',
+    'fallback_sampled_collision_feasible',
+)
+FAILURE_CLASSES = ('solver_nonconvergence_and_sampled_collision',
+                   'sampled_collision', 'solver_nonconvergence',
+                   'other_rejection', 'unknown')
+
+
+def failure_metrics(record, decisions):
+    result = {field: -1 for field in FAILURE_FIELDS}
+    result['failure_class'] = 'not_applicable'
+    if record['termination_reason'] != 'no_admissible_control':
+        return result
+    if not decisions or decisions[-1]['success'] != '0':
+        raise ValueError('no_admissible_control lacks a failed final decision')
+    for field in FAILURE_FIELDS:
+        result[field] = int(decisions[-1].get(field, -1))
+        if result[field] not in (-1, 0, 1):
+            raise ValueError(f'invalid failure diagnostic: {field}')
+    collision = any(result[f] == 0 for f in
+                    ('sqp_sampled_collision_feasible', 'fallback_sampled_collision_feasible'))
+    nonconvergence = result['last_qp_converged'] == 0
+    if collision and nonconvergence:
+        result['failure_class'] = 'solver_nonconvergence_and_sampled_collision'
+    elif collision:
+        result['failure_class'] = 'sampled_collision'
+    elif nonconvergence:
+        result['failure_class'] = 'solver_nonconvergence'
+    elif all(result[f] != -1 for f in ('last_qp_converged',
+              'sqp_sampled_collision_feasible', 'fallback_sampled_collision_feasible')):
+        result['failure_class'] = 'other_rejection'
+    else:
+        result['failure_class'] = 'unknown'
     return result
 
 
@@ -167,6 +207,7 @@ def analyze(bundle, case):
     if certified != int(record['certified_decisions']) or requested != int(record['safe_horizon_decisions']):
         raise ValueError('certificate counters disagree with decision evidence')
     return {
+        **failure_metrics(record, decisions),
         'collision': int(record['collision']), 'completed_path': int(record['completed_path']),
         'termination_reason': record['termination_reason'], 'executed_steps': int(record['total_steps']),
         'certified_decisions': certified, 'sh_decisions': requested,
@@ -195,8 +236,14 @@ def repeat_signature(bundle, metrics):
                               stable_metrics], sort_keys=True).encode())
 
 
+def trial_root(output, case, seed):
+    if 'pair_directory' in case:
+        return output / case['pair_directory'] / f'seed_{seed}' / case['solver_style']
+    return output / case['case'] / f'seed_{seed}'
+
+
 def run_trial(case, seed, args, settings, identity):
-    root = args.output / case['case'] / f'seed_{seed}'
+    root = trial_root(args.output, case, seed)
     root.mkdir(parents=True, exist_ok=True)
     result_path = root / 'result.json'
     if args.resume and result_path.exists():
@@ -210,8 +257,52 @@ def run_trial(case, seed, args, settings, identity):
         signatures = []
         for repeat in range(settings['repeats']):
             label = f'repeat_{repeat}'
-            command = [str(args.runner), '--config', str(args.output / 'configs' / (case['case'] + '.yaml')),
-                       '--seed', str(seed), '--output', str(root), '--label', label]
+
+            config_path = (
+                args.output /
+                'configs' /
+                (case['case'] + '.yaml')
+            ).resolve()
+
+            if not config_path.exists():
+                raise FileNotFoundError(
+                    f'config missing immediately before launch: '
+                    f'{config_path}'
+                )
+
+            if not config_path.is_file():
+                raise RuntimeError(
+                    f'config is not a regular file immediately before launch: '
+                    f'{config_path}'
+                )
+
+            # Force an actual open/read from the same Python process immediately
+            # before launching the C++ runner.
+            try:
+                config_bytes = config_path.read_bytes()
+            except OSError as error:
+                raise OSError(
+                    f'config exists but Python cannot read it immediately '
+                    f'before launch: {config_path}: {error}'
+                ) from error
+
+            if not config_bytes:
+                raise RuntimeError(
+                    f'config is empty immediately before launch: '
+                    f'{config_path}'
+                )
+
+            command = [
+                str(args.runner),
+                '--config',
+                str(config_path),
+                '--seed',
+                str(seed),
+                '--output',
+                str(root),
+                '--label',
+                label,
+            ]
             started = time.monotonic()
             with (root / (label + '.log')).open('w') as log:
                 subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=args.timeout)
@@ -259,7 +350,25 @@ def aggregate(results, cases=None, seed_count=None):
             average_conservatism_m=sum(m['margin_sum_m'] for m in good)/margins if margins else None,
             completed_rollouts=sum(m['completed_path'] for m in good),
             no_admissible_control_rollouts=sum(m['termination_reason']=='no_admissible_control' for m in good))
+        failures = [m for m in good if m['termination_reason'] == 'no_admissible_control']
+        for field in FAILURE_FIELDS:
+            for value, label in ((1, 'true'), (0, 'false'), (-1, 'unknown')):
+                summary[f'failure_{field}_{label}_rollouts'] = sum(
+                    m.get(field, -1) == value for m in failures)
+        for classification in FAILURE_CLASSES:
+            summary[f'failure_{classification}_rollouts'] = sum(
+                m.get('failure_class', 'unknown') == classification for m in failures)
         summaries.append(summary)
+    return summaries
+
+
+def per_seed_summary(results):
+    summaries = []
+    for result in sorted(results, key=lambda r: (r['case'], r['seed'])):
+        summary = aggregate([result], [result], 1)[0]
+        summaries.append({'case': result['case'], 'seed': result['seed'],
+                          'status': result['status'], 'error': result.get('error', ''),
+                          **summary})
     return summaries
 
 
@@ -335,6 +444,7 @@ def main(argv=None):
     summary = aggregate(saved, selected, len(settings['seeds']))
     write_csv(args.output/'summary.csv', summary)
     dump_json(args.output/'summary.json', summary)
+    write_csv(args.output/'summary_per_seed.csv', per_seed_summary(saved))
     # Paired placements must match across classes/modes/styles; counts use a common prefix.
     placements = {}
     for result in saved:
@@ -345,7 +455,10 @@ def main(argv=None):
             if key in placements and placements[key] != actor:
                 raise ValueError(f'paired initial placement mismatch: {key}')
             placements[key] = actor
-    return int(any(r['status'] != 'OK' for r in results))
+    errors = sum(r['status'] != 'OK' for r in results)
+    print(f'Matrix complete: {len(results)}/{len(selected)*len(settings["seeds"])} '
+          f'seed trials covered; {errors} errors. Reports written to {args.output}.', flush=True)
+    return int(errors != 0)
 
 
 if __name__ == '__main__':

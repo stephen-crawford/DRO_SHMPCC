@@ -19,7 +19,7 @@ safety_margin: 0.1
 enable_velocity_bounds: true
 # Non-removed support cap n̄ and conservative offline removal budget R.
 support_cap_n_bar: 6
-scenario_removal_budget: 0
+scenario_removal_budget: 2
 clearance_filter_distance: 20.0
 
 # --- ego geometry + dynamics ---
@@ -98,7 +98,7 @@ randomize_available_modes: false
 randomize_modes_per_obstacle: false
 obs_modes: [constant_velocity, accelerating, decelerating, stop, turn_left, turn_right, turn_left_sharp, turn_right_sharp, lane_change_left, lane_change_right, lane_change_left_fast, lane_change_right_fast]
 rare_mode: lane_change_left
-rare_switch_prob: 0.05
+rare_mode_probability: 0.05
 obs_path_fraction: 0.35
 obs_arc_fractions: [0.20, 0.35, 0.50, 0.65]
 # Optional direct world-frame starts for multi-obstacle tests. Entries are
@@ -165,6 +165,7 @@ artifact_gif_frame_stride: 1
 # Display a deterministic subset of the actual obstacle forecasts.
 artifact_show_linearized_constraints: true
 artifact_show_support_scenarios: false
+artifact_support_preview_count: 4
 artifact_show_sampled_scenarios: true
 artifact_scenario_preview_count: 8
 artifact_gif_playback_rate: 1.0

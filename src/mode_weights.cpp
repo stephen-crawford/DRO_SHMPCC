@@ -113,14 +113,74 @@ Eigen::MatrixXd compute_mode_transition_matrix(
         mode_to_idx[modes[i]] = i;
     }
 
-    // Count observed i->j transitions.
-    Eigen::MatrixXd counts = Eigen::MatrixXd::Zero(num_modes, num_modes);
-    const auto& observations = mode_history.observed_modes;
-    for (size_t i = 0; i + 1 < observations.size(); ++i) {
-        auto f = mode_to_idx.find(observations[i].second);
-        auto t = mode_to_idx.find(observations[i + 1].second);
-        if (f != mode_to_idx.end() && t != mode_to_idx.end()) {
-            counts(f->second, t->second) += 1.0;
+    // Count REALIZED i -> j transitions.
+    //
+    // The history is pooled class-wide, so observations belonging to
+    // different physical obstacles must NEVER be connected into one
+    // artificial Markov trajectory.
+    Eigen::MatrixXd counts =
+        Eigen::MatrixXd::Zero(
+            num_modes,
+            num_modes
+        );
+
+    // Separate the class-wide history into the realized trajectory of
+    // each source obstacle.
+    std::map<int, std::vector<const ModeObservation*>>
+        observations_by_obstacle;
+
+    for (const auto& observation :
+        mode_history.observed_modes) {
+
+        observations_by_obstacle[
+            observation.source_obstacle_id
+        ].push_back(&observation);
+    }
+
+    for (auto& [source_obstacle_id, observations] :
+        observations_by_obstacle) {
+
+        // Histories should normally already be chronological, but sort
+        // explicitly because class-wide reconstruction may merge histories.
+        std::sort(
+            observations.begin(),
+            observations.end(),
+            [](const ModeObservation* a,
+            const ModeObservation* b) {
+                return a->timestep < b->timestep;
+            }
+        );
+
+        for (std::size_t k = 0;
+            k + 1 < observations.size();
+            ++k) {
+
+            const ModeObservation& from =
+                *observations[k];
+
+            const ModeObservation& to =
+                *observations[k + 1];
+
+            // Only a transition between consecutive realized timesteps
+            // belongs to the observed Markov trajectory.
+            if (to.timestep != from.timestep + 1) {
+                continue;
+            }
+
+            auto f =
+                mode_to_idx.find(from.mode_id);
+
+            auto t =
+                mode_to_idx.find(to.mode_id);
+
+            if (f != mode_to_idx.end() &&
+                t != mode_to_idx.end()) {
+
+                counts(
+                    f->second,
+                    t->second
+                ) += 1.0;
+            }
         }
     }
 

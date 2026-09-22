@@ -4,6 +4,8 @@
  */
 
 #include "dro.hpp"
+#include "wasserstein_radius_calibration.hpp"
+#include "exact_wasserstein_inversion.hpp"
 #include "collision_constraints.hpp"
 #include "primal_ot.hpp"
 #include "mode_weights.hpp"
@@ -171,6 +173,39 @@ double transport_diameter(const std::vector<std::vector<double>>& costs) {
     return diameter;
 }
 
+double transport_min_offdiag(
+    const std::vector<std::vector<double>>& costs
+) {
+    if (costs.size() < 2) {
+        return 0.0;
+    }
+
+    double min_cost =
+        std::numeric_limits<double>::infinity();
+
+    for (std::size_t i = 0; i < costs.size(); ++i) {
+        for (std::size_t j = 0;
+             j < costs[i].size();
+             ++j) {
+
+            if (i == j) {
+                continue;
+            }
+
+            const double cost = costs[i][j];
+
+            if (std::isfinite(cost)) {
+                min_cost =
+                    std::min(min_cost, cost);
+            }
+        }
+    }
+
+    return std::isfinite(min_cost)
+        ? min_cost
+        : 0.0;
+}
+
 void update_support_diagnostics(DROResult& result, int mode_count) {
     double floor = std::numeric_limits<double>::infinity();
     int support = 0;
@@ -297,10 +332,6 @@ void DRO::clear_rho_override() {
     rho_override_.reset();
 }
 
-void DRO::set_observation_count(int count) {
-    observation_count_ = std::max(0, count);
-}
-
 DRORiskMeasure DRO::resolve_effective_risk_measure(bool has_transition) const {
     const auto& calibration = config_.radius_calibration;
     const DRORiskMeasure selected = resolve_risk_scoring_measure(
@@ -330,39 +361,355 @@ DRORiskMeasure DRO::resolve_effective_risk_measure(bool has_transition) const {
 
 DRO::ResolvedAmbiguityRadius DRO::resolve_ambiguity_radius(
     AmbiguityDivergence divergence,
-    int mode_count,
-    double transport_diameter_value
+    const std::vector<std::string>& mode_ids,
+    const std::map<std::string, int>& observed_counts,
+    const std::map<std::string, double>& nominal_weights,
+    const std::vector<std::vector<double>>& transport_cost_matrix
 ) const {
     ResolvedAmbiguityRadius resolved;
+
+    // Explicit runtime override always has highest priority.
     if (rho_override_.has_value()) {
         resolved.value = *rho_override_;
         resolved.before_clamp = *rho_override_;
         return resolved;
     }
 
-    const auto& calibration = config_.radius_calibration;
-    const double lower = std::max(0.0, config_.min_radius);
-    const double upper = std::max(lower, config_.max_radius);
-    double raw_radius = config_.base_radius;
-    if (!calibration.use_calibrated_radius) {
-        raw_radius = config_.base_radius;
-    } else {
-        const double theoretical_radius = schuurmans::ambiguity_radius(
-            divergence, std::max(1, mode_count), std::max(1, observation_count_),
-            std::clamp(calibration.confidence_beta, 1e-6, 0.5),
-            std::max(0.0, transport_diameter_value));
-        raw_radius = calibration.calibration_scale * theoretical_radius;
+    const auto& calibration =
+        config_.radius_calibration;
+
+    const int mode_count =
+        static_cast<int>(mode_ids.size());
+
+    int observed_sample_count = 0;
+
+    for (const auto& mode_id : mode_ids) {
+        const auto it =
+            observed_counts.find(mode_id);
+
+        if (it == observed_counts.end()) {
+            continue;
+        }
+
+        if (it->second < 0) {
+            throw std::invalid_argument(
+                "Observed mode counts cannot be negative."
+            );
+        }
+
+        observed_sample_count +=
+            it->second;
     }
 
-    resolved.before_clamp = raw_radius;
-    resolved.value = std::clamp(raw_radius, lower, upper);
-    resolved.clamped_to_min = raw_radius < lower;
-    resolved.clamped_to_max = raw_radius > upper;
-    return resolved;
+    /*
+     * ------------------------------------------------------------
+     * Fixed/non-calibrated radius
+     * ------------------------------------------------------------
+     */
+    if (!calibration.use_calibrated_radius) {
+
+        const double lower =
+            std::max(0.0, config_.min_radius);
+
+        const double upper =
+            std::max(lower, config_.max_radius);
+
+        const double raw_radius =
+            config_.base_radius;
+
+        resolved.before_clamp =
+            raw_radius;
+
+        resolved.value =
+            std::clamp(
+                raw_radius,
+                lower,
+                upper
+            );
+
+        resolved.clamped_to_min =
+            raw_radius < lower;
+
+        resolved.clamped_to_max =
+            raw_radius > upper;
+
+        return resolved;
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * Non-Wasserstein ambiguity families retain their existing
+     * Schuurmans-Patrinos calibration.
+     * ------------------------------------------------------------
+     */
+    if (divergence != AmbiguityDivergence::WASSERSTEIN) {
+
+        const double theoretical_radius =
+            schuurmans::ambiguity_radius(
+                divergence,
+                std::max(1, mode_count),
+                std::max(1, observed_sample_count),
+                std::clamp(
+                    calibration.confidence_beta,
+                    1e-6,
+                    0.5
+                ),
+                1.0
+            );
+
+        const double raw_radius =
+            calibration.calibration_scale *
+            theoretical_radius;
+
+        const double lower =
+            std::max(0.0, config_.min_radius);
+
+        const double upper =
+            std::max(lower, config_.max_radius);
+
+        resolved.before_clamp =
+            raw_radius;
+
+        resolved.value =
+            std::clamp(
+                raw_radius,
+                lower,
+                upper
+            );
+
+        resolved.clamped_to_min =
+            raw_radius < lower;
+
+        resolved.clamped_to_max =
+            raw_radius > upper;
+
+        return resolved;
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * Wasserstein ambiguity set
+     * ------------------------------------------------------------
+     *
+     * All methods below produce rho for the SAME ambiguity set:
+     *
+     *     U = {q in Delta_M : W_D(q, p_hat) <= rho}.
+     *
+     * Only the statistical calibration of rho changes.
+     */
+
+    if (mode_count <= 0) {
+        return resolved;
+    }
+
+    if (transport_cost_matrix.size() !=
+        static_cast<std::size_t>(mode_count)) {
+
+        throw std::invalid_argument(
+            "Wasserstein radius calibration received "
+            "an incompatible transport-cost matrix."
+        );
+    }
+
+    // Convert map representations into vectors using EXACTLY the same
+    // mode ordering used to construct D.
+    std::vector<int> counts;
+    std::vector<double> center;
+
+    counts.reserve(mode_count);
+    center.reserve(mode_count);
+
+    for (const auto& mode_id : mode_ids) {
+
+        const auto count_it =
+            observed_counts.find(mode_id);
+
+        counts.push_back(
+            count_it != observed_counts.end()
+                ? count_it->second
+                : 0
+        );
+
+        const auto weight_it =
+            nominal_weights.find(mode_id);
+
+        center.push_back(
+            weight_it != nominal_weights.end()
+                ? weight_it->second
+                : 0.0
+        );
+    }
+
+    const double beta =
+        std::clamp(
+            calibration.confidence_beta,
+            1e-8,
+            0.5
+        );
+
+    const double D_max =
+        transport_diameter(
+            transport_cost_matrix
+        );
+
+    /*
+     * ------------------------------------------------------------
+     * Select radius calibration method.
+     * ------------------------------------------------------------
+     */
+    switch (calibration.wasserstein_radius_method) {
+
+        /*
+         * Existing finite-sample BHC -> D_max radius.
+         */
+        case WassersteinRadiusCalibrationMethod::BHC_DMAX:
+        {
+            if (observed_sample_count <= 0) {
+                resolved.before_clamp = D_max;
+                resolved.value = D_max;
+                resolved.clamped_to_min = false;
+                resolved.clamped_to_max = false;
+                return resolved;
+            }
+
+            const int m = observed_sample_count;
+            const double r_tv =
+                (
+                    static_cast<double>(mode_count) *
+                        std::log(2.0)
+                    - std::log(beta)
+                )
+                /
+                (
+                    2.0 *
+                    static_cast<double>(m)
+                );
+
+            const double eta_raw =
+                calibration.calibration_scale *
+                std::sqrt(
+                    std::max(0.0, r_tv)
+                );
+
+            const double raw_radius =
+                D_max * eta_raw;
+
+            resolved.before_clamp =
+                raw_radius;
+
+            /*
+             * Lossless saturation:
+             *
+             * rho >= D_max already contains the entire categorical
+             * simplex, so min(rho,D_max) does not shrink the set.
+             */
+            resolved.value =
+                std::min(
+                    raw_radius,
+                    D_max
+                );
+
+            resolved.clamped_to_min =
+                false;
+
+            resolved.clamped_to_max =
+                raw_radius > D_max;
+
+            return resolved;
+        }
+
+        /*
+         * Simultaneous finite-sample Clopper-Pearson confidence
+         * region, then outer Wasserstein ball.
+         */
+        case WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON:
+        {
+            const auto cp =
+                finite_sample_wasserstein_radius(
+                    counts,
+                    center,
+                    transport_cost_matrix,
+                    beta
+                );
+
+            const double raw_radius =
+                cp.rho;
+
+            resolved.before_clamp =
+                raw_radius;
+
+            // Only a lossless metric-diameter saturation is permitted.
+            resolved.value =
+                std::min(
+                    raw_radius,
+                    D_max
+                );
+
+            resolved.clamped_to_min =
+                false;
+
+            resolved.clamped_to_max =
+                raw_radius > D_max + 1e-12;
+
+            return resolved;
+        }
+
+        /*
+         * Exact multinomial p-value inversion evaluated over a
+         * finite simplex lattice.
+         *
+         * The p-value calculation is exact at each lattice point;
+         * the continuum inversion remains grid-approximated.
+         */
+        case WassersteinRadiusCalibrationMethod::
+            EXACT_MULTINOMIAL_GRID:
+        {
+            const int grid_denominator =
+                std::max(
+                    1,
+                    calibration.
+                        exact_multinomial_grid_denominator
+                );
+
+            const auto exact =
+                exact_multinomial_wasserstein_inversion(
+                    counts,
+                    center,
+                    transport_cost_matrix,
+                    beta,
+                    grid_denominator
+                );
+
+            const double raw_radius =
+                exact.rho_grid;
+
+            resolved.before_clamp =
+                raw_radius;
+
+            resolved.value =
+                std::min(
+                    raw_radius,
+                    D_max
+                );
+
+            resolved.clamped_to_min =
+                false;
+
+            resolved.clamped_to_max =
+                raw_radius > D_max + 1e-12;
+
+            return resolved;
+        }
+    }
+
+    throw std::runtime_error(
+        "Unknown Wasserstein radius calibration method."
+    );
 }
 
 DROResult DRO::compute_worst_case_weights(
     const std::map<std::string, double>& nominal_weights,
+    const std::map<std::string, int>& observed_counts,
     const ObstacleState& obs_state,
     const std::map<std::string, ModeModel>& mode_models,
     const std::vector<EgoState>& ego_linearization_traj,
@@ -460,17 +807,163 @@ DROResult DRO::compute_worst_case_weights(
     result.risk_diagnostics.evaluation_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - risk_start).count();
 
-    const int mode_count = static_cast<int>(mode_ids.size());
-    const AmbiguityDivergence divergence = config_.radius_calibration.divergence;
-    const ResolvedAmbiguityRadius resolved_radius = resolve_ambiguity_radius(
-        divergence, mode_count, transport_diameter(result.transport_cost_matrix));
-    const double rho = resolved_radius.value;
-    result.rho_used = rho;
-    result.rho_before_clamp = resolved_radius.before_clamp;
-    result.radius_observation_count = std::max(1, observation_count_);
-    result.radius_mode_count = mode_count;
-    result.rho_clamped_to_min = resolved_radius.clamped_to_min;
-    result.rho_clamped_to_max = resolved_radius.clamped_to_max;
+    const int mode_count =
+        static_cast<int>(mode_ids.size());
+
+    const AmbiguityDivergence divergence =
+        config_.radius_calibration.divergence;
+
+    const double D_max =
+        transport_diameter(
+            result.transport_cost_matrix
+        );
+
+    const double D_min =
+        transport_min_offdiag(
+            result.transport_cost_matrix
+        );
+
+    const ResolvedAmbiguityRadius resolved_radius =
+        resolve_ambiguity_radius(
+            divergence,
+            mode_ids,
+            observed_counts,
+            nominal_weights,
+            result.transport_cost_matrix
+        );
+
+    const double rho =
+        resolved_radius.value;
+
+    result.rho_used =
+        rho;
+
+    result.rho_before_clamp =
+        resolved_radius.before_clamp;
+
+    result.transport_diameter =
+        D_max;
+
+    result.transport_min_offdiag =
+        D_min;
+
+    if (D_max > 1e-12) {
+        result.normalized_rho_used =
+            rho / D_max;
+
+        result.normalized_rho_before_clamp =
+            resolved_radius.before_clamp / D_max;
+    } else {
+        result.normalized_rho_used = 0.0;
+        result.normalized_rho_before_clamp = 0.0;
+    }
+
+    // Since D_min * TV <= W_D <= rho:
+    //
+    //     TV <= rho / D_min.
+    //
+    // Clip at 1 because TV between categorical distributions cannot exceed 1.
+    if (D_min > 1e-12) {
+        result.max_tv_from_radius =
+            std::min(
+                1.0,
+                rho / D_min
+            );
+    } else {
+        result.max_tv_from_radius =
+            std::numeric_limits<double>::infinity();
+    }
+
+    int radius_observation_count = 0;
+
+    for (const auto& mode_id : mode_ids) {
+        const auto it = observed_counts.find(mode_id);
+
+        if (it != observed_counts.end()) {
+            radius_observation_count +=
+                std::max(0, it->second);
+        }
+    }
+
+    result.radius_observation_count =
+        radius_observation_count;
+
+    result.radius_mode_count =
+        mode_count;
+
+    result.rho_clamped_to_min =
+        resolved_radius.clamped_to_min;
+
+    result.rho_clamped_to_max =
+        resolved_radius.clamped_to_max;
+
+    // ------------------------------------------------------------------
+    // Degenerate DRO objective:
+    //
+    // If every mode has effectively the same risk, every distribution in
+    // the ambiguity set is a worst-case optimizer.  In that case use the
+    // nominal distribution as the minimum-intervention optimizer instead
+    // of accepting an arbitrary extreme LP solution.
+    // ------------------------------------------------------------------
+    double min_risk = std::numeric_limits<double>::infinity();
+    double max_risk = -std::numeric_limits<double>::infinity();
+
+    for (const auto& mode_id : mode_ids) {
+        const double r =
+            result.risk_per_mode.count(mode_id)
+                ? result.risk_per_mode.at(mode_id)
+                : 0.0;
+
+        min_risk = std::min(min_risk, r);
+        max_risk = std::max(max_risk, r);
+    }
+
+    const double risk_scale =
+        std::max({
+            1.0,
+            std::abs(min_risk),
+            std::abs(max_risk)
+        });
+
+    constexpr double kFlatRiskTolerance = 1e-10;
+
+    if (max_risk - min_risk <=
+        kFlatRiskTolerance * risk_scale) {
+
+        result.worst_case_weights =
+            nominal_weights;
+
+        double nominal_risk = 0.0;
+
+        for (const auto& [mode_id, p] :
+            nominal_weights) {
+
+            auto r_it =
+                result.risk_per_mode.find(mode_id);
+
+            if (r_it != result.risk_per_mode.end()) {
+                nominal_risk += p * r_it->second;
+            }
+        }
+
+        result.worst_case_risk =
+            nominal_risk;
+
+        result.implied_transport_cost =
+            0.0;
+
+        result.optimal_lambda =
+            0.0;
+
+        result.recovery_feasible =
+            true;
+
+        update_support_diagnostics(
+            result,
+            mode_count);
+
+        return result;
+    }
 
     // Schuurmans--Patrinos φ-divergence sets share a common configured-radius
     // lifecycle with Wasserstein, but use their native worst-case solver.
@@ -819,7 +1312,9 @@ std::map<std::string, double> DRO::compute_risk_vector(
         throw std::invalid_argument("Risk-vector request contains invalid geometry.");
     }
 
-    const Eigen::Index mode_count = static_cast<Eigen::Index>(request.mode_ids.size());
+    const Eigen::Index mode_count =
+    static_cast<Eigen::Index>(
+        request.mode_ids.size());
     const bool has_transition = has_matching_transition(
         request.transition, static_cast<size_t>(mode_count));
     const Eigen::MatrixXd* transition = has_transition ? request.transition : nullptr;

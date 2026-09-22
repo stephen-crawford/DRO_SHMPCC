@@ -28,7 +28,7 @@ switch_regime: markov
 switch_prob: 0.2
 obs_modes: [constant_velocity, turn_left, turn_right, decelerating, lane_change_left, lane_change_right]
 rare_mode: ""
-rare_switch_prob: 0.0
+rare_mode_probability: 0.0
 
 environment: oncoming
 

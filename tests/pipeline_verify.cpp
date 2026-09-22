@@ -121,6 +121,7 @@ int main()
 
         history.record_observation(
             t,
+            history.obstacle_id,
             mode);
     }
 
@@ -185,6 +186,7 @@ int main()
 
             return dro.compute_worst_case_weights(
                 nominal,
+                history.get_mode_counts(),
                 obstacle,
                 mode_models,
                 ego_reference,
@@ -779,6 +781,7 @@ int main()
     const DROResult entropic =
         entropic_dro.compute_worst_case_weights(
             nominal,
+            history.get_mode_counts(),
             obstacle,
             mode_models,
             ego_reference,
@@ -786,7 +789,6 @@ int main()
             0.5,
             0.35,
             0.2);
-
     const int entropic_support =
         sampled_mode_support(
             entropic);

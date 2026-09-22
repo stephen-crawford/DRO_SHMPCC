@@ -93,7 +93,7 @@ std::map<std::string, double> risk_for(
     for (const auto& id : f.ids) nominal[id] = 1.0 / static_cast<double>(f.ids.size());
 
     DROResult res = dro.compute_worst_case_weights(
-        nominal, f.obs, f.modes, f.ego, f.horizon,
+        nominal, {}, f.obs, f.modes, f.ego, f.horizon,
         /*ego_r=*/0.5, /*obs_r=*/0.5, /*margin=*/0.2,
         /*risk_horizon=*/-1, f.discs, f.length, T);
     return res.risk_per_mode;

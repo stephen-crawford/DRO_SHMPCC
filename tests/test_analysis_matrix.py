@@ -18,10 +18,45 @@ class MatrixTests(unittest.TestCase):
     def setUp(self):
         self.settings = matrix.load_settings(matrix.ROOT/'configs/analysis_matrix/settings.json')
 
-    def test_all_480_combinations_and_exact_axes(self):
+    def test_failure_classification_and_unknown_evidence(self):
+        record = {'termination_reason': 'no_admissible_control'}
+        for converged, collision_free, expected in (
+                (0, 0, 'solver_nonconvergence_and_sampled_collision'),
+                (1, 0, 'sampled_collision'), (0, 1, 'solver_nonconvergence'),
+                (1, 1, 'other_rejection')):
+            decision = dict(success='0', last_qp_converged=str(converged),
+                sqp_sampled_collision_feasible=str(collision_free),
+                fallback_sampled_collision_feasible='1')
+            result = matrix.failure_metrics(record, [decision])
+            self.assertEqual(result['failure_class'], expected)
+            self.assertEqual(result['backup_dro_failed'], -1)
+        self.assertEqual(matrix.failure_metrics(record, [{'success': '0'}])['failure_class'], 'unknown')
+        with self.assertRaises(ValueError):
+            matrix.failure_metrics(record, [{'success': '1'}])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = self.synthetic_bundle(root)
+            records = matrix.rows(root/'rollout.csv')
+            records[0]['termination_reason'] = 'no_admissible_control'
+            matrix.write_csv(root/'rollout.csv', records)
+            decisions = matrix.rows(root/'decisions.csv')
+            decisions[-1].update(success='0', last_qp_converged='0',
+                sqp_sampled_collision_feasible='0', fallback_sampled_collision_feasible='0',
+                backup_removal_budget_exceeded='1', braking_collision_feasible='1',
+                any_homotopy_geometrically_feasible='0')
+            matrix.write_csv(root/'decisions.csv', decisions)
+            metrics = matrix.analyze(root, case)
+            summary = matrix.aggregate([{**case, 'status': 'OK',
+                'repeats': [{'metrics': metrics}]}], [case], 1)[0]
+            self.assertEqual(summary['failure_solver_nonconvergence_and_sampled_collision_rollouts'], 1)
+            self.assertEqual(summary['failure_backup_dro_failed_unknown_rollouts'], 1)
+            self.assertEqual(summary['failure_braking_collision_feasible_true_rollouts'], 1)
+            self.assertEqual(summary['failure_any_homotopy_geometrically_feasible_false_rollouts'], 1)
+
+    def test_all_720_combinations_and_exact_axes(self):
         cases = list(matrix.configurations(self.settings))
-        self.assertEqual(len(cases), 480)
-        self.assertEqual(len({c['case'] for c in cases}), 480)
+        self.assertEqual(len(cases), 720)
+        self.assertEqual(len({c['case'] for c in cases}), 720)
         self.assertTrue(all(c['classes'] <= c['obstacles'] for c in cases))
         for case in cases:
             text = matrix.config_text(case, self.settings)
@@ -34,12 +69,22 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(len(json.loads(modes)), case['modes_per_class'])
 
     def test_pairs_only_change_solver_label_and_dro(self):
-        cases = list(matrix.configurations(self.settings))
+        cases = [c for c in matrix.configurations(self.settings)
+                 if c['solver_style'] != 'sh_mpcc_dro_fallback']
         for a, b in zip(cases[::2], cases[1::2]):
             def common(case):
                 return [line for line in matrix.config_text(case, self.settings).splitlines()
                         if not line.startswith(('dro_enabled:', 'method_name:', 'scenario_tag:'))]
             self.assertEqual(common(a), common(b))
+
+    def test_nominal_fallback_style(self):
+        cases = [c for c in matrix.configurations(self.settings)
+                 if c['solver_style'] == 'sh_mpcc_dro_fallback']
+        self.assertEqual(len(cases), 240)
+        for case in cases:
+            text = matrix.config_text(case, self.settings)
+            self.assertIn('mpc_type: "sh_mpcc_dro_fallback"\n', text)
+            self.assertIn('dro_enabled: true\n', text)
 
     def test_conflicting_overrides_rejected(self):
         self.settings['overrides']['obs_modes'] = ['stop']
@@ -109,6 +154,67 @@ class MatrixTests(unittest.TestCase):
         self.assertIsNone(summary['max_conservatism_m'])
         self.assertEqual(summary['pending_rollouts'], 10)
 
+    def test_reports_and_automatic_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = root/'fixture'
+            fixture.mkdir()
+            self.synthetic_bundle(fixture)
+            runner = root/'runner'
+            runner.write_text(f'''#!{sys.executable}
+import pathlib, shutil, sys
+args = sys.argv[1:]
+output = pathlib.Path(args[args.index('--output') + 1])
+with (output.parent.parent/'calls.txt').open('a') as stream:
+    stream.write(args[args.index('--seed') + 1] + '\\n')
+if (output.parent.parent/'fail').exists() and args[args.index('--seed') + 1] == '78':
+    sys.exit(1)
+shutil.copytree({str(fixture)!r}, output/args[args.index('--label') + 1], dirs_exist_ok=True)
+''')
+            runner.chmod(0o755)
+            settings = copy.deepcopy(self.settings)
+            settings.update(obstacle_counts=[1], class_counts=[1], environments=['straight'],
+                            mode_counts=[1], solver_styles=['sh_mpcc'], seeds=[77, 78], repeats=2)
+            config = root/'settings.json'
+            config.write_text(json.dumps(settings))
+            for fail in (False, True):
+                with self.subTest(fail=fail):
+                    output = root/str(fail)
+                    output.mkdir()
+                    if fail:
+                        (output/'fail').touch()
+                    command = [sys.executable, str(Path(matrix.__file__)), '--settings', str(config),
+                               '--runner', str(runner), '--output', str(output)]
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, int(fail), result.stdout + result.stderr)
+                    self.assertIn('Matrix complete: 2/2 seed trials covered', result.stdout)
+                    calls = (output/'calls.txt').read_text().splitlines()
+                    self.assertEqual(calls.count('77'), 2)
+                    self.assertEqual(calls.count('78'), 1 if fail else 2)
+                    summary = matrix.rows(output/'summary.csv')[0]
+                    self.assertEqual(summary['attempted_rollouts'], '2')
+                    self.assertEqual(summary['pending_rollouts'], '0')
+                    self.assertEqual(summary['errors'], str(int(fail)))
+                    seeds = matrix.rows(output/'summary_per_seed.csv')
+                    self.assertEqual(len(seeds), 2)  # repeats do not duplicate seed rows
+                    self.assertEqual([row['seed'] for row in seeds], ['77', '78'])
+                    self.assertEqual(seeds[0]['status'], 'OK')
+                    self.assertEqual(seeds[0]['collision_rate'], '1.0')
+                    self.assertEqual(seeds[0]['max_conservatism_m'], '-0.5')
+                    self.assertEqual(seeds[0]['attempted_rollouts'], '1')
+                    self.assertEqual(seeds[1]['status'], 'ERROR' if fail else 'OK')
+                    self.assertEqual(seeds[1]['errors'], str(int(fail)))
+                    if fail:
+                        self.assertEqual(seeds[1]['collision_rate'], '')
+                        self.assertIn('non-zero exit status 1', seeds[1]['error'])
+                    resumed = subprocess.run(command + ['--resume'], capture_output=True,
+                                             text=True, timeout=15)
+                    self.assertEqual(resumed.returncode, int(fail), resumed.stdout + resumed.stderr)
+                    self.assertIn('Matrix complete: 2/2 seed trials covered', resumed.stdout)
+                    resumed_calls = (output/'calls.txt').read_text().splitlines()
+                    self.assertEqual(resumed_calls.count('77'), 2)
+                    self.assertEqual(resumed_calls.count('78'), 2)
+
 
 def integration(runner):
     # Every requested combination is parsed and run twice. Small horizon/sample
@@ -134,9 +240,17 @@ def integration(runner):
                     print(log, log.read_text()[-1500:])
         assert completed.returncode == 0, 'matrix smoke run failed'
         results = json.loads((output/'results.json').read_text())
-        assert len(results) == 480 and all(r['repeatable'] for r in results)
+        assert len(results) == 720 and all(r['repeatable'] for r in results)
         assert all(r['repeats'][0]['metrics']['mode_checks'] == r['obstacles'] for r in results)
         assert all(r['repeats'][0]['metrics']['sh_decisions'] == 1 for r in results)
+        for path in output.glob('*/seed_*/repeat_*/decisions.csv'):
+            for row in matrix.rows(path):
+                assert row['nominal_fallback_attempted'] in ('0', '1')
+                assert row['used_nominal_fallback'] in ('0', '1')
+                if row['used_nominal_fallback'] == '1':
+                    assert row['nominal_fallback_attempted'] == row['success'] == '1'
+                if not path.parents[2].name.startswith('sh_mpcc_dro_fallback_'):
+                    assert row['nominal_fallback_attempted'] == '0'
         assert any(len(row['sampled_modes'].split(';')) > 1
                    for path in output.glob('*/seed_*/repeat_0/mode_coverage.csv') for row in matrix.rows(path))
         # Resume must reuse results and refuse changed standardized settings.
@@ -170,7 +284,7 @@ def integration(runner):
         config.write_text(json.dumps(settings))
         stale = subprocess.run(command+['--resume'], capture_output=True, text=True)
         assert stale.returncode != 0 and 'different manifest' in stale.stderr
-        print('PASS: 480 combinations, 960 executions, identical repeats/paired starts, resume and stale-settings rejection')
+        print('PASS: 720 combinations, 1440 executions, identical repeats/paired starts, resume and stale-settings rejection')
 
 
 if __name__ == '__main__':

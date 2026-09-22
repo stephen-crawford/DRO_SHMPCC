@@ -237,7 +237,7 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_bool(out, "randomize_modes_per_obstacle", obstacle.randomize_modes_per_obstacle);
     write_string_list(out, "obs_modes", obstacle.obs_modes);
     write_scalar(out, "rare_mode", yaml_quote(obstacle.rare_mode));
-    write_scalar(out, "rare_switch_prob", obstacle.rare_switch_prob);
+    write_scalar(out, "rare_mode_probability", obstacle.rare_mode_probability);
     write_double_list(out, "obs_arc_fractions", obstacle.obs_arc_fractions);
     write_obstacle_states(out, obstacle.initial_obstacle_states);
     write_scalar(out, "obs_path_fraction", obstacle.default_arc_fraction);
@@ -290,6 +290,7 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_bool(out, "artifact_write_trace_csv", config.artifacts.write_trace_csv);
     write_bool(out, "artifact_write_analysis_csv", config.artifacts.write_analysis_csv);
     write_bool(out, "artifact_show_support_scenarios", config.artifacts.show_support_scenarios);
+    write_scalar(out, "artifact_support_preview_count", config.artifacts.support_preview_count);
     write_bool(out, "artifact_show_linearized_constraints",
                config.artifacts.show_linearized_constraints);
     write_bool(out, "artifact_write_visualization_svg",
@@ -659,8 +660,37 @@ int constraint_horizon(const RolloutTraceFrame& frame) {
 }
 
 
+// Display only: keep actual joint scenarios, suppress paths within 10 cm at
+// every matching obstacle/stage. All support forecasts remain in the CSV.
+std::vector<const Scenario*> preview_scenarios(const RolloutTraceFrame& frame, int limit) {
+    std::vector<const Scenario*> preview;
+    for (const auto& candidate : frame.sampled_scenarios) {
+        if (!frame.show_support_scenarios) { preview.push_back(&candidate); continue; }
+        bool duplicate = false;
+        for (const auto* selected : preview) {
+            bool same = candidate.trajectories.size() == selected->trajectories.size();
+            for (const auto& [id, path] : candidate.trajectories) {
+                const auto it = selected->trajectories.find(id);
+                if (it == selected->trajectories.end() || it->second.steps.size() != path.steps.size()) {
+                    same = false; break;
+                }
+                for (size_t k = 0; k < path.steps.size(); ++k) {
+                    if ((path.steps[k].mean - it->second.steps[k].mean).norm() > .1) {
+                        same = false; break;
+                    }
+                }
+                if (!same) break;
+            }
+            if (same) { duplicate = true; break; }
+        }
+        if (!duplicate) preview.push_back(&candidate);
+        if (preview.size() >= static_cast<size_t>(limit)) break;
+    }
+    return preview;
+}
+
 void render_gif_frame(IndexedCanvas& canvas, const RolloutTrace& trace,
-                      std::size_t frame_index, const SvgTransform& transform) {
+                      std::size_t frame_index, const SvgTransform& transform, int support_preview_count) {
     canvas.clear(GIF_BACKGROUND);
     for (const auto& road : trace.road_centerlines) {
         draw_path_on_canvas(canvas, road, transform, 2, GIF_ROAD);
@@ -814,8 +844,8 @@ constexpr double kViolationDisplayTolerance = 1e-6;
                 color);
         }
     const auto draw_forecasts = [&]() {
-        for (const auto& scenario : frame.sampled_scenarios) {
-            for (const auto& [id, prediction] : scenario.trajectories) {
+        for (const auto* scenario : preview_scenarios(frame, support_preview_count)) {
+            for (const auto& [id, prediction] : scenario->trajectories) {
                 const std::uint8_t color =
                 frame.show_support_scenarios
                     ? static_cast<std::uint8_t>(GIF_SUPPORT)
@@ -823,13 +853,9 @@ constexpr double kViolationDisplayTolerance = 1e-6;
                 for (size_t k = 1; k < prediction.steps.size(); ++k) {
                     const auto [x0, y0] = transform.map(prediction.steps[k-1].mean);
                     const auto [x1, y1] = transform.map(prediction.steps[k].mean);
-                    canvas.draw_line(x0, y0, x1, y1, frame.show_support_scenarios ? 3 : 1, color);
+                    canvas.draw_line(x0, y0, x1, y1, 1, color);
                 }
-                if (frame.show_support_scenarios && !prediction.steps.empty()) {
-                    const auto [x, y] = transform.map(prediction.steps.back().mean);
-                    canvas.draw_disk(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)),
-                                     4, GIF_SUPPORT);
-                }
+
             }
         }
     };
@@ -956,7 +982,8 @@ void write_visualization_gif(const fs::path& path, const ExperimentConfig& confi
     }
 
     for (std::size_t output_index = 0; output_index < frame_indices.size(); ++output_index) {
-        render_gif_frame(canvas, trace, frame_indices[output_index], transform);
+        render_gif_frame(canvas, trace, frame_indices[output_index], transform,
+                         config.artifacts.support_preview_count);
         write_gif_frame_with_delay(
             writer, canvas.pixels(), frame_delays_centiseconds[output_index]);
     }
@@ -1144,20 +1171,21 @@ void write_visualization_svg(const fs::path& path, const ExperimentConfig& confi
     if (config.artifacts.show_support_scenarios) {
         for (auto frame = trace.frames.rbegin(); frame != trace.frames.rend(); ++frame) {
             if (!frame->has_decision) continue;
-            out << "<g id=\"support-scenarios\" fill=\"none\" stroke=\"#00e5ff\" stroke-width=\"3\">\n";
-            for (const auto& scenario : frame->sampled_scenarios) {
-                for (const auto& [id, prediction] : scenario.trajectories) {
+            out << "<g id=\"support-scenarios\" fill=\"none\" stroke=\"#00e5ff\" stroke-width=\"1\">\n";
+            const auto preview = preview_scenarios(*frame, config.artifacts.support_preview_count);
+            for (const auto* scenario : preview) {
+                for (const auto& [id, prediction] : scenario->trajectories) {
                     out << "<polyline points=\"";
                     for (const auto& step : prediction.steps) {
                         const auto [x, y] = transform.map(step.mean);
                         out << x << ',' << y << ' ';
                     }
-                    out << "\"><title>support scenario " << scenario.scenario_id
+                    out << "\"><title>support scenario " << scenario->scenario_id
                         << ", obstacle " << id << "</title></polyline>\n";
                 }
             }
             out << "</g><text x=\"30\" y=\"55\" class=\"legend\">Cyan: support forecasts: "
-                << frame->support_scenario_ids.size() << "; decision " << frame->step
+                << preview.size() << " displayed / " << frame->support_scenario_ids.size() << " total; decision " << frame->step
                 << (frame->support_evaluated ? " (SQP support estimate)" : " (support not evaluated)")
                 << "</text>\n";
             break;
@@ -1270,12 +1298,23 @@ std::string write_rollout_artifacts(
         require_open(decisions, decisions_path);
         require_open(coverage, coverage_path);
         decisions << std::setprecision(17)
-            << "step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count\n";
+            << "step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count,backup_available,backup_removal_budget_exceeded,backup_dro_failed,braking_collision_feasible,any_homotopy_geometrically_feasible,last_qp_converged,sqp_sampled_collision_feasible,fallback_sampled_collision_feasible,nominal_fallback_attempted,used_nominal_fallback\n";
         coverage << "step,obstacle_id,class_id,true_mode,sampled_modes,represented,scenario_count\n";
         for (const auto& decision : trace.decisions) {
             decisions << decision.step << ',' << decision.solve_ms << ',' << decision.success << ','
                 << decision.certificate_requested << ',' << decision.certified << ','
-                << decision.applied_control_effort << ',' << decision.scenario_count << '\n';
+                << decision.applied_control_effort << ',' << decision.scenario_count
+                << ',' << decision.failure_diagnostics.backup_available
+                << ',' << decision.failure_diagnostics.backup_removal_budget_exceeded
+                << ',' << decision.failure_diagnostics.backup_dro_failed
+                << ',' << decision.failure_diagnostics.braking_collision_feasible
+                << ',' << decision.failure_diagnostics.any_homotopy_geometrically_feasible
+                << ',' << decision.failure_diagnostics.last_qp_converged
+                << ',' << decision.failure_diagnostics.sqp_sampled_collision_feasible
+                << ',' << decision.failure_diagnostics.fallback_sampled_collision_feasible
+                << ',' << decision.nominal_fallback_attempted
+                << ',' << decision.used_nominal_fallback
+                << '\n';
             for (const auto& item : decision.mode_coverage) {
                 coverage << decision.step << ',' << item.obstacle_id << ',' << item.class_id << ','
                     << item.true_mode << ',';

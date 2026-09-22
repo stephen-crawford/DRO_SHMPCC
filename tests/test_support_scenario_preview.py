@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='support-preview-') as directory:
     assert not rows(off/'sampled_scenarios.csv'), 'preview is disabled in boundary mode'
     svg = (on/'rollout.svg').read_text()
     assert 'id="support-scenarios"' in svg and 'id="linearized-constraints"' not in svg
-    assert 'stroke="#00e5ff" stroke-width="3"' in svg, 'support forecasts need distinct styling'
+    assert 'stroke="#00e5ff" stroke-width="1"' in svg, 'support forecasts need thin, distinct styling'
     assert 'id="linearized-constraints"' in (off/'rollout.svg').read_text()
     assert (on/'rollout.gif').read_bytes() != (off/'rollout.gif').read_bytes()
     assert 'artifact_show_support_scenarios: true' in (on/'resolved_config.yaml').read_text()
@@ -55,4 +55,13 @@ with tempfile.TemporaryDirectory(prefix='support-preview-') as directory:
     ids = set(rows(near/'support_scenarios.csv')[0]['scenario_ids'].split(';'))
     drawn = {r['scenario_id'] for r in rows(near/'sampled_scenarios.csv')}
     assert len(ids) > 1 and ids == drawn, 'support IDs were capped by preview_count'
+    assert (near/'rollout.svg').read_text().count('<polyline points=') == 1, 'near-duplicate paths should share one visual preview'
+    # Render limits must not truncate the exported solver support evidence.
+    config.write_text(config.read_text() + '\nartifact_support_preview_count: 1\nobstacle_prediction_noise: true\n')
+    capped = run('capped', '--support-scenarios')
+    complete = set(rows(capped/'support_scenarios.csv')[0]['scenario_ids'].split(';'))
+    assert len(complete) > 1
+    assert {r['scenario_id'] for r in rows(capped/'sampled_scenarios.csv')} == complete
+    assert (capped/'rollout.svg').read_text().count('<polyline points=') == 1
+    assert '1 displayed /' in (capped/'rollout.svg').read_text()
 print('PASS: exact support IDs, empty support, uncapped support, SVG/GIF override, and unchanged numerical trace')

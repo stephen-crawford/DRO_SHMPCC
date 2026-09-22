@@ -1,15 +1,15 @@
 # Repeatable analysis matrix
 
-`tests/run_analysis_matrix.py` generates **480 configurations**:
+`tests/run_analysis_matrix.py` generates **720 configurations**:
 
 - 1–4 obstacles;
 - 1–4 classes, restricted to classes ≤ obstacles;
 - straight highway, S-curve, four-way intersection, two-lane roundabout;
 - 1–6 modes per class;
-- SH-MPCC and SH-MPCC with DRO.
+- SH-MPCC, SH-MPCC with DRO, and `sh_mpcc_dro_fallback`.
 
 All settings are in `settings.json`. The default schedule uses seeds 77–86,
-with two executions per seed: **4,800 seed trials / 9,600 executions**.
+with one execution per seed: **7,200 seed trials / 7,200 executions**.
 These are experiments, not assertions that every controller avoids collisions
 or completes its route. Solver failures and early terminations are retained.
 
@@ -76,6 +76,17 @@ configurations. `results.json` and `rollouts.csv` hold per-seed/per-repeat metri
 `summary.csv` and `summary.json` hold one row per configuration, including pending,
 measured and error counts. Missing rates are null/blank, never zero.
 
+`summary_per_seed.csv` holds one row per configuration and seed, with the same
+summary metrics plus `seed`, `status`, and `error`. It uses the existing repeat-0
+aggregation rule; repeated executions do not create extra rows. Error trials
+remain visible with blank rates.
+
+The script exits automatically after all selected configuration/seed trials
+have been processed and reports written, printing `Matrix complete` with the
+coverage and error counts. It exits with status 0 when all trials are OK, or 1
+when any trial errored. There is no automatic retry loop; a later `--resume`
+invocation retries errors.
+
 Each `<case>/seed_<seed>/repeat_<index>/` contains resolved configuration, seed /
 backend manifest, `rollout.csv`, `trace.csv`, `decisions.csv`, `mode_coverage.csv`,
 `geometry.csv` and `conservatism.csv`, plus selected visualization artifacts.
@@ -141,3 +152,63 @@ Unknown names are rejected before any output is written, including with
 `--generate-only`. The obstacle-count prefix is the letter `o`, not the digit `0`.
 As with other runner updates, its changed script fingerprint requires a new
 output directory when starting from a batch created by an older script.
+
+### Failure classification
+
+New runs include these diagnostic columns in `decisions.csv`. Values are `1`
+(true), `0` (false), or `-1` (not evaluated). Every `no_admissible_control`
+also emits a `[FAILURE CLASSIFICATION]` line in the repeat log (one-based failed
+step; decision CSV steps remain zero-based).
+
+| Column | Evidence |
+|---|---|
+| `backup_available` | Shifted backup passed the existing deterministic availability check. |
+| `backup_removal_budget_exceeded` | Backup's incompatible sampled scenarios exceeded the removal budget. |
+| `backup_dro_failed` | Currently `-1`: no separate DRO feasibility test is performed on the shifted backup. The removal check is reported separately. |
+| `braking_collision_feasible` | Recovery's direct braking trajectory had no incompatible sampled scenarios; unknown when that recovery branch was not entered. Does not include hard-limit feasibility. |
+| `any_homotopy_geometrically_feasible` | At least one attempted PATH/AUTO/LEFT/RIGHT anchor passed the existing geometric preparation/check; does not establish dynamic feasibility. |
+| `last_qp_converged` | Final SQP subproblem's QP convergence flag; unknown if none was solved. |
+| `sqp_sampled_collision_feasible` | Rejected SQP candidate checked against actual sampled disc geometry. |
+| `fallback_sampled_collision_feasible` | Gentle-braking fallback checked against actual sampled disc geometry; distinct from recovery's direct braking. |
+
+The last two checks use all original sampled scenarios (including removed ones),
+future stages, combined radius and the existing compatibility tolerance of
+`1e-9`. They run only on the SQP rejection/fallback path, do not affect acceptance,
+and remain unknown for nonfinite trajectories. Linearized collision-row
+rejection does not itself imply a collision in this geometry check.
+
+`rollouts.csv`/`results.json` retain the failed decision's fields and
+`failure_class`: `sampled_collision`, `solver_nonconvergence`,
+`solver_nonconvergence_and_sampled_collision`, `other_rejection`, or `unknown`.
+Other terminations use `not_applicable`. A sampled collision means at least one
+of the tested SQP/fallback candidates collided; it is **not** proof that the
+sampled optimization problem has no feasible solution. QP nonconvergence is
+observed evidence, not a claim of causation or an SQP convergence certificate.
+
+Summaries count `failure_<column>_{true,false,unknown}_rollouts` and
+`failure_<class>_rollouts`, using only `no_admissible_control` outcomes from
+measured seed trials, once per seed. Older evidence without these columns is
+unknown. Use a new output directory after rebuilding; the existing manifest
+checks prevent mixing old and new executable/script versions.
+
+## Investigating nominal completion with DRO refusal
+
+Use the [matrix investigation tool](../../tests/MATRIX_INVESTIGATION.md) to scan
+saved seed pairs and probe a nominal plan at the DRO run's frozen refusal state
+under `p`, `qstar`, and boosted modes. It includes exact replay checks and an
+optional frozen-state radius sweep, with commands for roundabout seeds 79 and 85.
+
+## DRO with nominal fallback
+
+Select `mpc_type: sh_mpcc_dro_fallback` in YAML or `sh_mpcc_dro_fallback`
+in the matrix `solver_styles`. This type enables DRO. Every decision first
+runs the existing DRO solve and its homotopy/checked-braking recovery. Only
+when that returns no admissible plan does it draw fresh nominal scenarios and
+run standard SH-MPCC, including its existing checked-braking fallback. If that
+also fails, the harness retains its `no_admissible_control` termination.
+The next decision always tries DRO again, using the last executed plan.
+
+`decisions.csv` reports `nominal_fallback_attempted` and `used_nominal_fallback`.
+Certificates and scenario diagnostics describe the returned attempt; nominal
+fallback is not a DRO certificate, and this switching policy does not establish
+a new closed-loop probabilistic guarantee. Solve time includes both attempts.

@@ -40,29 +40,29 @@ static std::map<std::string, ModeModel> make_library() {
 }
 
 // ---------------------------------------------------------------------------
-// 0. Radius calibration must not mistake repeated held-mode reports for fresh
-// IID categorical samples, and -1 must mean an unbounded history window.
+// 0. Radius evidence counts every realized obstacle-timestep observation,
+// and -1 must mean an unbounded history window.
 // ---------------------------------------------------------------------------
 static void test_mode_history_radius_evidence() {
     ModeHistory history(0, make_library(), 0);
     for (int t = 0; t < 300; ++t) {
-        history.record_observation(t, "constant_velocity");
+        history.record_observation(t, history.obstacle_id, "constant_velocity");
     }
     check(history.observed_modes.size() == 300,
           "max_history_length=-1 retains the full mode history");
-    check(history.ambiguity_radius_sample_count() == 1,
-          "repeated held-mode reports count as one radius-evidence episode");
+    check(history.ambiguity_radius_sample_count() == 300,
+          "each realized held-mode observation counts toward radius evidence");
 
-    history.record_observation(300, "turn_left");
-    history.record_observation(301, "turn_left");
-    history.record_observation(302, "constant_velocity");
-    check(history.ambiguity_radius_sample_count() == 3,
-          "each contiguous mode episode contributes one conservative evidence sample");
+    history.record_observation(300, history.obstacle_id, "turn_left");
+    history.record_observation(301, history.obstacle_id, "turn_left");
+    history.record_observation(302, history.obstacle_id, "constant_velocity");
+    check(history.ambiguity_radius_sample_count() == 303,
+          "mode changes and repeated modes each contribute one observation");
 
     history.max_history_length = 3;
-    history.record_observation(303, "constant_velocity");
+    history.record_observation(303, history.obstacle_id, "constant_velocity");
     check(history.observed_modes.size() == 3 &&
-              history.ambiguity_radius_sample_count() == 2,
+              history.ambiguity_radius_sample_count() == 3,
           "a positive history cap retains a rolling window and recomputes evidence safely");
 }
 
@@ -72,7 +72,7 @@ static void test_mode_history_radius_evidence() {
 static void test_dirichlet_posterior_mean() {
     auto lib = make_library();
     ModeHistory h(0, lib, 0);
-    for (int t = 0; t < 20; ++t) h.record_observation(t, "constant_velocity");
+    for (int t = 0; t < 20; ++t) h.record_observation(t, h.obstacle_id, "constant_velocity");
 
     ModeBeliefConfig belief; belief.prior = DirichletPrior::LAPLACE;  // a = 1
     auto w = compute_mode_weights(h, belief);
@@ -97,7 +97,7 @@ static void test_dirichlet_posterior_mean() {
 static void test_alpha_is_live() {
     auto lib = make_library();
     ModeHistory h(0, lib, 0);
-    for (int t = 0; t < 20; ++t) h.record_observation(t, "constant_velocity");
+    for (int t = 0; t < 20; ++t) h.record_observation(t, h.obstacle_id, "constant_velocity");
 
     ModeBeliefConfig laplace; laplace.prior = DirichletPrior::LAPLACE;             // a = 1
     ModeBeliefConfig kt;      kt.prior      = DirichletPrior::KRICHEVSKY_TROFIMOV;  // a = 1/2
@@ -121,7 +121,7 @@ static void test_transition_matrix() {
     // cv, cv, cv, tl, tl, cv  =>  N[cv][cv]=2, N[cv][tl]=1, N[tl][tl]=1, N[tl][cv]=1
     const char* seq[] = {"constant_velocity", "constant_velocity", "constant_velocity",
                          "turn_left", "turn_left", "constant_velocity"};
-    for (int t = 0; t < 6; ++t) h.record_observation(t, seq[t]);
+    for (int t = 0; t < 6; ++t) h.record_observation(t, h.obstacle_id, seq[t]);
 
     std::vector<std::string> modes = {"constant_velocity", "lane_change_left", "turn_left"};
     const double a = 1.0, kappa = 2.0;
@@ -158,7 +158,7 @@ static void test_prediction_reaches_unobserved_mode() {
     ModeHistory h(0, lib, 0);
     const char* seq[] = {"constant_velocity", "constant_velocity", "constant_velocity",
                          "turn_left", "turn_left", "constant_velocity"};
-    for (int t = 0; t < 6; ++t) h.record_observation(t, seq[t]);
+    for (int t = 0; t < 6; ++t) h.record_observation(t, h.obstacle_id, seq[t]);
     std::vector<std::string> modes = {"constant_velocity", "lane_change_left", "turn_left"};
     auto T = compute_mode_transition_matrix(h, modes, 1.0, 2.0);
 
@@ -190,7 +190,7 @@ static void test_prediction_reaches_unobserved_mode() {
 static void test_bayes_update() {
     auto lib = make_library();
     ModeHistory h(0, lib, 0);
-    for (int t = 0; t < 6; ++t) h.record_observation(t, "constant_velocity");
+    for (int t = 0; t < 6; ++t) h.record_observation(t, h.obstacle_id, "constant_velocity");
     std::vector<std::string> modes = {"constant_velocity", "lane_change_left", "turn_left"};
     auto T = compute_mode_transition_matrix(h, modes, 1.0, 2.0);
 
@@ -225,7 +225,7 @@ static void test_markov_sampling_switches_within_horizon() {
     ModeHistory h(0, lib, 0);
     const char* seq[] = {"constant_velocity", "turn_left", "constant_velocity",
                          "turn_left", "constant_velocity", "turn_left"};
-    for (int t = 0; t < 6; ++t) h.record_observation(t, seq[t]);
+    for (int t = 0; t < 6; ++t) h.record_observation(t, h.obstacle_id, seq[t]);
     std::map<int, ModeHistory> hists; hists[0] = h;
     ModeBeliefConfig cfg;  // alpha=1, kappa=2
     std::vector<std::string> modes;
@@ -258,7 +258,7 @@ static void test_qstar_override_seeds_chain() {
     obstacles[0] = ObstacleState(5.0, 0.0, 0.5, 0.0);
 
     ModeHistory h(0, lib, 0);
-    for (int t = 0; t < 30; ++t) h.record_observation(t, "constant_velocity");
+    for (int t = 0; t < 30; ++t) h.record_observation(t, h.obstacle_id, "constant_velocity");
     std::map<int, ModeHistory> hists; hists[0] = h;
 
     // Q* concentrated on a mode the FREQUENCY belief would barely sample.
@@ -364,7 +364,7 @@ static void test_sticky_kappa_derivation() {
 static void test_theta_roundtrip_through_estimator() {
     auto lib = make_library();  // M = 3
     ModeHistory h(0, lib, 0);
-    h.record_observation(0, "constant_velocity");  // one obs; lcl row stays pure prior
+    h.record_observation(0, h.obstacle_id, "constant_velocity");  // one obs; lcl row stays pure prior
     std::vector<std::string> modes = {"constant_velocity", "lane_change_left", "turn_left"};
 
     ModeBeliefConfig cfg;
@@ -495,7 +495,7 @@ static void test_markov_first_step_sampling() {
     ModeHistory h(0, lib, 0);
     const char* seq[] = {"constant_velocity", "turn_left", "constant_velocity", "turn_left",
                          "constant_velocity", "turn_left", "constant_velocity", "turn_left"};
-    for (int t = 0; t < 8; ++t) h.record_observation(t, seq[t]);
+    for (int t = 0; t < 8; ++t) h.record_observation(t, h.obstacle_id, seq[t]);
     std::map<int, ModeHistory> hists; hists[0] = h;
 
     // pi_0 = point mass on constant_velocity via the Q* override.

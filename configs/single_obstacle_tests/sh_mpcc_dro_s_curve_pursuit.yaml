@@ -7,7 +7,7 @@ num_obstacles: 1
 num_modes: 4
 obs_modes: [constant_velocity, accelerating, turn_left_sharp, turn_right_sharp]
 rare_mode: ""
-rare_switch_prob: 0.0
+rare_mode_probability: 0.0
 randomize_available_modes: false
 switch_regime: markov_jump_system
 switch_prob: 1.0

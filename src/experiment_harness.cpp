@@ -130,6 +130,104 @@ namespace dro_mpc {
         }
     }
 
+    void ObstacleSim::sample_iid_mode(std::mt19937& rng) {
+        if (available_modes.empty()) {
+            return;
+        }
+
+        std::uniform_int_distribution<int> idx(
+            0,
+            static_cast<int>(available_modes.size()) - 1
+        );
+
+        current_mode = available_modes[idx(rng)];
+    }
+
+   void ObstacleSim::sample_iid_mode(
+        std::mt19937& rng,
+        const std::string& rare_mode,
+        double rare_probability)
+    {
+        if (available_modes.empty()) {
+            return;
+        }
+
+        const auto rare_it =
+            std::find(
+                available_modes.begin(),
+                available_modes.end(),
+                rare_mode
+            );
+
+        const bool has_rare =
+            !rare_mode.empty() &&
+            rare_it != available_modes.end();
+
+        /*
+        * No distinguished rare mode:
+        * sample uniformly from every available mode.
+        */
+        if (!has_rare) {
+
+            std::uniform_int_distribution<int> idx(
+                0,
+                static_cast<int>(available_modes.size()) - 1
+            );
+
+            current_mode =
+                available_modes[idx(rng)];
+
+            return;
+        }
+
+        /*
+        * Exact marginal probability assigned to the rare mode.
+        */
+        const double p_rare =
+            std::clamp(
+                rare_probability,
+                0.0,
+                1.0
+            );
+
+        std::uniform_real_distribution<double>
+            uniform01(0.0, 1.0);
+
+        if (uniform01(rng) < p_rare) {
+            current_mode = rare_mode;
+            return;
+        }
+
+        /*
+        * Remaining probability mass is distributed uniformly
+        * over all non-rare modes.
+        */
+        std::vector<std::string> ordinary_modes;
+        ordinary_modes.reserve(available_modes.size());
+
+        for (const auto& mode : available_modes) {
+            if (mode != rare_mode) {
+                ordinary_modes.push_back(mode);
+            }
+        }
+
+        /*
+        * Degenerate case: the rare mode is the only available mode.
+        */
+        if (ordinary_modes.empty()) {
+            current_mode = rare_mode;
+            return;
+        }
+
+        std::uniform_int_distribution<int> idx(
+            0,
+            static_cast<int>(ordinary_modes.size()) - 1
+        );
+
+        current_mode =
+            ordinary_modes[idx(rng)];
+    }
+
     // ============================================================================
     // CSV Writer
     // ============================================================================
@@ -541,6 +639,69 @@ namespace dro_mpc {
         }
         const int n_obs = static_cast<int>(obs_sims.size());
 
+        /*
+        * Minimum realized center distance between the obstacle center
+        * and any ego collision disc.
+        *
+        * The actual free-space clearance margin is
+        *
+        *     center_distance - collision_radius
+        *
+        * where collision_radius is the combined ego/obstacle safety radius.
+        */
+        auto minimum_center_distance_to_obstacle =
+            [&](const ObstacleState& obstacle) -> double {
+
+                double min_distance =
+                    std::numeric_limits<double>::infinity();
+
+                if (config.mpc.ego.num_discs > 1) {
+
+                    const Eigen::Vector2d direction(
+                        std::cos(ego.theta),
+                        std::sin(ego.theta));
+
+                    const double disc_spacing =
+                        config.mpc.ego.length /
+                        static_cast<double>(
+                            config.mpc.ego.num_discs - 1);
+
+                    for (int disc = 0;
+                        disc < config.mpc.ego.num_discs;
+                        ++disc) {
+
+                        const double offset =
+                            -0.5 * config.mpc.ego.length +
+                            disc * disc_spacing;
+
+                        const Eigen::Vector2d disc_position =
+                            ego.position() +
+                            offset * direction;
+
+                        const double distance =
+                            (
+                                disc_position -
+                                obstacle.position()
+                            ).norm();
+
+                        min_distance =
+                            std::min(
+                                min_distance,
+                                distance);
+                    }
+
+                } else {
+
+                    min_distance =
+                        (
+                            ego.position() -
+                            obstacle.position()
+                        ).norm();
+                }
+
+                return min_distance;
+            };
+
         detail::RolloutTrace trace;
         trace.route = ref_path;
         trace.road_centerlines = build_environment_road_centerlines(
@@ -572,89 +733,267 @@ namespace dro_mpc {
             controller.initialize_obstacle(i, obs_class, obs_sims[i].mode_models);
         }
 
-        // Seed each class with the one mode observation actually available at
-        // rollout start.  Repeating the same state five times fabricated evidence
-        // for the categorical belief and caused calibrated DRO radii to shrink as
-        // though those copies were independent samples.
+               /*
+         * Choose the realized mode for world timestep 0.
+         *
+         * For the IID configuration:
+         *
+         *     M_0 ~ p
+         *
+         * The observation itself is recorded inside the rollout loop,
+         * immediately before the first MPC solve. This guarantees that
+         * exactly one categorical observation is recorded per realized
+         * world timestep.
+         *
+         * For the Markov configuration, retain the initial mode supplied
+         * by obstacle construction for now.
+         */
         for (int oi = 0; oi < n_obs; ++oi) {
-            const int obs_class = config.obstacles.class_id(oi);
-            controller.update_mode_observation(
-                oi, obs_class, obs_sims[oi].current_mode, /*timestep=*/0);
+
+            if (config.obstacles.switch_regime !=
+                ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM) {
+
+                obs_sims[oi].sample_iid_mode(
+                    plant_rng,
+                    config.obstacles.rare_mode,
+                    config.obstacles.rare_mode_probability
+                );
+            }
         }
-        double initial_minimum_clearance = std::numeric_limits<double>::infinity();
+        double initial_minimum_center_distance =
+            std::numeric_limits<double>::infinity();
+
+        double initial_minimum_clearance =
+            std::numeric_limits<double>::infinity();
+
+        bool initial_collision = false;
+
         for (const auto& obstacle : obs_sims) {
-            initial_minimum_clearance = std::min(
-                initial_minimum_clearance,
-                (ego.position() - obstacle.state.position()).norm());
+
+            const double center_distance =
+                minimum_center_distance_to_obstacle(
+                    obstacle.state);
+
+            const double clearance_margin =
+                center_distance - collision_radius;
+
+            initial_minimum_center_distance =
+                std::min(
+                    initial_minimum_center_distance,
+                    center_distance);
+
+            initial_minimum_clearance =
+                std::min(
+                    initial_minimum_clearance,
+                    clearance_margin);
+
+            initial_collision =
+                initial_collision ||
+                center_distance < collision_radius;
         }
-        append_trace_frame(/*step=*/0, initial_minimum_clearance,
-        /*ambiguity_radius=*/0.0, /*solve_time=*/0.0,
-        /*collision=*/false);
+
+        /*
+        * min_clearance now means actual margin to the collision boundary:
+        *
+        * > 0 : separated
+        * = 0 : touching boundary
+        * < 0 : collision / penetration
+        */
+        rec.min_clearance =
+            initial_minimum_clearance;
+
+        rec.min_clearance_step = 0;
+
+        if (initial_collision) {
+            rec.collision = true;
+            rec.collision_step = 0;
+        }
+
+        std::cerr
+            << "[EVAL SAFETY]"
+            << " step=0"
+            << " min_center_distance="
+            << initial_minimum_center_distance
+            << " min_clearance="
+            << initial_minimum_clearance
+            << " collision_this_step="
+            << static_cast<int>(initial_collision)
+            << " collision_run="
+            << static_cast<int>(rec.collision)
+            << " collision_radius="
+            << collision_radius
+            << std::endl;
+
+        append_trace_frame(
+            /*step=*/0,
+            initial_minimum_clearance,
+            /*ambiguity_radius=*/0.0,
+            /*solve_time=*/0.0,
+            /*collision=*/rec.collision);
 
         std::vector<double> clearances;
         std::vector<int> certified_horizons;
         double control_effort = 0.0;
         int constraint_active_total = 0;
 
-        for (int step = 0; step < config.rollout.rollout_steps; ++step) {
-            const bool switch_allowed =
-                (config.obstacles.switch_regime ==
-                ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM) ||
-                (config.mpc.horizon > 0 && step % config.mpc.horizon == 0);
+                for (int step = 0;
+             step < config.rollout.rollout_steps;
+             ++step) {
 
             for (int oi = 0; oi < n_obs; ++oi) {
-                if (!switch_allowed) {
-                } else if (!config.obstacles.rare_mode.empty() &&
-                    config.obstacles.rare_switch_prob > 0 &&
-                    obs_sims[oi].mode_models.count(config.obstacles.rare_mode) != 0) {
-                    std::uniform_real_distribution<double> u(0, 1);
-                    if (u(plant_rng) < config.obstacles.rare_switch_prob) {
-                        obs_sims[oi].current_mode = config.obstacles.rare_mode;
+
+                /*
+                 * At step == 0, M_0 was already drawn immediately
+                 * before entering the rollout loop.
+                 *
+                 * At every later real-world timestep, generate exactly
+                 * one new realized plant mode.
+                 */
+                if (step > 0) {
+
+                    if (config.obstacles.switch_regime ==
+                        ModeSwitchConfiguration::MARKOV_JUMP_SYSTEM) {
+
+                        /*
+                         * Markov configuration retained for later:
+                         * the next mode depends on the preceding mode.
+                         */
+                        obs_sims[oi].maybe_switch(
+                            config.obstacles.switch_prob,
+                            plant_rng
+                        );
+
                     } else {
-                        obs_sims[oi].maybe_switch(config.obstacles.switch_prob, plant_rng);
+
+                        /*
+                         * IID categorical plant configuration:
+                         *
+                         *     M_t ~ p
+                         *
+                         * independently of M_{t-1}.
+                         *
+                         * This is the data-generating assumption used
+                         * by the categorical count / Clopper-Pearson
+                         * ambiguity-radius calibration.
+                         */
+                        obs_sims[oi].sample_iid_mode(
+                            plant_rng,
+                            config.obstacles.rare_mode,
+                            config.obstacles.rare_mode_probability
+                        );
                     }
-                } else {
-                    obs_sims[oi].maybe_switch(config.obstacles.switch_prob, plant_rng);
                 }
 
-                apply_distribution_shift(config.obstacles.shift, obs_sims[oi], plant_rng);
+                /*
+                 * Optional distribution-shift experiments modify the
+                 * actual plant distribution.
+                 *
+                 * For the theorem-aligned IID baseline these should be
+                 * configured as zero.
+                 */
+                apply_distribution_shift(
+                    config.obstacles.shift,
+                    obs_sims[oi],
+                    plant_rng
+                );
+
+                /*
+                 * Some experiment behaviors deliberately select a mode
+                 * according to geometry. These therefore override the
+                 * categorical draw above.
+                 *
+                 * For the clean IID certification experiment, avoid
+                 * these behavior types.
+                 */
                 if (config.obstacles.behavior == "pursuit" ||
                     config.obstacles.behavior == "path_intersection" ||
                     config.obstacles.behavior == "path_following") {
-                    auto& obstacle = obs_sims[oi];
-                    Eigen::Vector2d target = ego.position();
-                    if (config.obstacles.behavior == "path_intersection")
-                    target = obstacle.state.position() + 4.0 * crossing_direction;
-                    else if (config.obstacles.behavior == "path_following") {
-                        // Follow the local reference geometry after the initial ego
-                        // offset. Chasing a distant ego-relative point cuts corners.
-                        const double obstacle_s = ref_path.find_closest_point(obstacle.state.position());
-                        const double s = ref_path.is_closed_loop()
-                            ? ref_path.wrap_arc_length(obstacle_s + 1.0)
-                            : std::min(path_length, obstacle_s + 1.0);
-                        target = ref_path.get_position_at(s);
+
+                    auto& obstacle =
+                        obs_sims[oi];
+
+                    Eigen::Vector2d target =
+                        ego.position();
+
+                    if (config.obstacles.behavior ==
+                        "path_intersection") {
+
+                        target =
+                            obstacle.state.position() +
+                            4.0 * crossing_direction;
+
+                    } else if (
+                        config.obstacles.behavior ==
+                        "path_following") {
+
+                        const double obstacle_s =
+                            ref_path.find_closest_point(
+                                obstacle.state.position());
+
+                        const double s =
+                            ref_path.is_closed_loop()
+                                ? ref_path.wrap_arc_length(
+                                      obstacle_s + 1.0)
+                                : std::min(
+                                      path_length,
+                                      obstacle_s + 1.0);
+
+                        target =
+                            ref_path.get_position_at(s);
                     }
-                    // One-step pursuit chooses an existing mode. Actual motion still
-                    // uses that mode's dynamics and the ordinary plant propagation.
-                    double best = std::numeric_limits<double>::infinity();
-                    for (const auto& id : obstacle.available_modes) {
-                        const auto predicted = obstacle.mode_models.at(id).propagate(obstacle.state);
-                        const double score = (predicted.position() - target).squaredNorm();
-                        if (score < best) { best = score; obstacle.current_mode = id; }
+
+                    double best =
+                        std::numeric_limits<double>::infinity();
+
+                    for (const auto& id :
+                         obstacle.available_modes) {
+
+                        const auto predicted =
+                            obstacle.mode_models
+                                .at(id)
+                                .propagate(
+                                    obstacle.state);
+
+                        const double score =
+                            (
+                                predicted.position() -
+                                target
+                            ).squaredNorm();
+
+                        if (score < best) {
+                            best = score;
+                            obstacle.current_mode = id;
+                        }
                     }
                 }
 
-                int obs_class = config.obstacles.class_id(oi);
-                // Timestep zero is the single real initial observation above, so
-                // subsequent plant observations advance naturally from one.  The
-                // previous +5 offset only existed to follow five synthetic
-                // startup copies.
+                /*
+                 * Record exactly ONE observation for this world step,
+                 * after every mechanism capable of changing the true
+                 * plant mode has run.
+                 *
+                 * Thus the recorded observation is precisely the mode
+                 * that will govern the physical obstacle propagation
+                 * later in this iteration.
+                 */
+                const int obs_class =
+                    config.obstacles.class_id(oi);
+
                 controller.update_mode_observation(
-                    oi, obs_class, obs_sims[oi].current_mode, step + 1);
+                    oi,
+                    obs_class,
+                    obs_sims[oi].current_mode,
+                    step
+                );
 
                 if (config.rollout.step_callback) {
                     config.rollout.step_callback(
-                        step, oi, obs_sims[oi], controller, plant_rng);
+                        step,
+                        oi,
+                        obs_sims[oi],
+                        controller,
+                        plant_rng
+                    );
                 }
             }
 
@@ -670,6 +1009,11 @@ namespace dro_mpc {
             const Eigen::Vector2d goal = rollout_tracking_goal(
                 ref_path, path_progress, trajectory_speed,
                 config.mpc.horizon, config.mpc.dt);
+            if (config.rollout.decision_callback) {
+                config.rollout.decision_callback(
+                    {step, ego, obstacles, goal, trajectory_speed, path_progress, path_length},
+                    controller);
+            }
             auto mpc_result = controller.solve(
                 ego, obstacles, goal, trajectory_speed, path_progress, path_length);
 
@@ -690,9 +1034,12 @@ namespace dro_mpc {
 
             if (config.artifacts.enabled() && config.artifacts.write_analysis_csv) {
                 detail::DecisionRecord decision;
+                decision.failure_diagnostics = mpc_result.failure_diagnostics;
                 decision.step = step;
                 decision.solve_ms = 1000.0 * mpc_result.solve_time;
                 decision.success = mpc_result.success;
+                decision.nominal_fallback_attempted = mpc_result.nominal_fallback_attempted;
+                decision.used_nominal_fallback = mpc_result.used_nominal_fallback;
                 decision.certificate_requested = mpc_result.certificate_status !=
                     SafeHorizonCertificateStatus::NOT_REQUESTED;
                 decision.certified = mpc_result.certificate_status ==
@@ -722,6 +1069,68 @@ namespace dro_mpc {
                 << " controls=" << mpc_result.control_inputs.size()
                 << " first_input_present=" << mpc_result.first_input().has_value()
                 << std::endl;
+            
+            {
+                const auto first_input =
+                    mpc_result.first_input();
+
+                const bool applied =
+                    mpc_result.success &&
+                    first_input.has_value();
+
+                const double a =
+                    applied
+                        ? first_input->a
+                        : std::numeric_limits<double>::quiet_NaN();
+
+                const double omega =
+                    applied
+                        ? first_input->omega
+                        : std::numeric_limits<double>::quiet_NaN();
+
+                const double acceleration_weight =
+                    config.mpc.objective.acceleration_weight;
+
+                const double steering_weight =
+                    config.mpc.objective.steering_weight;
+
+                const double unweighted_control_cost =
+                    applied
+                        ? a * a + omega * omega
+                        : std::numeric_limits<double>::quiet_NaN();
+
+                const double weighted_control_cost =
+                    applied
+                        ? acceleration_weight * a * a
+                        + steering_weight * omega * omega
+                        : std::numeric_limits<double>::quiet_NaN();
+
+                std::cerr
+                    << "[MPC STEP METRICS]"
+                    << " step=" << step
+                    << " applied=" << static_cast<int>(applied)
+                    << " success=" << static_cast<int>(mpc_result.success)
+                    << " fallback=" << static_cast<int>(mpc_result.used_fallback)
+                    << " a=" << a
+                    << " omega=" << omega
+                    << " dt=" << dt
+                    << " acceleration_weight=" << acceleration_weight
+                    << " steering_weight=" << steering_weight
+                    << " control_cost_unweighted=" << unweighted_control_cost
+                    << " control_cost_weighted=" << weighted_control_cost
+                    << " mpc_cost=" << mpc_result.cost
+                    << " solve_time=" << mpc_result.solve_time
+                    << " qp_solve_time=" << mpc_result.qp_solve_time
+                    << " constraint_time=" << mpc_result.constraint_construction_time
+                    << " dro_risk_time=" << mpc_result.dro_risk_evaluation_time
+                    << " ambiguity_radius=" << mpc_result.ambiguity_radius_used
+                    << " certificate="
+                    << safe_horizon_certificate_status_name(
+                        mpc_result.certificate_status)
+                    << std::endl;
+            }
+                    
+
             if (config.artifacts.enabled() &&
                 (config.artifacts.show_linearized_constraints ||
                 config.artifacts.show_support_scenarios)) {
@@ -866,6 +1275,16 @@ namespace dro_mpc {
                 control_effort += input.a * input.a + input.omega * input.omega;
                 ego = dynamics.propagate(ego, input);
             } else {
+                std::cerr << "[FAILURE CLASSIFICATION] step=" << step + 1
+                    << " backup_available=" << mpc_result.failure_diagnostics.backup_available
+                    << " backup_removal_budget_exceeded=" << mpc_result.failure_diagnostics.backup_removal_budget_exceeded
+                    << " backup_dro_failed=" << mpc_result.failure_diagnostics.backup_dro_failed
+                    << " braking_collision_feasible=" << mpc_result.failure_diagnostics.braking_collision_feasible
+                    << " any_homotopy_geometrically_feasible=" << mpc_result.failure_diagnostics.any_homotopy_geometrically_feasible
+                    << " last_qp_converged=" << mpc_result.failure_diagnostics.last_qp_converged
+                    << " sqp_sampled_collision_feasible=" << mpc_result.failure_diagnostics.sqp_sampled_collision_feasible
+                    << " fallback_sampled_collision_feasible=" << mpc_result.failure_diagnostics.fallback_sampled_collision_feasible
+                    << std::endl;
                 rec.termination_reason = "no_admissible_control";
                 rec.failed_decision_step = step + 1;
                 break;
@@ -902,40 +1321,112 @@ namespace dro_mpc {
             }
 
         
-            double step_minimum_clearance = std::numeric_limits<double>::infinity();
-            for (int oi = 0; oi < n_obs; ++oi) {
-                bool collision_this_obs = false;
-                double min_dist_this_obs = std::numeric_limits<double>::infinity();
-                if (config.mpc.ego.num_discs > 1) {
-                    const Eigen::Vector2d direction(
-                        std::cos(ego.theta), std::sin(ego.theta));
-                    const double disc_spacing = config.mpc.ego.length /
-                        static_cast<double>(config.mpc.ego.num_discs - 1);
-                    for (int disc = 0; disc < config.mpc.ego.num_discs; ++disc) {
-                        const double offset = -0.5 * config.mpc.ego.length +
-                            disc * disc_spacing;
-                        const double distance = (ego.position() + offset * direction -
-                            obs_sims[oi].state.position()).norm();
-                        min_dist_this_obs = std::min(min_dist_this_obs, distance);
-                        collision_this_obs = collision_this_obs || distance < collision_radius;
+            double step_minimum_center_distance =
+                std::numeric_limits<double>::infinity();
+
+            double step_minimum_clearance =
+                std::numeric_limits<double>::infinity();
+
+            bool collision_this_step = false;
+
+            for (int oi = 0;
+                oi < n_obs;
+                ++oi) {
+
+                /*
+                * Realized physical separation after:
+                *
+                *  1. ego executes the applied MPC input
+                *  2. obstacle executes its realized plant transition
+                *
+                * Therefore this is evaluation against the actual simulated
+                * states, not against sampled MPC scenarios.
+                */
+                const double center_distance =
+                    minimum_center_distance_to_obstacle(
+                        obs_sims[oi].state);
+
+                /*
+                * Clearance with respect to the actual collision boundary.
+                *
+                *     clearance > 0  : safe gap
+                *     clearance = 0  : touching
+                *     clearance < 0  : collision
+                */
+                const double clearance_margin =
+                    center_distance - collision_radius;
+
+                const bool collision_this_obs =
+                    center_distance < collision_radius;
+
+                /*
+                * Keep one realized clearance sample per obstacle per
+                * world timestep. This is what clearance_5pct is computed from.
+                */
+                clearances.push_back(
+                    clearance_margin);
+
+                /*
+                * Minimum over all obstacles at this timestep.
+                */
+                step_minimum_center_distance =
+                    std::min(
+                        step_minimum_center_distance,
+                        center_distance);
+
+                step_minimum_clearance =
+                    std::min(
+                        step_minimum_clearance,
+                        clearance_margin);
+
+                /*
+                * Minimum over the complete rollout.
+                */
+                if (clearance_margin <
+                    rec.min_clearance) {
+
+                    rec.min_clearance =
+                        clearance_margin;
+
+                    rec.min_clearance_step =
+                        step + 1;
+                }
+
+                /*
+                * Collision status for this timestep and whole rollout.
+                */
+                if (collision_this_obs) {
+
+                    collision_this_step = true;
+
+                    if (!rec.collision) {
+
+                        rec.collision = true;
+                        rec.collision_step =
+                            step + 1;
                     }
-                } else {
-                    min_dist_this_obs =
-                        (ego.position() - obs_sims[oi].state.position()).norm();
-                    collision_this_obs = min_dist_this_obs < collision_radius;
-                }
-                clearances.push_back(min_dist_this_obs);
-                step_minimum_clearance = std::min(
-                    step_minimum_clearance, min_dist_this_obs);
-                if (min_dist_this_obs < rec.min_clearance) {
-                    rec.min_clearance = min_dist_this_obs;
-                    rec.min_clearance_step = step + 1;
-                }
-                if (collision_this_obs && !rec.collision) {
-                    rec.collision = true;
-                    rec.collision_step = step + 1;
                 }
             }
+
+            /*
+            * Structured log entry consumed by the analysis scrubber.
+            */
+            std::cerr
+                << "[EVAL SAFETY]"
+                << " step=" << step + 1
+                << " min_center_distance="
+                << step_minimum_center_distance
+                << " min_clearance="
+                << step_minimum_clearance
+                << " collision_this_step="
+                << static_cast<int>(
+                    collision_this_step)
+                << " collision_run="
+                << static_cast<int>(
+                    rec.collision)
+                << " collision_radius="
+                << collision_radius
+                << std::endl;
             rec.total_steps++;
             append_trace_frame(step + 1, step_minimum_clearance,
                 mpc_result.ambiguity_radius_used,

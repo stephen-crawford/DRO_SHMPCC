@@ -74,24 +74,36 @@ struct RiskEvaluationDiagnostics {
  * @brief Result from DRO worst-case weight computation.
  */
 struct DROResult {
-    std::map<std::string, double> worst_case_weights;  // q* mode weights
-    double optimal_lambda = 0.0;                       // Optimal dual variable
-    double rho_used = 0.0;                              // Configured ambiguity-set radius
-    /// Radius before applying its configured min/max clamp.  This makes a
-    /// deliberately conservative saturation visible in diagnostics.
+     std::map<std::string, double> worst_case_weights;
+    double optimal_lambda = 0.0;
+
+    double rho_used = 0.0;
     double rho_before_clamp = 0.0;
-    /// Number of conservative mode episodes used as calibration evidence.
+
+    // NEW: geometry-normalized Wasserstein diagnostics
+    double transport_diameter = 0.0;              // D_max = max_ij D[i][j]
+    double normalized_rho_used = 0.0;             // rho_used / D_max
+    double normalized_rho_before_clamp = 0.0;     // rho_raw / D_max
+
+    // Smallest off-diagonal mode-to-mode transport cost.
+    double transport_min_offdiag = 0.0;
+
+    // Diagnostic upper bound from
+    //     D_min * TV(p,q) <= W_D(p,q)
+    // so TV <= rho / D_min when D_min > 0.
+    double max_tv_from_radius = std::numeric_limits<double>::infinity();
+
     int radius_observation_count = 0;
-    /// Actual available-mode cardinality used by the radius formula.
     int radius_mode_count = 0;
     bool rho_clamped_to_min = false;
     bool rho_clamped_to_max = false;
+    
     double worst_case_risk = 0.0;                      // sup risk under Q*
     std::map<std::string, double> risk_per_mode;       // r[m] for each mode
     std::vector<std::vector<double>> transport_cost_matrix;  // D[i][j]
     double implied_transport_cost = 0.0;               // Transport cost of induced plan
     bool recovery_feasible = false;                    // Whether induced plan respects rho
-
+    
     RiskEvaluationDiagnostics risk_diagnostics;
 
    
@@ -197,6 +209,7 @@ public:
      */
     DROResult compute_worst_case_weights(
         const std::map<std::string, double>& nominal_weights,
+        const std::map<std::string, int>& observed_counts,
         const ObstacleState& obs_state,
         const std::map<std::string, ModeModel>& mode_models,
         const std::vector<EgoState>& ego_linearization_traj,
@@ -207,10 +220,6 @@ public:
         int risk_horizon = -1,
         int num_discs = 1,
         double vehicle_length = 4.0,
-        /// When non-null, the obstacle is treated as a Markov-jump system that may
-        /// switch modes during the horizon: per-mode risk is computed over the
-        /// transition chain (compute_risk_vector_switching) instead of held modes.
-        /// Rows/cols must be indexed consistently with the mode ordering.
         const Eigen::MatrixXd* transition = nullptr
     );
 
@@ -303,9 +312,6 @@ public:
     /// Optional per-step rho override (e.g. from adaptive shift detection).
     void set_rho_override(double rho);
     void clear_rho_override();
-
-    /// Number of categorical mode observations used for radius calibration.
-    void set_observation_count(int count);
 
     /// Get config (const)
     const DROConfig& config() const { return config_; }
@@ -577,12 +583,13 @@ private:
     /// Resolve the configured ambiguity radius for any supported family.
     ResolvedAmbiguityRadius resolve_ambiguity_radius(
         AmbiguityDivergence divergence,
-        int mode_count,
-        double transport_diameter
+        const std::vector<std::string>& mode_ids,
+        const std::map<std::string, int>& observed_counts,
+        const std::map<std::string, double>& nominal_weights,
+        const std::vector<std::vector<double>>& transport_cost_matrix
     ) const;
 
     DROConfig config_;
-    int observation_count_ = 0;
     std::optional<double> rho_override_;
     double entropy_ = 0.0;      // Entropy of current nominal distribution
     double max_entropy_ = 1.0;  // log(M) for M modes

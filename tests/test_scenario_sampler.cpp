@@ -55,7 +55,7 @@ int main() {
     modes["constant_velocity"] = create_obstacle_mode_models(0.1).at("constant_velocity");
     modes["constant_velocity"].G.setZero();
     ModeHistory history(4, modes);
-    history.record_observation(0, "constant_velocity");
+    history.record_observation(0, history.obstacle_id, "constant_velocity");
     const std::map<int, ModeHistory> histories{{4, history}};
     const std::map<int, std::map<std::string, double>> deterministic_weights{
         {4, {{"constant_velocity", 1.0}}}};

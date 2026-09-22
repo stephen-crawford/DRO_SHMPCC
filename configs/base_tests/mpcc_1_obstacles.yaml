@@ -12,7 +12,7 @@ dro_enabled: false
 obs_modes: [stop]
 rare_mode: ""
 switch_prob: 0.0
-rare_switch_prob: 0.0
+rare_mode_probability: 0.0
 obstacle_initial_states: [12.5,0,0,0]
 obstacle_process_noise: 0.0
 artifact_write_visualization_gif: true

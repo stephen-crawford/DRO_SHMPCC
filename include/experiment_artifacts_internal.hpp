@@ -39,10 +39,13 @@ struct ModeCoverageRecord {
 };
 
 struct DecisionRecord {
+    FailureDiagnostics failure_diagnostics;
     int step = 0;
     double solve_ms = 0.0;
     bool success = false;
     bool certificate_requested = false;
+    bool nominal_fallback_attempted = false;
+    bool used_nominal_fallback = false;
     bool certified = false;
     double applied_control_effort = 0.0;
     size_t scenario_count = 0;

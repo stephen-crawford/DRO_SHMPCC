@@ -22,6 +22,7 @@
 //       free transport into and out of it. It is backfilled at diam(D), the largest
 //       value that keeps the triangle inequality.
 #include "dro.hpp"
+#include "mode_count_test_utils.hpp"
 #include "dynamics.hpp"
 #include "types.hpp"
 #include <cstdio>
@@ -80,7 +81,6 @@ std::vector<std::vector<double>> ground_cost(
     DROConfig cfg;
     cfg.ground_cost_type = type;
     DRO dro(cfg);
-    dro.set_observation_count(200);
 
     std::map<std::string, double> nominal;
     for (const auto& id : ids) nominal[id] = 1.0 / static_cast<double>(ids.size());
@@ -91,9 +91,9 @@ std::vector<std::vector<double>> ground_cost(
         EgoState e; e.x = 0.4 * k; e.y = 0.0; e.theta = 0.0; e.v = 4.0;
         ego.push_back(e);
     }
-    return dro.compute_worst_case_weights(nominal, obs, modes, ego, 12,
-                                          0.5, 0.5, 0.2, -1, 1, 4.0)
-             .transport_cost_matrix;
+    return dro.compute_worst_case_weights(
+        nominal, test::uniform_mode_counts(nominal, 200), obs, modes, ego, 12,
+        0.5, 0.5, 0.2, -1, 1, 4.0).transport_cost_matrix;
 }
 
 struct MetricReport { double diag, asym, tri, min_off, diam; };
@@ -324,7 +324,6 @@ int main() {
         DROConfig cfg;
         cfg.ground_cost_type = DROGroundCostType::W2_BURES;
         DRO dro(cfg);
-        dro.set_observation_count(200);
         std::map<std::string, double> nominal;
         for (const auto& id : aids) nominal[id] = 1.0 / static_cast<double>(aids.size());
         ObstacleState obs(6.0, 1.6, -1.0, -0.35);
@@ -332,8 +331,9 @@ int main() {
         for (int k = 0; k <= 12; ++k) {
             EgoState e; e.x = 0.4 * k; e.y = 0.0; e.theta = 0.0; e.v = 4.0; ego.push_back(e);
         }
-        const auto res = dro.compute_worst_case_weights(nominal, obs, aliased, ego, 12,
-                                                        0.5, 0.5, 0.2, -1, 1, 4.0);
+        const auto res = dro.compute_worst_case_weights(
+            nominal, test::uniform_mode_counts(nominal, 200), obs, aliased, ego, 12,
+            0.5, 0.5, 0.2, -1, 1, 4.0);
         int a = -1, b = -1;
         for (size_t i = 0; i < aids.size(); ++i) {
             if (aids[i] == "constant_velocity") a = static_cast<int>(i);

@@ -118,6 +118,8 @@ set(SCENARIO_MPC_SOURCES
     src/reference_path.cpp
     src/scenario_sampler.cpp
     src/dro.cpp
+    src/wasserstein_radius_calibration.cpp
+    src/exact_wasserstein_inversion.cpp
 )
 
 add_library(scenario_mpc ${SCENARIO_MPC_SOURCES})
@@ -141,6 +143,9 @@ endif()
 
 # Supported experiment entry point. It delegates every rollout to the canonical
 # harness and writes a reproducibility/trace/visualization bundle by default.
+add_executable(counterfactual_probe tools/counterfactual_probe.cpp)
+target_link_libraries(counterfactual_probe PRIVATE scenario_mpc)
+
 add_executable(experiment_runner tools/experiment_runner.cpp)
 target_link_libraries(experiment_runner PRIVATE scenario_mpc)
 
@@ -241,8 +246,8 @@ target_link_libraries(test_risk_scoring_models PRIVATE scenario_mpc)
 add_executable(test_ground_cost tests/test_ground_cost.cpp)
 target_link_libraries(test_ground_cost PRIVATE scenario_mpc)
 
-add_executable(test_dro_ambiguity_sets tests/test_dro_ambiguity_sets.cpp)
-target_link_libraries(test_dro_ambiguity_sets PRIVATE scenario_mpc)
+add_executable(test_ambiguity_calculation tests/test_ambiguity_calculation.cpp)
+target_link_libraries(test_ambiguity_calculation PRIVATE scenario_mpc)
 
 add_executable(test_acados_qp_solver tests/test_acados_qp_solver.cpp)
 target_link_libraries(test_acados_qp_solver PRIVATE scenario_mpc)
@@ -258,6 +263,9 @@ target_link_libraries(test_bounded_braking PRIVATE scenario_mpc)
 # Test the private fallback directly without changing the controller interface.
 target_compile_options(test_bounded_braking PRIVATE -fno-access-control)
 
+add_executable(test_dro_fallback tests/test_dro_fallback.cpp)
+target_link_libraries(test_dro_fallback PRIVATE scenario_mpc)
+
 add_executable(test_plan_acceptance tests/test_plan_acceptance.cpp)
 target_link_libraries(test_plan_acceptance PRIVATE scenario_mpc)
 
@@ -266,6 +274,9 @@ target_link_libraries(test_mpcc_progress PRIVATE scenario_mpc)
 
 add_executable(test_velocity_bounds tests/test_velocity_bounds.cpp)
 target_link_libraries(test_velocity_bounds PRIVATE scenario_mpc)
+
+add_executable(test_dro_risk_response tests/test_dro_risk_response.cpp)
+target_link_libraries(test_dro_risk_response PRIVATE scenario_mpc)
 
 add_executable(pipeline_verify tests/pipeline_verify.cpp)
 target_link_libraries(pipeline_verify PRIVATE scenario_mpc)
@@ -291,7 +302,8 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_environment_topologies unit)
     register_scenario_mpc_test(test_primal_ot unit)
     register_scenario_mpc_test(test_ground_cost unit)
-    register_scenario_mpc_test(test_dro_ambiguity_sets unit)
+    register_scenario_mpc_test(test_ambiguity_calculation unit)
+    register_scenario_mpc_test(test_dro_risk_response unit)
     register_scenario_mpc_test(test_switching_risk unit)
     register_scenario_mpc_test(test_risk_scoring_models unit)
     register_scenario_mpc_test(test_acados_qp_solver unit)
@@ -300,6 +312,7 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_sh_anchor_preparation unit)
     register_scenario_mpc_test(test_bounded_braking unit)
     register_scenario_mpc_test(test_plan_acceptance integration)
+    register_scenario_mpc_test(test_dro_fallback integration)
     add_test(NAME test_traffic_turns COMMAND test_traffic_turns "${CMAKE_CURRENT_BINARY_DIR}/traffic-turn-artifacts")
     set_tests_properties(test_traffic_turns PROPERTIES LABELS "integration;deterministic")
     register_scenario_mpc_test(test_analysis_diagnostics unit)
@@ -325,9 +338,39 @@ endif()
 # Full-route base scenarios retain GIF and RViz bundles for user inspection.
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(
+        NAME test_switch_anticipation
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_switch_anticipation.py"
+    )
+
+    set_tests_properties(
+        test_switch_anticipation
+        PROPERTIES
+        LABELS "unit;dro;deterministic"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(NAME test_matrix_investigation
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_matrix_investigation.py")
+    set_tests_properties(test_matrix_investigation PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_matrix_investigation_smoke
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_matrix_investigation.py"
+                --integration $<TARGET_FILE:counterfactual_probe> $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_matrix_investigation_smoke PROPERTIES LABELS "integration;deterministic" TIMEOUT 60)
+    add_test(NAME test_comparison_matrix
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_comparison_matrix.py")
+    set_tests_properties(test_comparison_matrix PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_comparison_matrix_smoke
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_comparison_matrix.py"
+                --runner $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_comparison_matrix_smoke PROPERTIES LABELS "integration;deterministic" TIMEOUT 60)
     add_test(NAME test_analysis_matrix
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_analysis_matrix.py")
     set_tests_properties(test_analysis_matrix PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_failure_logging
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_failure_logging.py"
+                $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_failure_logging PROPERTIES LABELS "integration;deterministic" TIMEOUT 60)
     add_test(NAME test_analysis_matrix_smoke
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_analysis_matrix.py"
                 --runner $<TARGET_FILE:experiment_runner>)

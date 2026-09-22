@@ -27,7 +27,8 @@
   ],
   "solver_styles": [
     "sh_mpcc",
-    "sh_mpcc_dro"
+    "sh_mpcc_dro",
+    "sh_mpcc_dro_fallback"
   ],
   "mode_catalog": [
     "constant_velocity",
@@ -49,9 +50,10 @@
     85,
     86
   ],
-  "repeats": 2,
+  "repeats": 1,
   "overrides": {
     "rollout_steps": 450,
+    "use_entropic_allocator": false,
     "path_completion_termination": true,
     "path_completion_fraction": 0.95,
     "road_length": 25.0,

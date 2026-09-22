@@ -8,7 +8,7 @@ num_classes: 1
 obs_modes: [constant_velocity, turn_left, turn_right]
 num_modes: 3
 rare_mode: ""
-rare_switch_prob: 0.0
+rare_mode_probability: 0.0
 randomize_available_modes: false
 switch_regime: hold
 switch_prob: 0.0

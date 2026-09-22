@@ -123,7 +123,7 @@ struct ObstacleExperimentConfig {
     bool randomize_modes_per_obstacle = false;
     /// Empty disables rare-mode forcing. The canonical default is supplied by YAML.
     std::string rare_mode;
-    double rare_switch_prob = 0.05;
+    double rare_mode_probability = 0.05;
 
     std::vector<double> obs_arc_fractions;               // Empty => auto placement
     /// Explicit world-frame starts, one per obstacle. Each state overrides the
@@ -188,6 +188,14 @@ struct ObstacleSim {
     std::string current_mode;
     std::vector<std::string> available_modes;
     std::map<std::string, ModeModel> mode_models;
+
+    void sample_iid_mode(std::mt19937& rng);
+
+    void sample_iid_mode(
+        std::mt19937& rng,
+        const std::string& rare_mode,
+        double rare_probability
+    );
 
     /// Propagate one step under current mode dynamics with noise.
     void step(double dt, std::mt19937& rng,
@@ -315,11 +323,26 @@ inline std::string dro_configuration_name(DROConfiguration d) {
     return d == DROConfiguration::DRO ? "dro" : "base";
 }
 
+/// Read-only decision-time inputs for isolated diagnostic experiments.
+struct DecisionContext {
+    int step;
+    EgoState ego;
+    std::map<int, ObstacleState> obstacles;
+    Eigen::Vector2d goal;
+    double reference_velocity;
+    double path_progress;
+    double path_length;
+};
+
 struct RolloutExperimentConfig {
     int rollout_steps = 200;
     std::string scenario_tag = "baseline";
     std::string method_name;  ///< Empty => auto from DRO/MPC labels
     double metrics_v_ref = 1.5;
+
+    /// Optional observer after all mode observations, immediately before solve.
+    /// Diagnostic copies must not advance the live controller or plant RNG.
+    std::function<void(const DecisionContext&, const MPCController&)> decision_callback;
 
     /// Called after mode observation, before solve.
     std::function<void(int, int, ObstacleSim&, MPCController&, std::mt19937&)>
@@ -349,8 +372,9 @@ struct ExperimentArtifactConfig {
     /// execution state, including the initial and final states.
     int gif_frame_stride = 1;
     bool show_linearized_constraints = true;
-    /// Show all solver-reported support forecasts instead of constraint glyphs or a preview.
+    /// Show a bounded visual preview of solver-reported support forecasts.
     bool show_support_scenarios = false;
+    int support_preview_count = 4;
     bool show_sampled_scenarios = true;
     int scenario_preview_count = 8;
     /// Replay-rate multiplier for recorded trace timestamps: one means the GIF
@@ -364,6 +388,7 @@ struct ExperimentArtifactConfig {
     bool enabled() const noexcept { return !output_directory.empty(); }
 
     void validate() const {
+        if (support_preview_count < 1) throw std::invalid_argument("support_preview_count must be positive");
         if (scenario_preview_count < 1) throw std::invalid_argument("scenario_preview_count must be positive");
         if (gif_frame_stride < 1) {
             throw std::invalid_argument("artifact_gif_frame_stride must be at least one");
@@ -414,6 +439,7 @@ struct ExperimentConfig {
     /// Does not call mpc.sync_from_type() (would overwrite SH overrides set
     /// after type selection).
     void normalize() {
+        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK) dro.enabled = true;
         artifacts.validate();
         obstacles.apply_layout();
         mpc.sampling.sync_belief();
@@ -481,7 +507,7 @@ inline ExperimentConfig make_arm_config(
     cfg.obstacles.switch_prob = switch_prob;
     cfg.obstacles.obs_modes = obs_modes;
     cfg.obstacles.rare_mode = rare_mode;
-    cfg.obstacles.rare_switch_prob = rare_prob;
+    cfg.obstacles.rare_mode_probability = rare_prob;
     cfg.rollout.rollout_steps = rollout_steps;
     cfg.rollout.method_name.clear();
     cfg.normalize();

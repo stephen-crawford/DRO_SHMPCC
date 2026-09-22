@@ -98,3 +98,15 @@ decision context, not a currently enforced row). This fade does not interpolate
 constraint normals or bounds. New current rows replace their group's faded history.
 Failed-decision highlights retain their existing behavior and do not receive faded
 history. Actual scenario changes can still move a current boundary between frames.
+
+### Bounded cyan previews
+
+`artifact_support_preview_count` now limits the rendered joint support scenarios
+per decision (default 4). Near-duplicate joint trajectories are suppressed when
+all corresponding obstacle/stage points differ by at most 0.1 m. Displayed paths
+are actual sampled paths, drawn with thin cyan strokes and no endpoint blobs.
+SVG reports displayed versus total support counts. The full support-ID list and
+all support forecast points remain in `support_scenarios.csv` and
+`sampled_scenarios.csv`; these exports are not capped. This supersedes the earlier
+uncapped, thick-line display description. Solver samples and certification are
+unchanged. Increase the preview count in YAML when more visual detail is needed.

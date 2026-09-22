@@ -41,7 +41,8 @@ enum class MPCType {
     MPC,     // Point-to-point / goal-tracking
     MPCC,    // Contouring control (path following)
     SH_MPC,  // Safe-horizon MPC
-    SH_MPCC  // Safe-horizon MPCC
+    SH_MPCC, // Safe-horizon MPCC
+    SH_MPCC_DRO_FALLBACK // DRO first, nominal SH-MPCC after recovery exhaustion
 };
 
 inline std::string mpc_type_name(MPCType t) {
@@ -50,6 +51,7 @@ inline std::string mpc_type_name(MPCType t) {
         case MPCType::MPCC:    return "mpcc";
         case MPCType::SH_MPC:  return "sh_mpc";
         case MPCType::SH_MPCC: return "sh_mpcc";
+        case MPCType::SH_MPCC_DRO_FALLBACK: return "sh_mpcc_dro_fallback";
         default: return "unknown";
     }
 }
@@ -256,6 +258,7 @@ struct MPCConfig {
                 enable_contouring_constraints = false;
                 break;
             case MPCType::SH_MPCC:
+            case MPCType::SH_MPCC_DRO_FALLBACK:
                 safe_horizon_enabled = true;
                 enable_contouring_constraints = true;
                 break;
@@ -318,79 +321,138 @@ inline std::string risk_scoring_model_name(DRORiskScoringModel model) {
 // ============================================================================
 
 /**
- * @brief Calibration knobs for the configured ambiguity radius and reweighting.
+ * @brief Ambiguity-radius calibration and DRO risk/reweighting settings.
  *
- * Radius theory (true W1 concentration — see DRO::get_adaptive_rho):
- *   The nominal belief p_hat is an empirical categorical over M modes from n
- *   observed interactions. In total variation it concentrates as
- *       P( ||p_hat - p*||_1 >= eps ) <= 2^M exp(-n eps^2 / 2)      (Devroye),
- *   so at target miscoverage beta the L1 half-width is
- *       eps_n(beta) = sqrt( 2 (M ln2 + ln(1/beta)) / n ).
- *   For ANY metric ground cost D, W1 is dominated by the transport diameter:
- *       W1(p_hat, p*) <= (1/2) * diam(D) * ||p_hat - p*||_1
- *                     <= (1/2) * diam(D) * eps_n(beta),
- *   with diam(D) = max_{i,j} D[i][j]. The ground-metric diameter is folded in
- *   EXPLICITLY (not hidden inside a base radius), so
- *       rho_n(beta) = min_radius + calibration_scale * (1/2) * diam(D) * eps.
- *   This shrinks to min_radius as n -> inf (statistical consistency) and grows
- *   with the mode count M, the confidence level, and the ground-cost scale.
+ * For Wasserstein ambiguity sets
+ *
+ *     U(p_hat, rho)
+ *       = { q in Delta_M : W_D(p_hat, q) <= rho },
+ *
+ * D is the configured mode-space ground metric. With W2_BURES,
+ *
+ *     D_ij = average_k W2(
+ *         N(mu_i,k, Sigma_i,k),
+ *         N(mu_j,k, Sigma_j,k)).
+ *
+ * The outer ambiguity distance remains discrete optimal transport W_D over
+ * mode probabilities. W2-Bures defines the ground geometry between modes.
+ *
+ * Three radius calibrations are available:
+ *
+ *   BHC_DMAX:
+ *     Finite-sample categorical TV concentration lifted through D_max.
+ *
+ *   CLOPPER_PEARSON:
+ *     Simultaneous exact-binomial confidence bounds intersected with the
+ *     probability simplex, then outer-approximated by the smallest
+ *     center-fixed Wasserstein ball containing that confidence polytope.
+ *
+ *   EXACT_MULTINOMIAL_GRID:
+ *     Exact multinomial Wasserstein-test inversion at every tested simplex
+ *     lattice point. Exact at each candidate p, but lattice-approximate over
+ *     the continuous simplex.
  */
-struct RadiusCalibrationSettings {
-    bool use_calibrated_radius = true;   //Use the true-W1 concentration radius above
-    double confidence_beta = 0.05;       //Target miscoverage (1 - beta coverage)
-    double alpha_one_sided = 0.95;       //Risk level alpha (VaR/CVaR / surrogate z_alpha)
+ struct RadiusCalibrationSettings {
+    bool use_calibrated_radius = true;
 
-    /// Dimensionless safety factor multiplying the (1/2)*diam(D)*eps radius.
-    /// 1.0 = the bare concentration bound; >1 inflates it.
+    /// Desired miscoverage probability for the ambiguity set:
+    ///
+    ///     P(p_true in U) >= 1 - confidence_beta.
+    double confidence_beta = 0.05;
+
+    /// Risk level used by VaR/CVaR scoring.
+    /// This is independent of ambiguity-set confidence_beta.
+    double alpha_one_sided = 0.95;
+
+    /**
+     * @brief Radius calibration used when divergence == WASSERSTEIN.
+     *
+     * BHC_DMAX:
+     *   Existing Schuurmans/BHC construction
+     *
+     *       rho = D_max * sqrt(r_TV(M,m,beta)).
+     *
+     * CLOPPER_PEARSON:
+     *   Construct simultaneous finite-sample Clopper-Pearson intervals for
+     *   the categorical mode probabilities, intersect with the simplex, and
+     *   choose
+     *
+     *       rho = max_{p in C_beta} W_D(p_hat, p).
+     *
+     *   This provides finite-sample coverage over the continuous simplex
+     *   under the IID categorical model.
+     *
+     * EXACT_MULTINOMIAL_GRID:
+     *   Invert the exact multinomial Wasserstein test at every candidate p
+     *   on a finite simplex lattice. The multinomial p-value at each p is
+     *   exact, but the continuum inversion is approximated by the lattice.
+     */
+    WassersteinRadiusCalibrationMethod wasserstein_radius_method =
+        WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON;
+
+    /**
+     * Simplex lattice denominator used only by EXACT_MULTINOMIAL_GRID:
+     *
+     *     p_i = k_i / L,
+     *     sum_i k_i = L.
+     *
+     * Larger L gives a finer inversion but rapidly increases runtime.
+     */
+    int exact_multinomial_grid_denominator = 10;
+
+    /**
+     * Legacy scale factor used by BHC_DMAX.
+     *
+     * Keep this at 1.0 for a direct theoretical comparison.
+     * CLOPPER_PEARSON and EXACT_MULTINOMIAL_GRID should not multiply their
+     * statistically calibrated radius by this value.
+     */
     double calibration_scale = 1.0;
 
-    /// Exact W1 primal OT reweighting instead of dual-guided heuristic recovery.
+    /// Exact primal discrete-Wasserstein OT reweighting.
     bool use_primal_ot = true;
 
-    DRORiskMeasure risk_measure = DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
+    DRORiskMeasure risk_measure =
+        DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
     DRORiskScoringModel risk_scoring_model =
         DRORiskScoringModel::INHERIT_RISK_MEASURE;
 
-    /// -1 follows the controller-provided full risk horizon; a positive value
-    /// overrides it. Zero and values below -1 are invalid configuration.
+    /// -1 follows the controller-provided full risk horizon.
     int risk_horizon = -1;
 
-    AmbiguityDivergence divergence = AmbiguityDivergence::WASSERSTEIN;
+    AmbiguityDivergence divergence =
+        AmbiguityDivergence::WASSERSTEIN;
 
-    /// Monte Carlo sample count / seed for JOINT_VAR / JOINT_CVAR (offline).
     int joint_risk_samples = 8000;
     uint64_t joint_risk_seed = 0x5150C0FFEEULL;
 
-    /// Mode-SEQUENCE sample count K for MIXTURE_VAR / MIXTURE_CVAR. Only the chain is
-    /// sampled (the noise is integrated in closed form), so K buys mixture-component
-    /// resolution rather than tail resolution and 512 is affordable in the loop.
-    /// Ignored when no transition matrix is supplied: the mixture then has one
-    /// component and MIXTURE_* collapses onto SURROGATE_*.
     int mixture_sequence_samples = 512;
 
-    double sigma_floor = 1e-6;           //Floor for directional sigma
+    double sigma_floor = 1e-6;
 
-    /// Entropic allocator: keeps q_min > 0 so the certificate L = 1/q_min is finite.
-    bool use_entropic_allocator = true;
-    double entropic_tau = 0.05;          //Temperature; tau -> 0 recovers the raw LP
+    bool use_entropic_allocator = false;
+    double entropic_tau = 0.05;
 };
 
-/**
- * @brief DRO solver knobs (radius, ground cost, calibration, OT).
- *
- * Consumed directly by DRO. The flat radius fields set the clamp
- * band and the non-calibrated fallbacks; the nested radius_calibration holds
- * the confidence-calibrated radius parameters and the OT / risk selection.
- */
 struct DROConfig {
-    double base_radius = 0.1;        //Base radius rho (non-calibrated / fixed use)
-    double min_radius = 0.01;        //Minimum rho (clamp floor; calibrated radius offset)
-    double max_radius = 0.10;        //Maximum rho (clamp ceiling; below mode-transport collapse)
+    /// Used when use_calibrated_radius == false.
+    double base_radius = 0.1;
+
+    /**
+     * Engineering clamps for fixed/legacy radius operation.
+     *
+     * Statistically calibrated CLOPPER_PEARSON and
+     * EXACT_MULTINOMIAL_GRID radii must not be clipped by these values,
+     * because doing so can destroy the stated confidence coverage.
+     */
+    double min_radius = 0.01;
+    double max_radius = 0.10;
 
     RadiusCalibrationSettings radius_calibration;
 
-    DROGroundCostType ground_cost_type = DROGroundCostType::W2_BURES;
+    DROGroundCostType ground_cost_type =
+        DROGroundCostType::W2_BURES;
 };
 
 /**
@@ -456,6 +518,8 @@ struct RuntimeConfig {
     int support_limit() const noexcept {
         return mpc.constraints.total_support_cap();
     }
+
+    int scenario_removal_budget() const {return mpc.constraints.scenario_removal_budget;}
 
     // ---- de Groot (arXiv:2307.01070) scenario-theoretic sample complexity ----
     // de Groot's Safe-Horizon MPC sizes the sample count S from the NONCONVEX
@@ -536,6 +600,7 @@ struct RuntimeConfig {
     }
 
     void normalize() {
+        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK) dro.enabled = true;
         // Do not call mpc.sync_from_type() here — it would overwrite SH/contouring
         // overrides intentionally set after type selection.
         mpc.sampling.sync_belief();
@@ -567,6 +632,29 @@ struct RuntimeConfig {
             throw std::invalid_argument("scenario_removal_budget must be non-negative");
 
         const auto& radius = dro.solver.radius_calibration;
+        if (!is_valid_wasserstein_radius_method(
+            radius.wasserstein_radius_method)) {
+                throw std::invalid_argument(
+                    "wasserstein_radius_method is invalid");
+            }
+        if (!(radius.confidence_beta > 0.0 &&
+                radius.confidence_beta < 1.0)) {
+                throw std::invalid_argument(
+                    "confidence_beta must be in (0, 1)");
+            }
+        if (radius.divergence !=
+                AmbiguityDivergence::WASSERSTEIN &&
+            radius.wasserstein_radius_method !=
+                WassersteinRadiusCalibrationMethod::BHC_DMAX) {
+
+            throw std::invalid_argument(
+                    "wasserstein_radius_method is only applicable "
+                    "when divergence == WASSERSTEIN");
+            }
+        if (radius.exact_multinomial_grid_denominator <= 0) {
+                throw std::invalid_argument(
+                    "exact_multinomial_grid_denominator must be positive");
+            }
         if (!is_valid_risk_scoring_model(radius.risk_scoring_model))
             throw std::invalid_argument("risk_scoring_model is invalid");
         if (radius.joint_risk_samples <= 0)

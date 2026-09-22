@@ -24,6 +24,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cerrno>
+#include <cstring>
 
 namespace dro_mpc {
 namespace yaml_config {
@@ -132,6 +134,7 @@ inline MPCType parse_mpc(const std::string& v) {
     if (l == "mpcc")                         return MPCType::MPCC;
     if (l == "sh_mpc" || l == "sh-mpc")     return MPCType::SH_MPC;
     if (l == "sh_mpcc" || l == "sh-mpcc")   return MPCType::SH_MPCC;
+    if (l == "sh_mpcc_dro_fallback") return MPCType::SH_MPCC_DRO_FALLBACK;
     throw std::invalid_argument("unknown mpc_type '" + v + "'");
 }
 inline EnvironmentType parse_env(const std::string& v) {
@@ -255,9 +258,31 @@ inline std::string default_config_path() {
     return "configs/default.yaml";
 }
 
-inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool strict) {
-    std::ifstream in(path);
-    if (!in) throw std::runtime_error("load_experiment_config: cannot open " + path);
+inline void apply_yaml_file(
+    ExperimentConfig& cfg,
+    const std::string& path,
+    bool strict
+) {
+    errno = 0;
+
+    std::ifstream in(
+        path,
+        std::ios::in
+    );
+
+    if (!in.is_open()) {
+        const int error_number = errno;
+
+        throw std::runtime_error(
+            "load_experiment_config: cannot open " +
+            path +
+            " errno=" +
+            std::to_string(error_number) +
+            " (" +
+            std::string(std::strerror(error_number)) +
+            ")"
+        );
+    }
 
     std::string line;
     int lineno = 0;
@@ -394,7 +419,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "randomize_available_modes")     cfg.obstacles.randomize_available_modes = to_bool(val);
             else if (k == "randomize_modes_per_obstacle")  cfg.obstacles.randomize_modes_per_obstacle = to_bool(val);
             else if (k == "rare_mode")                     cfg.obstacles.rare_mode = val;
-            else if (k == "rare_switch_prob")              cfg.obstacles.rare_switch_prob = std::stod(val);
+            else if (k == "rare_mode_probability")              cfg.obstacles.rare_mode_probability = std::stod(val);
             else if (k == "obs_arc_fractions")             cfg.obstacles.obs_arc_fractions = split_csv_d(val);
             else if (k == "obstacle_initial_states" || k == "obstacle_starts")
                                                            cfg.obstacles.initial_obstacle_states = parse_obstacle_states(val);
@@ -450,6 +475,7 @@ inline void apply_yaml_file(ExperimentConfig& cfg, const std::string& path, bool
             else if (k == "artifact_write_visualization_gif" ||
                      k == "artifact_write_gif")
                                                            cfg.artifacts.write_visualization_gif = to_bool(val);
+            else if (k == "artifact_support_preview_count") cfg.artifacts.support_preview_count = std::stoi(val);
             else if (k == "artifact_show_support_scenarios") cfg.artifacts.show_support_scenarios = to_bool(val);
             else if (k == "artifact_show_linearized_constraints") cfg.artifacts.show_linearized_constraints = to_bool(val);
             else if (k == "artifact_show_sampled_scenarios") cfg.artifacts.show_sampled_scenarios = to_bool(val);

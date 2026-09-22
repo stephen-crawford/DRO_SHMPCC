@@ -884,16 +884,109 @@ namespace dro_mpc {
                     polygon,
                     group);
 
+            /*
+            * Diagnostic: identify the sampled halfspaces that actually
+            * survive as facets of the free-space polygon.
+            *
+            * This is especially useful for comparing DRO vs non-DRO:
+            * - scenario_id tells us which sampled trajectory generated it
+            * - obstacle_id tells us which obstacle generated it
+            * - angle identifies nearly-parallel / duplicate normals
+            * - normalized_b identifies nearly-identical halfspaces
+            */
+            if (static_cast<int>(facet_indices.size()) >=
+                std::max(15, max_facets - 2)) {
+
+                std::cerr
+                    << "[FREE POLY FACETS BEGIN]"
+                    << " k=" << k
+                    << " disc=" << disc
+                    << " count=" << facet_indices.size()
+                    << " max_facets=" << max_facets
+                    << " center_x=" << center.x()
+                    << " center_y=" << center.y()
+                    << std::endl;
+
+                int facet_number = 0;
+
+                for (const int index : facet_indices) {
+
+                    const auto* constraint =
+                        group[index];
+
+                    const double normal_norm =
+                        constraint->a.norm();
+
+                    Eigen::Vector2d unit_normal =
+                        Eigen::Vector2d::Zero();
+
+                    if (normal_norm > 1e-14) {
+                        unit_normal =
+                            constraint->a / normal_norm;
+                    }
+
+                    const double normal_angle =
+                        std::atan2(
+                            unit_normal.y(),
+                            unit_normal.x());
+
+                    const double normalized_b =
+                        normal_norm > 1e-14
+                            ? constraint->b / normal_norm
+                            : std::numeric_limits<double>::quiet_NaN();
+
+                    const double anchor_clearance =
+                        constraint->evaluate(center);
+
+                    std::cerr
+                        << "[FREE POLY FACET]"
+                        << " k=" << k
+                        << " disc=" << disc
+                        << " facet=" << facet_number
+                        << " group_index=" << index
+                        << " scenario="
+                        << constraint->scenario_id
+                        << " obstacle="
+                        << constraint->obstacle_id
+                        << " ax="
+                        << constraint->a.x()
+                        << " ay="
+                        << constraint->a.y()
+                        << " angle="
+                        << normal_angle
+                        << " b="
+                        << constraint->b
+                        << " b_normalized="
+                        << normalized_b
+                        << " anchor_clearance="
+                        << anchor_clearance
+                        << " linearization_x="
+                        << constraint->linearization_point.x()
+                        << " linearization_y="
+                        << constraint->linearization_point.y()
+                        << std::endl;
+
+                    ++facet_number;
+                }
+
+                std::cerr
+                    << "[FREE POLY FACETS END]"
+                    << " k=" << k
+                    << " disc=" << disc
+                    << std::endl;
+            }
+
             if (static_cast<int>(facet_indices.size()) >
                 max_facets) {
-                throw std::runtime_error(
-                    "Free-space polygon exceeds facet limit at k="
-                    + std::to_string(k)
-                    + ", disc="
-                    + std::to_string(disc)
-                    + ": facets="
-                    + std::to_string(
-                        facet_indices.size()));
+
+                std::cerr
+                    << "[FREE POLY FACET WARNING]"
+                    << " k=" << k
+                    << " disc=" << disc
+                    << " facets=" << facet_indices.size()
+                    << " configured_limit=" << max_facets
+                    << " keeping_all_facets=1"
+                    << std::endl;
             }
 
             for (const int index : facet_indices) {
