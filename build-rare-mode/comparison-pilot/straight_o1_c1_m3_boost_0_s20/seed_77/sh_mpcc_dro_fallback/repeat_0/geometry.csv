@@ -1,3 +1,0 @@
-actor,radius,length,num_discs,safety_margin
-ego,0.5,4,3,0.10000000000000001
-obstacle,0.34999999999999998,0,1,0.10000000000000001

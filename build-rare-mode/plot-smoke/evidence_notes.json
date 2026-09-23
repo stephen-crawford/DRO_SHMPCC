@@ -1,9 +1,0 @@
-{
-  "budget": "Extra nominal draws 2S in one attempt; two-attempt policies draw at most 2S. Actual counts/latency are reported; CPU time is not equalized.",
-  "hypothesis_tests": "Exact two-sided McNemar per fixed setup over seeds; not pooled over dependent setups. Exploratory, unadjusted for multiple comparisons.",
-  "intervals": "Descriptive 2000-resample paired seed bootstrap per fixed setup, seed 1729. Few seeds/zero events give unreliable or degenerate intervals, not zero-risk guarantees.",
-  "meaning": "Collision-free is not successful completion; no-admissible-control and step-limit outcomes remain separate.",
-  "mechanism_population": "Each controller OK trial; these marginals can have different denominators. Use per-seed rows for matched effects.",
-  "population": "All predetermined trials are retained; primary_summary uses complete pairs per comparison.",
-  "warning": "A focus mode is not proven dangerous by its name. Inspect logged risk and geometry. Histories adapt to observed plant modes."
-}

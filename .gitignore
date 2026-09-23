@@ -1,4 +1,8 @@
 build/
+build*/
+build-concentration/
+build-rare-mode/
+results/
 install/
 log/
 CMakeFiles/

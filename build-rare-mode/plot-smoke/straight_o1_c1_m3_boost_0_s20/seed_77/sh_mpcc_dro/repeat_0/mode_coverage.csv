@@ -1,4 +1,0 @@
-step,obstacle_id,class_id,true_mode,sampled_modes,represented,scenario_count
-0,0,0,constant_velocity,constant_velocity;turn_left;turn_right,1,20
-1,0,0,turn_right,constant_velocity;turn_left;turn_right,1,20
-2,0,0,turn_right,constant_velocity;turn_left;turn_right,1,20

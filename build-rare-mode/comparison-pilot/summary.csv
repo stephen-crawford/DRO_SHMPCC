@@ -1,5 +1,0 @@
-pair,profile,environment,obstacles,classes,modes_per_class,expected_pairs,measured_pairs,error_pairs,pending_pairs,target_match_count,target_match_rate,reverse_match_count,reverse_match_rate,nondro_collision_count,nondro_collision_rate,dro_collision_count,dro_collision_rate,nondro_safe_completion_count,nondro_safe_completion_rate,dro_safe_completion_count,dro_safe_completion_rate,nondro_collision_dro_collision_free_incomplete_count,nondro_collision_dro_collision_free_incomplete_rate,target_seeds
-straight_o1_c1_m3_boost_0_s20,boost_0,straight,1,1,3,2,2,0,0,0,0.0,0,0.0,0,0.0,0,0.0,2,1.0,2,1.0,0,0.0,
-straight_o1_c1_m3_boost_15_s20,boost_15,straight,1,1,3,2,2,0,0,0,0.0,0,0.0,0,0.0,0,0.0,2,1.0,2,1.0,0,0.0,
-straight_o1_c1_m3_boost_30_s20,boost_30,straight,1,1,3,2,2,0,0,0,0.0,0,0.0,0,0.0,0,0.0,2,1.0,2,1.0,0,0.0,
-straight_o1_c1_m3_boost_5_s20,boost_5,straight,1,1,3,2,2,0,0,0,0.0,0,0.0,0,0.0,0,0.0,2,1.0,2,1.0,0,0.0,
