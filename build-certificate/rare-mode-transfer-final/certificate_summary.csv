@@ -1,0 +1,2 @@
+status,epsilon,epsilon_Q_max,scenario_count_ratio,go_30_percent,rho,observed_support,observation_count,total_support_cap,beta_cp,beta_cert,combined_failure_union_bound,S_SH,S_WDRO
+offline_numerical_diagnostic_not_an_issued_certificate,0.05,0.039662359007474085,1.3214603739982191,False,0.04073867801552649,,1000,8,0.05,0.01,0.060000000000000005,1123,1484

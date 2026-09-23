@@ -1,0 +1,302 @@
+{
+  "analysis_sha256": "b5eb91142d078c25cb326d9655fe9f5223a424e8f42784ed08d3d68292983f3c",
+  "cases": [
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_0_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s40",
+      "profile": "boost_0",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_0_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s40",
+      "profile": "boost_0",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_four_way_intersection_o1_c1_m3_boost_0_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_0_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_0_s40",
+      "profile": "boost_0",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_0_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_0_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_0_s40",
+      "profile": "boost_0",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_5_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s40",
+      "profile": "boost_5",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_5_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s40",
+      "profile": "boost_5",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_four_way_intersection_o1_c1_m3_boost_5_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_5_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_5_s40",
+      "profile": "boost_5",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_5_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_5_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_5_s40",
+      "profile": "boost_5",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_15_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s40",
+      "profile": "boost_15",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_15_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s40",
+      "profile": "boost_15",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_four_way_intersection_o1_c1_m3_boost_15_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_15_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_15_s40",
+      "profile": "boost_15",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_15_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_15_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_15_s40",
+      "profile": "boost_15",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_30_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s40",
+      "profile": "boost_30",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_30_s40",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s40",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s40",
+      "profile": "boost_30",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_four_way_intersection_o1_c1_m3_boost_30_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_30_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_30_s40",
+      "profile": "boost_30",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_30_s40",
+      "classes": 1,
+      "environment": "four_way_intersection",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "four_way_intersection_o1_c1_m3_boost_30_s40",
+      "pair_directory": "four_way_intersection_o1_c1_m3_boost_30_s40",
+      "profile": "boost_30",
+      "scenario_budget": 40,
+      "solver_style": "sh_mpcc_dro"
+    }
+  ],
+  "configs": {
+    "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_0_s40": "db75dff19ec17619e1e2934cfc35951dea02794b458b3179a1963038b4a4c2d1",
+    "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_15_s40": "786b92c21588d79c58dc38b4455bece5cd032c87216baa947ac7e302cba434b3",
+    "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_30_s40": "b4da29685ac4b272c76f1dcc28e4b1139961751dddf459893bd970889ffb0784",
+    "sh_mpcc_dro_four_way_intersection_o1_c1_m3_boost_5_s40": "954bf328745d2c44ecd3d99e2bdf5afff0e54a1f0a594a0a93aef2063c578165",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_0_s40": "b76048a46e980f6520b0c02b1332880add84b4db812ba1a3ae10b1804753e8ed",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_15_s40": "5e78a8af7a95938f78e45b60d2135a1dd8aff74e033bb50fed691c0c597f9020",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_30_s40": "d6a0441b5d5a875f70c0fd64e9ab711005ca501f0a9c5d296af69f5f86de0fec",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_5_s40": "2d7729e1920af67692012c649cd248350c61f00d70b9a21bd0f5144b5f989272",
+    "sh_mpcc_four_way_intersection_o1_c1_m3_boost_0_s40": "eef18f5eb3ddd892a2692f8c0581ecffdf78a14a897f9a9a1550c83043398242",
+    "sh_mpcc_four_way_intersection_o1_c1_m3_boost_15_s40": "1077d849328bb0338ff2f2b1b22c3ecd468e08f60960ed67b45892f76f2c0887",
+    "sh_mpcc_four_way_intersection_o1_c1_m3_boost_30_s40": "f06620b6959dbeed1ad9b74eac9964168f36ffdfe6e4ddeabb91d939e9f50065",
+    "sh_mpcc_four_way_intersection_o1_c1_m3_boost_5_s40": "a00c15d02c350d87c85251b0c07a0700c4a8603e0902d3152d5081ed42ff5176",
+    "sh_mpcc_straight_o1_c1_m3_boost_0_s40": "02cd2f4536dc26b214141c6fde3ae10614bdd76b28884c3691c3cca70951d212",
+    "sh_mpcc_straight_o1_c1_m3_boost_15_s40": "105b35c9acdc88f80320b3ad75074594c7ebe2d3abae3c470f45aed5a247f663",
+    "sh_mpcc_straight_o1_c1_m3_boost_30_s40": "55b02b3a4e7f9773e89d215f2847a72c42c33064a2e6ed8d41fb311dbb7ecf07",
+    "sh_mpcc_straight_o1_c1_m3_boost_5_s40": "b91aa1a52838bf1a38c3536ffbf9e23dadd26b1e8f8a964b856ab3ff39f56bae"
+  },
+  "evidence_sha256": "6a6f143eded359a6191a63c03584fad0c10c57fb6499e29b9676a6d2db884f57",
+  "identity": "9f6e5a80e2035b2705c49834c560ec38253ab8ea4a3af7a6c2d94f458075c667",
+  "jobs": 1,
+  "runner": "/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/experiment_runner",
+  "runner_sha256": "d4cef41cb703b6182a3a192770709ecbffb11fb7e80b98ccef6f560a7603af9a",
+  "schema": 2,
+  "script_sha256": "2cfcd43fd31c419ca8ee76632320ff003562f8650b3324b42195d3872ec35c5c",
+  "settings": {
+    "additional_controllers": [],
+    "class_counts": [
+      1
+    ],
+    "environments": [
+      "straight",
+      "four_way_intersection"
+    ],
+    "focus_mode": "turn_right",
+    "mismatch_profiles": [
+      {
+        "boosted_mode": 2,
+        "name": "boost_0",
+        "shift_boost": 0.0
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_5",
+        "shift_boost": 0.05
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_15",
+        "shift_boost": 0.15
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_30",
+        "shift_boost": 0.3
+      }
+    ],
+    "mode_catalog": [
+      "constant_velocity",
+      "turn_left",
+      "turn_right",
+      "accelerating",
+      "decelerating",
+      "stop"
+    ],
+    "mode_counts": [
+      3
+    ],
+    "obstacle_counts": [
+      1
+    ],
+    "overrides": {
+      "artifact_capture_attempt_diagnostics": true,
+      "artifact_show_linearized_constraints": false,
+      "artifact_show_support_scenarios": false,
+      "artifact_write_visualization_gif": false,
+      "artifact_write_visualization_svg": false,
+      "obstacle_prediction_noise": true,
+      "obstacle_process_noise": 0.0,
+      "path_completion_fraction": 0.95,
+      "path_completion_termination": true,
+      "risk_measure": "surrogate_var_bonferroni",
+      "road_length": 25.0,
+      "rollout_steps": 60,
+      "roundabout_radius": 8.0,
+      "safe_horizon_enabled": false,
+      "switch_prob": 0.1,
+      "switch_regime": "hold",
+      "use_entropic_allocator": false
+    },
+    "repeats": 2,
+    "scenario_budgets": [
+      40
+    ],
+    "seeds": [
+      77,
+      78
+    ],
+    "solver_styles": [
+      "sh_mpcc",
+      "sh_mpcc_dro"
+    ]
+  },
+  "suite": "comparison_matrix",
+  "timeout": 1800
+}

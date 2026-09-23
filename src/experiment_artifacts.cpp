@@ -162,6 +162,7 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
 
     out << "# Resolved, replayable ExperimentConfig.\n";
     write_scalar(out, "mpc_type", mpc_type_name(mpc.type));
+    write_bool(out, "nominal_resampling_baseline", mpc.nominal_resampling_baseline);
     write_scalar(out, "progress_weight", mpc.objective.progress_weight);
     write_scalar(out, "horizon", mpc.horizon);
     write_scalar(out, "dt", mpc.dt);
@@ -289,6 +290,7 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
                config.artifacts.write_reproducibility_manifest);
     write_bool(out, "artifact_write_trace_csv", config.artifacts.write_trace_csv);
     write_bool(out, "artifact_write_analysis_csv", config.artifacts.write_analysis_csv);
+    write_bool(out, "artifact_capture_attempt_diagnostics", config.artifacts.capture_attempt_diagnostics);
     write_bool(out, "artifact_show_support_scenarios", config.artifacts.show_support_scenarios);
     write_scalar(out, "artifact_support_preview_count", config.artifacts.support_preview_count);
     write_bool(out, "artifact_show_linearized_constraints",
@@ -1292,6 +1294,57 @@ std::string write_rollout_artifacts(
         }
     }
     if (config.artifacts.write_analysis_csv) {
+        if (config.artifacts.capture_attempt_diagnostics) {
+            std::ofstream attempts(run_directory / "attempts.csv");
+            std::ofstream mechanism(run_directory / "mode_mechanism.csv");
+            std::ofstream transport(run_directory / "transport_costs.csv");
+            require_open(attempts, run_directory / "attempts.csv");
+            require_open(mechanism, run_directory / "mode_mechanism.csv");
+            require_open(transport, run_directory / "transport_costs.csv");
+            transport << std::setprecision(17)
+                << "step,attempt,obstacle_id,source_mode,target_mode,cost,radius_observation_count\n";
+            attempts << std::setprecision(17)
+                << "step,attempt,success,dro_enabled,solve_ms,scenario_count,qp_calls\n";
+            mechanism << std::setprecision(17)
+                << "step,attempt,obstacle_id,mode,nominal_probability,sampling_probability,risk_score,rho,sampled_count,scenario_count,true_mode\n";
+            for (const auto& decision : trace.decisions) {
+                for (size_t i = 0; i < decision.attempts.size(); ++i) {
+                    const auto& a = decision.attempts[i];
+                    attempts << decision.step << ',' << i << ',' << a.success << ',' << a.dro_enabled
+                        << ',' << 1000*a.elapsed_seconds << ',' << a.sampled_scenarios << ',' << a.qp_calls << '\n';
+                    for (const auto& [id, weights] : a.nominal_weights) {
+                        if (a.transport_costs.count(id)) {
+                            size_t source = 0;
+                            for (const auto& source_weight : weights) {
+                                size_t target = 0;
+                                for (const auto& target_weight : weights) {
+                                    transport << decision.step << ',' << i << ',' << id << ','
+                                        << source_weight.first << ',' << target_weight.first << ','
+                                        << a.transport_costs.at(id).at(source).at(target) << ','
+                                        << a.radius_observation_counts.at(id) << '\n';
+                                    ++target;
+                                }
+                                ++source;
+                            }
+                        }
+                        for (const auto& [mode, probability] : weights) {
+                            mechanism << decision.step << ',' << i << ',' << id << ',' << mode << ','
+                                << probability << ',' << a.sampling_weights.at(id).at(mode) << ',';
+                            if (a.risk_scores.count(id)) mechanism << a.risk_scores.at(id).at(mode);
+                            mechanism << ',';
+                            if (a.radii.count(id)) mechanism << a.radii.at(id);
+                            int count = 0;
+                            if (a.initial_mode_counts.count(id) && a.initial_mode_counts.at(id).count(mode))
+                                count = a.initial_mode_counts.at(id).at(mode);
+                            mechanism << ',' << count << ',' << a.sampled_scenarios << ',';
+                            for (const auto& coverage : decision.mode_coverage)
+                                if (coverage.obstacle_id == id) mechanism << coverage.true_mode;
+                            mechanism << '\n';
+                        }
+                    }
+                }
+            }
+        }
         const auto decisions_path = run_directory / "decisions.csv";
         const auto coverage_path = run_directory / "mode_coverage.csv";
         std::ofstream decisions(decisions_path), coverage(coverage_path);

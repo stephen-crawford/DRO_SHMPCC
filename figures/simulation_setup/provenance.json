@@ -1,0 +1,22 @@
+{
+  "matched_triplets": 2263,
+  "excluded_triplets": 137,
+  "snapshot_step": 60,
+  "snapshot_time_s": 6,
+  "stored_obstacle_0_preview_paths": 3,
+  "source_sha256": {
+    "build-base/analysis-matrix/matrix.json": "cdab6e80804640afd780ffefc6eda99517d8a47bb65dc049473e87cbe10bede9",
+    "build-base/analysis-matrix/rollouts.csv": "3bd3d0f63bd556bc046ae12d28bc60451df5f4e2f83f1dac373100682821962f",
+    "build-base/analysis-matrix/sh_mpcc_dro_four_way_intersection_o2_c2_m3/seed_77/repeat_0/rollout.svg": "e235a5aca285033ff9d4b8a4b395cdc605db79d828fb85ce4e43717445fd7e73",
+    "build-base/analysis-matrix/sh_mpcc_dro_four_way_intersection_o2_c2_m3/seed_77/repeat_0/trace.csv": "1749805b2db6abd2dcf23c003b70f196658119ee23917a2f58b474675c65f299",
+    "build-base/analysis-matrix/sh_mpcc_dro_roundabout_o2_c2_m3/seed_77/repeat_0/geometry.csv": "a87714cd224d7a637897a0541967f6fc0dc5bd46b64c8a66f66e6927aca25868",
+    "build-base/analysis-matrix/sh_mpcc_dro_roundabout_o2_c2_m3/seed_77/repeat_0/resolved_config.yaml": "1cb93b4bcd1172c397d932d1df7a2edf2d4134391c1a1b1cb9910f605ec9e88d",
+    "build-base/analysis-matrix/sh_mpcc_dro_roundabout_o2_c2_m3/seed_77/repeat_0/rollout.svg": "529405ec6e336a110ff020189f7d46169d4b18c1bc9051f27cb24e9857cfd0a2",
+    "build-base/analysis-matrix/sh_mpcc_dro_roundabout_o2_c2_m3/seed_77/repeat_0/sampled_scenarios.csv": "e1656acdedf29ba1b5d690101539bf03f26010f49c7592a70bfa6d2a2cd2d420",
+    "build-base/analysis-matrix/sh_mpcc_dro_roundabout_o2_c2_m3/seed_77/repeat_0/trace.csv": "04fa7b57f5c958e880cb9b505f35fa825690764938facea156d6d35042eddf5f",
+    "build-base/analysis-matrix/sh_mpcc_dro_s_curve_o2_c2_m3/seed_77/repeat_0/rollout.svg": "67822164d44130f1efff01fcfa6fde5c804c5c62d668bedf347047d3f794e9e4",
+    "build-base/analysis-matrix/sh_mpcc_dro_s_curve_o2_c2_m3/seed_77/repeat_0/trace.csv": "646374817cdec43c0165ee2fb0fbabbb8f1ffdf91dd733b62bc8423fcd169090",
+    "build-base/analysis-matrix/sh_mpcc_dro_straight_o2_c2_m3/seed_77/repeat_0/rollout.svg": "d74826fbab6b85c792be2622309903c112e0ecd8f7167efa48d1b9ea422ecd34",
+    "build-base/analysis-matrix/sh_mpcc_dro_straight_o2_c2_m3/seed_77/repeat_0/trace.csv": "758af3e0f77cbe3699fffb59d30895d9d270210b10231adc351bb498ad909f14"
+  }
+}

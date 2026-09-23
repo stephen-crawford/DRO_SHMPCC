@@ -235,21 +235,41 @@ const bool allow_nominal = config_.mpc.type == MPCType::SH_MPCC_DRO_FALLBACK;
 const auto previous_reference = allow_nominal ? reference_trajectory_ : std::vector<EgoState>{};
 const auto previous_controls = allow_nominal ? last_feasible_controls_ : std::vector<EgoInput>{};
 const bool previous_backup = has_feasible_backup_;
+std::vector<SolveAttemptDiagnostics> attempts;
+auto attempt_started = std::chrono::steady_clock::time_point{};
+auto begin_attempt_record = [&]() {
+    if (!capture_attempt_diagnostics_) return;
+    current_attempt_diagnostics_ = {};
+    attempt_started = std::chrono::steady_clock::now();
+};
+auto finish_attempt_record = [&](bool success, bool use_dro) {
+    if (!capture_attempt_diagnostics_) return;
+    current_attempt_diagnostics_.success = success;
+    current_attempt_diagnostics_.dro_enabled = use_dro;
+    current_attempt_diagnostics_.elapsed_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - attempt_started).count();
+    attempts.push_back(current_attempt_diagnostics_);
+};
+begin_attempt_record();
 auto result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
                             path_progress, path_length, config_.dro.enabled);
+finish_attempt_record(result.success, config_.dro.enabled);
 if (allow_nominal && !result.success) {
     reference_trajectory_ = previous_reference;
     last_feasible_controls_ = previous_controls;
     has_feasible_backup_ = previous_backup;
     // A fresh draw from the nominal belief; external/Q* weights must not leak in.
     custom_per_obstacle_weights_.clear();
+    begin_attempt_record();
     result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
                            path_progress, path_length, false);
+    finish_attempt_record(result.success, false);
     result.nominal_fallback_attempted = true;
     result.used_nominal_fallback = result.success;
     std::cerr << "[NOMINAL FALLBACK] step=" << iteration_count_
               << " success=" << result.success << std::endl;
 }
+result.attempt_diagnostics = std::move(attempts);
 result.solve_time = std::chrono::duration<double>(
     std::chrono::high_resolution_clock::now() - start_time).count();
 solve_times_.push_back(result.solve_time);
@@ -594,6 +614,31 @@ if (S_actual < S_required && enforce_support_sample_count) {
 }
 
 S_actual = static_cast<int>(scenarios_.size());
+if (capture_attempt_diagnostics_) {
+    current_attempt_diagnostics_.sampled_scenarios = S_actual;
+    for (const auto& [id, history] : mode_histories_) {
+        if (!obstacles.count(id)) continue;
+        current_attempt_diagnostics_.nominal_weights[id] =
+            compute_mode_weights(history, config_.mpc.sampling.mode_belief);
+        const auto weights = sampling_weights.find(id);
+        current_attempt_diagnostics_.sampling_weights[id] = weights != sampling_weights.end()
+            ? weights->second : compute_mode_weights(history, config_.mpc.sampling.mode_belief);
+        const auto robust = last_dro_results_.find(id);
+        if (robust != last_dro_results_.end()) {
+            current_attempt_diagnostics_.risk_scores[id] = robust->second.risk_per_mode;
+            current_attempt_diagnostics_.radii[id] = robust->second.rho_used;
+            current_attempt_diagnostics_.transport_costs[id] = robust->second.transport_cost_matrix;
+            current_attempt_diagnostics_.radius_observation_counts[id] = robust->second.radius_observation_count;
+        }
+    }
+    for (const auto& scenario : scenarios_) {
+        for (const auto& [id, trajectory] : scenario.trajectories) {
+            const auto& mode = trajectory.sampled_mode_sequence.empty()
+                ? trajectory.mode_id : trajectory.sampled_mode_sequence.front();
+            ++current_attempt_diagnostics_.initial_mode_counts[id][mode];
+        }
+    }
+}
 const bool sample_count_sufficient = support_certification_enabled &&
     S_actual >= S_required;
 
@@ -2509,6 +2554,7 @@ settings.max_iterations =
 settings.tolerance =
     config_.solver.qp_tolerance;
 
+if (capture_attempt_diagnostics_) ++current_attempt_diagnostics_.qp_calls;
 const QPResult result =
     qp_solver_.solve(qp, settings);
 
@@ -3997,6 +4043,7 @@ for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter)
             << std::endl;
     }
 
+    if (capture_attempt_diagnostics_) ++current_attempt_diagnostics_.qp_calls;
     QPResult qp_result = qp_solver_.solve(qp, qp_settings);
     last_qp_converged = qp_result.converged;
 

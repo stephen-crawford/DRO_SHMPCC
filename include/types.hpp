@@ -500,7 +500,26 @@ struct FailureDiagnostics {
     int fallback_sampled_collision_feasible = -1;
 };
 
+/// Opt-in observational record of one outer attempt, before fallback replaces it.
+struct SolveAttemptDiagnostics {
+    bool success = false;
+    bool dro_enabled = false;
+    double elapsed_seconds = 0.0;
+    int sampled_scenarios = 0;
+    int qp_calls = 0;
+    // Held-mode counts; switching trajectories count each scenario's initial mode.
+    std::map<int, std::map<std::string, int>> initial_mode_counts;
+    std::map<int, std::map<std::string, double>> sampling_weights;
+    std::map<int, std::map<std::string, double>> nominal_weights;
+    std::map<int, std::map<std::string, double>> risk_scores;
+    std::map<int, double> radii;
+    // Matrix order is the sorted nominal_weights mode order used by DRO.
+    std::map<int, std::vector<std::vector<double>>> transport_costs;
+    std::map<int, int> radius_observation_counts;
+};
+
 struct MPCResult {
+    std::vector<SolveAttemptDiagnostics> attempt_diagnostics;
     FailureDiagnostics failure_diagnostics;
     bool success;                           // Whether the returned plan is executable
     bool used_fallback = false;

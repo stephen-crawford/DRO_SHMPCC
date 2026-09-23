@@ -1,0 +1,17 @@
+{
+  "matched_groups": 24,
+  "excluded_groups": 0,
+  "sampling": "Fixed nominal history, fixed geometric reference; split batches are unconditional and spend exactly the same total budget.",
+  "controller": "Real conditional fallback; counts and probabilities refer to actual draws. No iid union formula is asserted for conditional retries.",
+  "holdout": "plan_risk.csv evaluates accepted open-loop plans exactly over three deterministic modes under stated synthetic laws. Not closed-loop rollout risk.",
+  "safety": "Manual low scenario budgets do not inherit the automatic sample-count guarantee; sample_count_sufficient is exported.",
+  "source_hashes": {
+    "attempts.csv": "1394e0cef9f53ade7c4487bac12638320707a434b12c5502baecd899b314727d",
+    "controller_trials.csv": "60ac7a7c567290e675c2e9dafd0b6965061a1c53ed6631d332ac8add7fb56f5b",
+    "coverage_trials.csv": "17af4af4f3606339eb2abcb2398d17abf981f1e982b489d0bb6baf41d1db8eed",
+    "plan_risk.csv": "3926b47fa5080b560d2990d556575e2212aaf949c24768ed01a151f06cf46998",
+    "plans.csv": "8f8a97fe0b066c460cbb2b1575dfd953601242e661a582dbc5d5a7c2e19203ab",
+    "scene.csv": "b23ca39eec51ba54eb37bbb703b4f650e97d2becc99d22a8da0900ba832f66dd",
+    "weights.csv": "4ac8668fd26ac23c6fedf45e0ee885df1f92b40ca0ae9a4eab856fbc8caf9967"
+  }
+}

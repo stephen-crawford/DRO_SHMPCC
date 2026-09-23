@@ -365,6 +365,7 @@ struct ExperimentArtifactConfig {
     bool write_trace_csv = true;
     /// Decision timings/certificates and complete sampled mode coverage for matrix analysis.
     bool write_analysis_csv = false;
+    bool capture_attempt_diagnostics = false;
     bool write_visualization_svg = true;
     /// Native, dependency-free animated playback of the realized rollout.
     bool write_visualization_gif = false;
@@ -439,7 +440,8 @@ struct ExperimentConfig {
     /// Does not call mpc.sync_from_type() (would overwrite SH overrides set
     /// after type selection).
     void normalize() {
-        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK) dro.enabled = true;
+        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK)
+            dro.enabled = !mpc.nominal_resampling_baseline;
         artifacts.validate();
         obstacles.apply_layout();
         mpc.sampling.sync_belief();

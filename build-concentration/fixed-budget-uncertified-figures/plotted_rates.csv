@@ -1,0 +1,17 @@
+setup,profile,shift_boost,controller,matched_seeds,collision_rate,safe_completion_rate,focus_omission_rate,mean_cycle_ms
+four_way_intersection_o1_c1_m3_s40,boost_0,0.0,sh_mpcc,2,0.0,0.0,0.0,36.55514424166667
+four_way_intersection_o1_c1_m3_s40,boost_0,0.0,sh_mpcc_dro,2,0.0,0.0,0.01666666666666672,37.237839908333335
+four_way_intersection_o1_c1_m3_s40,boost_15,0.15,sh_mpcc,2,0.0,0.0,0.0,37.07623628333333
+four_way_intersection_o1_c1_m3_s40,boost_15,0.15,sh_mpcc_dro,2,0.0,0.0,0.008333333333333304,39.100254541666665
+four_way_intersection_o1_c1_m3_s40,boost_30,0.3,sh_mpcc,2,0.0,0.0,0.0,36.43566258333333
+four_way_intersection_o1_c1_m3_s40,boost_30,0.3,sh_mpcc_dro,2,0.0,0.0,0.008333333333333304,38.29934509166666
+four_way_intersection_o1_c1_m3_s40,boost_5,0.05,sh_mpcc,2,0.0,0.0,0.0,36.82463059166666
+four_way_intersection_o1_c1_m3_s40,boost_5,0.05,sh_mpcc_dro,2,0.0,0.0,0.04166666666666663,38.53201655833333
+straight_o1_c1_m3_s40,boost_0,0.0,sh_mpcc,2,0.0,0.0,0.0,38.32150895833333
+straight_o1_c1_m3_s40,boost_0,0.0,sh_mpcc_dro,2,0.0,0.0,0.008333333333333304,38.18848441666667
+straight_o1_c1_m3_s40,boost_15,0.15,sh_mpcc,2,0.0,0.0,0.0,38.052694683333335
+straight_o1_c1_m3_s40,boost_15,0.15,sh_mpcc_dro,2,0.0,0.0,0.04166666666666663,39.01389866666667
+straight_o1_c1_m3_s40,boost_30,0.3,sh_mpcc,2,0.0,0.0,0.0,37.78670088333333
+straight_o1_c1_m3_s40,boost_30,0.3,sh_mpcc_dro,2,0.0,0.0,0.008333333333333304,37.50208558333334
+straight_o1_c1_m3_s40,boost_5,0.05,sh_mpcc,2,0.0,0.0,0.0,36.43228911666667
+straight_o1_c1_m3_s40,boost_5,0.05,sh_mpcc_dro,2,0.0,0.0,0.07499999999999996,38.29697675833334

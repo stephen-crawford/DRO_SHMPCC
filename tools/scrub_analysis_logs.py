@@ -7,6 +7,8 @@ import re
 import statistics
 from collections import Counter
 from pathlib import Path
+from scrub_artifacts import (LABELS, BUNDLE_TABLES, REPORT_TABLES, RARE_TABLES,
+                             enrich_identity, artifact_tables, collect_reports)
 
 
 KV_RE = re.compile(
@@ -166,7 +168,11 @@ def locate_run(log_path, root):
     if case_parts:
         leaf = case_parts[-1]
 
-        if leaf.startswith("sh_mpcc_dro_fallback_"):
+        if leaf.startswith("sh_mpcc_resample_"):
+            canonical_leaf = leaf[len("sh_mpcc_resample_"):]
+        elif leaf.startswith("sh_mpcc_extra_"):
+            canonical_leaf = leaf[len("sh_mpcc_extra_"):]
+        elif leaf.startswith("sh_mpcc_dro_fallback_"):
             canonical_leaf = leaf[len("sh_mpcc_dro_fallback_"):]
         elif leaf.startswith("sh_mpcc_dro_"):
             canonical_leaf = leaf[len("sh_mpcc_dro_"):]
@@ -180,13 +186,13 @@ def locate_run(log_path, root):
     else:
         pair_case = case
 
-    return {
+    return enrich_identity(log_path, root, {
         "case": case,
         "pair_case": pair_case,
         "seed": seed,
         "log_file": str(rel),
         "run_id": str(rel.with_suffix("")),
-    }
+    })
 
 
 def parse_log(log_path, root):
@@ -814,6 +820,13 @@ def parse_log(log_path, root):
         if dro_summary_count > 0
         else "non_dro"
     )
+    variants = {'sh_mpcc': 'non_dro', 'sh_mpcc_dro': 'dro',
+                'sh_mpcc_extra': 'extra_nominal', 'sh_mpcc_resample': 'nominal_resample',
+                'sh_mpcc_dro_fallback': 'dro_fallback'}
+    if identity.get('solver_style') in variants:
+        variant = variants[identity['solver_style']]
+    if identity.get('nominal_resampling_baseline') == 'true':
+        variant = 'nominal_resample'
 
     collision_text = final_result.get("collision")
 
@@ -1377,18 +1390,15 @@ def parse_log(log_path, root):
 def write_csv(path, rows, preferred_columns=None):
     rows = list(rows)
 
-    if not rows:
-        return
-
     keys = set()
     for row in rows:
         keys.update(row.keys())
 
-    preferred_columns = preferred_columns or []
+    preferred_columns = list(dict.fromkeys(LABELS + (preferred_columns or [])))
 
     columns = [
         c for c in preferred_columns
-        if c in keys
+        if c in keys or not rows
     ]
 
     columns.extend(
@@ -1414,12 +1424,35 @@ def write_csv(path, rows, preferred_columns=None):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description='Read simulation logs and structured artifacts into test-labelled CSVs (does not alter inputs).',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Compatible tests (pass an output directory, not the settings JSON):
+  run_analysis_matrix.py       Analysis matrix and legacy case/seed_N/*.log
+  run_reviewer_matrix.py       Reviewer pilot/large suites and ablations
+  run_comparison_matrix.py     Original paired comparison matrix
+                              sample_efficiency*.json (five arms/concentration)
+                              fixed_budget_uncertified*.json (Safe Horizon off)
+  run_rare_mode_experiment.py  Frozen rare-mode artifacts or wrapper output root
+
+A parent directory containing several suites is supported. Every exported row
+has test_suite, test_name (output-root name), test_root and source provenance.
+Repeats stay separate; these exports do not count repeats as independent seeds.
+artifact_*.csv contains structured per-decision/per-attempt evidence;
+report_*.csv preserves existing matrix reports, including paired statistics;
+rare_*.csv contains frozen-scene tables. Log-derived CSV names remain unchanged.
+Missing artifacts are not fabricated. Empty CSVs contain headers only.
+support_certified_* legacy log fields describe support counts, not certificates;
+use artifact_decisions.csv and requested/issued certificate counts instead.
+
+Example:
+  python3 tools/scrub_analysis_logs.py build-concentration/fixed-budget-uncertified-short-horizon --out scrubbed/fixed-budget
+''')
 
     parser.add_argument(
         "root",
         type=Path,
-        help="analysis-matrix root"
+        help="test output root or parent directory containing compatible test outputs"
     )
 
     parser.add_argument(
@@ -1432,9 +1465,13 @@ def main():
     args = parser.parse_args()
 
     root = args.root.resolve()
+    args.out = args.out.resolve()
+    if not root.is_dir(): parser.error('root must be an existing directory')
+    if root.is_relative_to(args.out): parser.error('--out must not be the source root or an ancestor of it')
 
     logs = sorted(
-        root.rglob("*.log")
+        p for p in root.rglob("*.log") if not p.is_relative_to(args.out)
+        and 'resume_history' not in p.relative_to(root).parts
     )
 
     run_rows = []
@@ -1442,6 +1479,7 @@ def main():
     dro_mode_rows = []
     dro_sample_rows = []
     control_step_rows = []
+    artifacts = {name: [] for name in BUNDLE_TABLES}
 
     for log_path in logs:
         parsed = parse_log(
@@ -1460,13 +1498,20 @@ def main():
             controls,
         ) = parsed
 
+        for name, rows in artifact_tables(log_path, locate_run(log_path, root)).items():
+            artifacts[name].extend(rows)
+            if name == 'decisions':
+                run['certificate_requested_decisions'] = sum(int(r['certificate_requested']) for r in rows)
+                run['certified_decisions'] = sum(int(r['certified']) for r in rows)
+        run['log_complete'] = int(bool(run['termination']))
+
         run_rows.append(run)
         dro_step_rows.extend(steps)
         dro_mode_rows.extend(modes)
         dro_sample_rows.extend(samples)
         control_step_rows.extend(controls)
 
-    preferred = [
+    preferred = LABELS + [
         "pair_case",
         "case",
         "variant",
@@ -1572,6 +1617,13 @@ def main():
     print(
             f"Wrote {args.out / 'control_steps.csv'}"
     )
+    for name, rows in artifacts.items():
+        write_csv(args.out/f'artifact_{name}.csv', rows, LABELS + ['case', 'solver_style', 'seed', 'repeat', 'step', 'attempt', 'source_artifact'])
+    reports = collect_reports(root, args.out)
+    for name in ['report_'+n for n in REPORT_TABLES] + ['rare_'+n for n in RARE_TABLES]:
+        write_csv(args.out/(name+'.csv'), reports.get(name, []), LABELS + ['source_artifact'])
+    print(f'Exported {sum(map(len, artifacts.values()))} structured artifact rows and '
+          f'{sum(map(len, reports.values()))} report/frozen-scene rows; all labelled by test.')
 
 
 if __name__ == "__main__":

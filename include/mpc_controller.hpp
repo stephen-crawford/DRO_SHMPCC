@@ -119,6 +119,9 @@ public:
     /// Get the configuration
     const RuntimeConfig& config() const { return config_; }
 
+    /// Record sampling/solve evidence without changing RNG or acceptance behavior.
+    void set_capture_attempt_diagnostics(bool enabled) { capture_attempt_diagnostics_ = enabled; }
+
     /// Optional diagnostic copy of retained disc-space half-spaces supplied to optimization.
     void set_capture_linearized_constraints(bool enabled) { capture_linearized_constraints_ = enabled; }
     const std::vector<CollisionConstraint>& last_linearized_constraints() const {
@@ -195,6 +198,8 @@ private:
     friend class CounterfactualProbe;
 
     bool capture_linearized_constraints_ = false;
+    bool capture_attempt_diagnostics_ = false;
+    SolveAttemptDiagnostics current_attempt_diagnostics_;
     std::vector<CollisionConstraint> last_linearized_constraints_;
 
     // ------------------------------------------------------------------------

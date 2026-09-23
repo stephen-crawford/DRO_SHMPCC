@@ -346,7 +346,8 @@ private:
      * For each mode m and timestep k, computes directional risk:
      *   n = (mu_mk - c_d) / ||mu_mk - c_d||   (obstacle-to-disc direction)
      *   sigma_dir = sqrt(n^T Sigma_k n)         (directional std dev)
-     *   r_{k,d} = max(0, R + z_alpha * sigma_dir - ||mu_mk - c_d||)
+     *   r_{k,d} = max(0, R + z_alpha * sigma_dir - n.dot(mu_mk - c_d))
+     * The projected mean also applies when safe_unit selects its fallback normal.
      *
      * r[m] = max_k max_d r_{k,d}
      *

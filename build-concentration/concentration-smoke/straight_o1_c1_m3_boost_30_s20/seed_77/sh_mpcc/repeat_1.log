@@ -1,0 +1,257 @@
+[EVAL SAFETY] step=0 min_center_distance=3.00424 min_clearance=2.05424 collision_this_step=0 collision_run=0 collision_radius=0.95
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=1.47305 repaired=0
+[SH ANCHOR] min_clearance=1.47305 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=20 facets=0 vertices=4 rho=4.8 anchor_shift=2.22045e-16
+[FREE POLY] k=1 disc=1 raw=20 facets=0 vertices=4 rho=0.800001 anchor_shift=2.22045e-16
+[FREE POLY] k=1 disc=2 raw=20 facets=4 vertices=7 rho=4.8 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=20 facets=0 vertices=4 rho=5.6 anchor_shift=0
+[FREE POLY] k=2 disc=1 raw=20 facets=0 vertices=4 rho=1.6 anchor_shift=1.11022e-16
+[FREE POLY] k=2 disc=2 raw=20 facets=4 vertices=7 rho=5.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=20 facets=3 vertices=6 rho=6.4 anchor_shift=0
+[FREE POLY] k=3 disc=1 raw=20 facets=0 vertices=4 rho=2.4 anchor_shift=1.11022e-16
+[FREE POLY] k=3 disc=2 raw=20 facets=3 vertices=6 rho=6.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=20 facets=3 vertices=6 rho=7.2 anchor_shift=2.22045e-16
+[FREE POLY] k=4 disc=1 raw=20 facets=0 vertices=4 rho=3.2 anchor_shift=2.22045e-16
+[FREE POLY] k=4 disc=2 raw=20 facets=3 vertices=6 rho=7.2 anchor_shift=0
+[RF SUPPORT SEED] removed=0 support_limit=8
+[SQP] before_solve iter=0 vars=8 constraints=36 max_d=-1.48303
+[QP WORST] iter=0 row=18 type=collision d=-1.48303
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=0 converged=1 status=0 iterations=5 primal_residual=4.44089e-16 dual_residual=5.49756e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=2.831
+[SQP SUPPORT] iter=0 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=36 max_d=-1.35557
+[QP WORST] iter=1 row=18 type=collision d=-1.35557
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=1 converged=1 status=0 iterations=5 primal_residual=4.05925e-16 dual_residual=8.5397e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=1.09234
+[SQP SUPPORT] iter=1 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=36 max_d=-1.32116
+[QP WORST] iter=2 row=18 type=collision d=-1.32116
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=8.42497e-10 dual_residual=1.65625e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.35319
+[SQP SUPPORT] iter=2 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=36 max_d=-1.31561
+[QP WORST] iter=3 row=18 type=collision d=-1.31561
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=3 converged=1 status=0 iterations=3 primal_residual=7.1706e-10 dual_residual=1.50595e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.319572
+[SQP SUPPORT] iter=3 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=4 vars=8 constraints=36 max_d=-1.31255
+[QP WORST] iter=4 row=18 type=collision d=-1.31255
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=4 converged=1 status=0 iterations=3 primal_residual=3.53016e-16 dual_residual=1.59853e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=4 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.299392
+[SQP SUPPORT] iter=4 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=5 vars=8 constraints=36 max_d=-1.30994
+[QP WORST] iter=5 row=18 type=collision d=-1.30994
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=5 converged=1 status=0 iterations=3 primal_residual=4.29344e-16 dual_residual=1.74272e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=5 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.282675
+[SQP SUPPORT] iter=5 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=6 vars=8 constraints=36 max_d=-1.3077
+[QP WORST] iter=6 row=18 type=collision d=-1.3077
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=6 converged=1 status=0 iterations=3 primal_residual=4.159e-16 dual_residual=3.79029e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=6 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.267812
+[SQP SUPPORT] iter=6 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=7 vars=8 constraints=36 max_d=-1.30577
+[QP WORST] iter=7 row=18 type=collision d=-1.30577
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=7 converged=1 status=0 iterations=4 primal_residual=3.67761e-16 dual_residual=1.27928e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=7 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.256272
+[SQP SUPPORT] iter=7 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=8 vars=8 constraints=36 max_d=-1.30406
+[QP WORST] iter=8 row=18 type=collision d=-1.30406
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=8 converged=1 status=0 iterations=4 primal_residual=3.57841e-16 dual_residual=1.6448e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=8 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.217035
+[SQP SUPPORT] iter=8 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=9 vars=8 constraints=36 max_d=-1.30315
+[QP WORST] iter=9 row=18 type=collision d=-1.30315
+[QP WORST COLLISION] scenario=4 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=9 converged=1 status=0 iterations=4 primal_residual=3.56377e-16 dual_residual=2.52016e-07 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=9 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.164332
+[SQP SUPPORT] iter=9 support_size=0 support_limit=8 support_ok=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=8
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[HARNESS RESULT] step=0 success=1 controls=4 first_input_present=1
+[MPC STEP METRICS] step=0 applied=1 success=1 fallback=0 a=3 omega=5.77253e-09 dt=0.1 acceleration_weight=0.1 steering_weight=0.1 control_cost_unweighted=9 control_cost_weighted=0.9 mpc_cost=-15.7811 solve_time=0.0207397 qp_solve_time=0.0139016 constraint_time=0.00326775 dro_risk_time=0 ambiguity_radius=0 certificate=insufficient_scenarios
+[EVAL SAFETY] step=1 min_center_distance=2.86631 min_clearance=1.91631 collision_this_step=0 collision_run=0 collision_radius=0.95
+[PATH COMPLETION] step=1 completion_progress=0.165 path_length=25 fraction=0.0066 required_fraction=0.95 termination_enabled=1 completed=0
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=20 removed=0 retained=20 fraction=0 limit=2
+[FREE POLY] k=1 disc=0 raw=20 facets=0 vertices=4 rho=4.8 anchor_shift=0
+[FREE POLY] k=1 disc=1 raw=20 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=1 disc=2 raw=20 facets=4 vertices=7 rho=4.8 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=20 facets=2 vertices=6 rho=5.6 anchor_shift=0
+[FREE POLY] k=2 disc=1 raw=20 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=2 disc=2 raw=20 facets=4 vertices=7 rho=5.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=20 facets=2 vertices=5 rho=6.4 anchor_shift=0
+[FREE POLY] k=3 disc=1 raw=20 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=3 disc=2 raw=20 facets=3 vertices=6 rho=6.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=20 facets=4 vertices=7 rho=7.2 anchor_shift=0
+[FREE POLY] k=4 disc=1 raw=20 facets=4 vertices=8 rho=3.2 anchor_shift=0
+[FREE POLY] k=4 disc=2 raw=20 facets=5 vertices=8 rho=7.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=8
+[SQP] before_solve iter=0 vars=8 constraints=44 max_d=-1.12476
+[QP WORST] iter=0 row=27 type=collision d=-1.12476
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=4.35416e-16 dual_residual=6.453e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.35518
+[SQP SUPPORT] iter=0 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=44 max_d=-1.12002
+[QP WORST] iter=1 row=27 type=collision d=-1.12002
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=1 converged=1 status=0 iterations=3 primal_residual=3.43475e-16 dual_residual=5.5447e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.313005
+[SQP SUPPORT] iter=1 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=44 max_d=-1.11608
+[QP WORST] iter=2 row=27 type=collision d=-1.11608
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=4.31946e-16 dual_residual=4.77557e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.280926
+[SQP SUPPORT] iter=2 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=44 max_d=-1.11281
+[QP WORST] iter=3 row=27 type=collision d=-1.11281
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=3 converged=1 status=0 iterations=3 primal_residual=4.41487e-16 dual_residual=4.12227e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.256315
+[SQP SUPPORT] iter=3 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=4 vars=8 constraints=44 max_d=-1.11007
+[QP WORST] iter=4 row=27 type=collision d=-1.11007
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=4 converged=1 status=0 iterations=3 primal_residual=4.30211e-16 dual_residual=3.5608e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=4 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.237125
+[SQP SUPPORT] iter=4 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=5 vars=8 constraints=44 max_d=-1.10777
+[QP WORST] iter=5 row=27 type=collision d=-1.10777
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=5 converged=1 status=0 iterations=3 primal_residual=4.3715e-16 dual_residual=3.07578e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=5 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.22181
+[SQP SUPPORT] iter=5 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=6 vars=8 constraints=44 max_d=-1.10581
+[QP WORST] iter=6 row=27 type=collision d=-1.10581
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=6 converged=1 status=0 iterations=3 primal_residual=3.88578e-16 dual_residual=2.65628e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=6 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.209244
+[SQP SUPPORT] iter=6 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=7 vars=8 constraints=44 max_d=-1.10412
+[QP WORST] iter=7 row=27 type=collision d=-1.10412
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=7 converged=1 status=0 iterations=3 primal_residual=4.08094e-16 dual_residual=2.29642e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=7 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.198621
+[SQP SUPPORT] iter=7 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=8 vars=8 constraints=44 max_d=-1.10267
+[QP WORST] iter=8 row=27 type=collision d=-1.10267
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=8 converged=1 status=0 iterations=3 primal_residual=3.91395e-16 dual_residual=1.98619e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=8 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.189383
+[SQP SUPPORT] iter=8 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=9 vars=8 constraints=44 max_d=-1.10139
+[QP WORST] iter=9 row=27 type=collision d=-1.10139
+[QP WORST COLLISION] scenario=17 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=9 converged=1 status=0 iterations=3 primal_residual=4.30211e-16 dual_residual=1.71755e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=9 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.181146
+[SQP SUPPORT] iter=9 support_size=0 support_limit=8 support_ok=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=8
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[HARNESS RESULT] step=1 success=1 controls=4 first_input_present=1
+[MPC STEP METRICS] step=1 applied=1 success=1 fallback=0 a=2.99998 omega=-1.62894e-08 dt=0.1 acceleration_weight=0.1 steering_weight=0.1 control_cost_unweighted=8.99988 control_cost_weighted=0.899988 mpc_cost=-17.2991 solve_time=0.0187721 qp_solve_time=0.0149107 constraint_time=0.00203543 dro_risk_time=0 ambiguity_radius=0 certificate=insufficient_scenarios
+[EVAL SAFETY] step=2 min_center_distance=2.69846 min_clearance=1.74846 collision_this_step=0 collision_run=0 collision_radius=0.95
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=20 removed=0 retained=20 fraction=0 limit=2
+[FREE POLY] k=1 disc=0 raw=20 facets=0 vertices=4 rho=4.8 anchor_shift=0
+[FREE POLY] k=1 disc=1 raw=20 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=1 disc=2 raw=20 facets=5 vertices=8 rho=4.8 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=20 facets=2 vertices=5 rho=5.6 anchor_shift=0
+[FREE POLY] k=2 disc=1 raw=20 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=2 disc=2 raw=20 facets=4 vertices=7 rho=5.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=20 facets=2 vertices=5 rho=6.4 anchor_shift=0
+[FREE POLY] k=3 disc=1 raw=20 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=3 disc=2 raw=20 facets=4 vertices=7 rho=6.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=20 facets=2 vertices=5 rho=7.2 anchor_shift=0
+[FREE POLY] k=4 disc=1 raw=20 facets=2 vertices=5 rho=3.2 anchor_shift=0
+[FREE POLY] k=4 disc=2 raw=20 facets=4 vertices=7 rho=7.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=8
+[SQP] before_solve iter=0 vars=8 constraints=41 max_d=-0.898312
+[QP WORST] iter=0 row=23 type=collision d=-0.898312
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=7.4734e-09 dual_residual=7.32178e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.706639
+[SQP SUPPORT] iter=0 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=41 max_d=-0.877806
+[QP WORST] iter=1 row=23 type=collision d=-0.877806
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=1 converged=1 status=0 iterations=3 primal_residual=4.1246e-09 dual_residual=6.27423e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.496372
+[SQP SUPPORT] iter=1 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=41 max_d=-0.863799
+[QP WORST] iter=2 row=23 type=collision d=-0.863799
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=6.4722e-10 dual_residual=5.08877e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.363108
+[SQP SUPPORT] iter=2 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=41 max_d=-0.854141
+[QP WORST] iter=3 row=23 type=collision d=-0.854141
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=3 converged=1 status=0 iterations=3 primal_residual=3.88578e-16 dual_residual=3.99859e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.280675
+[SQP SUPPORT] iter=3 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=4 vars=8 constraints=41 max_d=-0.847395
+[QP WORST] iter=4 row=23 type=collision d=-0.847395
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=4 converged=1 status=0 iterations=3 primal_residual=3.70363e-16 dual_residual=3.08184e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=4 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.230512
+[SQP SUPPORT] iter=4 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=5 vars=8 constraints=41 max_d=-0.842608
+[QP WORST] iter=5 row=23 type=collision d=-0.842608
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=5 converged=1 status=0 iterations=3 primal_residual=3.81639e-16 dual_residual=2.41092e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=5 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.199508
+[SQP SUPPORT] iter=5 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=6 vars=8 constraints=41 max_d=-0.839148
+[QP WORST] iter=6 row=23 type=collision d=-0.839148
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=6 converged=1 status=0 iterations=3 primal_residual=4.12431e-16 dual_residual=3.64965e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=6 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.178586
+[SQP SUPPORT] iter=6 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=7 vars=8 constraints=41 max_d=-0.836619
+[QP WORST] iter=7 row=23 type=collision d=-0.836619
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=7 converged=1 status=0 iterations=3 primal_residual=4.36717e-16 dual_residual=6.85156e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=7 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.160158
+[SQP SUPPORT] iter=7 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=8 vars=8 constraints=41 max_d=-0.834884
+[QP WORST] iter=8 row=23 type=collision d=-0.834884
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=8 converged=1 status=0 iterations=3 primal_residual=4.01155e-16 dual_residual=9.60129e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=8 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.13841
+[SQP SUPPORT] iter=8 support_size=0 support_limit=8 support_ok=1
+[SQP] before_solve iter=9 vars=8 constraints=41 max_d=-0.834229
+[QP WORST] iter=9 row=23 type=collision d=-0.834229
+[QP WORST COLLISION] scenario=11 k=4 obstacle=0 disc=2
+[SQP] after_solve iter=9 converged=1 status=0 iterations=3 primal_residual=3.93565e-16 dual_residual=9.72337e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=9 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.128343
+[SQP SUPPORT] iter=9 support_size=0 support_limit=8 support_ok=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=8
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[HARNESS RESULT] step=2 success=1 controls=4 first_input_present=1
+[MPC STEP METRICS] step=2 applied=1 success=1 fallback=0 a=2.99953 omega=-8.11012e-08 dt=0.1 acceleration_weight=0.1 steering_weight=0.1 control_cost_unweighted=8.99718 control_cost_weighted=0.899718 mpc_cost=-17.2201 solve_time=0.0158682 qp_solve_time=0.0122322 constraint_time=0.00184811 dro_risk_time=0 ambiguity_radius=0 certificate=insufficient_scenarios
+[EVAL SAFETY] step=3 min_center_distance=2.50064 min_clearance=1.55064 collision_this_step=0 collision_run=0 collision_radius=0.95
+[PATH COMPLETION] step=3 completion_progress=0.584997 path_length=25 fraction=0.0233999 required_fraction=0.95 termination_enabled=1 completed=0
+seed=77 collision=no termination=step_limit artifact=/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/concentration-smoke/straight_o1_c1_m3_boost_30_s20/seed_77/sh_mpcc/repeat_1

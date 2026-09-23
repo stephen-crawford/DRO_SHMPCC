@@ -376,6 +376,7 @@ inline void apply_yaml_file(
             else if (k == "chance_of_certificate_violation" || k == "beta")
                                                            cfg.mpc.sampling.chance_of_certificate_violation = std::stod(val);
             else if (k == "dro_enabled")                   cfg.dro.enabled = to_bool(val);
+            else if (k == "nominal_resampling_baseline")    cfg.mpc.nominal_resampling_baseline = to_bool(val);
             else if (k == "fixed_rho")                     cfg.dro.fixed_rho = std::stod(val);
             else if (k == "risk_measure")                  cfg.dro.solver.radius_calibration.risk_measure = parse_risk(val);
             else if (k == "risk_scoring_model" || k == "risk_scoring")
@@ -469,6 +470,7 @@ inline void apply_yaml_file(
                                                            cfg.artifacts.run_name = val;
             else if (k == "artifact_write_manifest")       cfg.artifacts.write_reproducibility_manifest = to_bool(val);
             else if (k == "artifact_write_analysis_csv") cfg.artifacts.write_analysis_csv = to_bool(val);
+            else if (k == "artifact_capture_attempt_diagnostics") cfg.artifacts.capture_attempt_diagnostics = to_bool(val);
             else if (k == "artifact_write_trace_csv")      cfg.artifacts.write_trace_csv = to_bool(val);
             else if (k == "artifact_write_visualization_svg")
                                                            cfg.artifacts.write_visualization_svg = to_bool(val);

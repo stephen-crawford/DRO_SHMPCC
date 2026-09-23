@@ -1,0 +1,19 @@
+{
+  "arms": {
+    "sh_mpcc": "A",
+    "sh_mpcc_dro": "C",
+    "sh_mpcc_dro_fallback": "E",
+    "sh_mpcc_extra": "B",
+    "sh_mpcc_resample": "D"
+  },
+  "budget": "Extra nominal draws 2S in one attempt; two-attempt policies draw at most 2S. Actual counts/latency are reported; CPU time is not equalized.",
+  "claims": "Frozen coverage: mechanism only. A/C: same-S shift robustness. B/C: extra nominal sampling. D/E: retry architecture attribution. All pair comparisons retained.",
+  "concentration": "Per WDRO obstacle/attempt, repeat zero only. d_j=sum_i p_i D_ij; reachable uses rho>=d_j without tolerance. Near-one means max(q)>=1-1e-9 (diagnostic only). Zero distances yield blank ratios and explicit flags. Raw per-solve g/rho/q records support stratification; no monotonic contraction or non-collapse guarantee is asserted. Entropic allocation may remain interior even when a vertex is reachable.",
+  "hypothesis_tests": "Exact two-sided McNemar per fixed setup over seeds; not pooled over dependent setups. Exploratory, unadjusted for multiple comparisons.",
+  "intervals": "Descriptive 2000-resample paired seed bootstrap per fixed setup, seed 1729. Few seeds/zero events give unreliable or degenerate intervals, not zero-risk guarantees.",
+  "meaning": "Collision-free is not successful completion; no-admissible-control and step-limit outcomes remain separate.",
+  "mechanism_population": "Each controller OK trial, stratified by fixed setup/profile/budget; these marginals can have different denominators. Use per-seed rows for matched effects.",
+  "population": "All predetermined trials are retained; primary_summary uses complete pairs per comparison.",
+  "repeatability": "Same-seed numerical traces, decisions, metrics, attempts, and p/q/r/rho/counts must match exactly. Resume rechecks saved signatures. Timing is excluded; repeats are not independent seeds.",
+  "warning": "A focus mode is not proven dangerous by its name. Inspect logged risk and geometry. Histories adapt to observed plant modes."
+}

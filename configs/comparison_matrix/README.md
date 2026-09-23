@@ -1,5 +1,14 @@
 # Comparison matrix
 
+For nominal versus WDRO at a fixed 40-scenario budget with Safe Horizon disabled,
+see [Fixed-budget comparison](FIXED_BUDGET.md), including the retained horizon-20
+failure and the separate horizon-8 diagnostic suite.
+
+For the predetermined five-arm, graded-shift experiment with sampling diagnostics,
+paired statistics, and plotting commands, see
+[Sample efficiency experiment](SAMPLE_EFFICIENCY.md). Its settings are separate
+from the exploratory search below.
+
 Search for seed-paired configurations where **SH-MPCC collides and SH-MPCC with
 DRO completes the route without collision**. The suite also retains reverse
 outcomes, collision-free incomplete runs, and experiment errors.

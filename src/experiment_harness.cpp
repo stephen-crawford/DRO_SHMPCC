@@ -549,6 +549,8 @@ namespace dro_mpc {
         mpc_cfg.random_seed = seeds.scenario;
 
         MPCController controller(mpc_cfg);  
+        controller.set_capture_attempt_diagnostics(config.artifacts.enabled() &&
+            config.artifacts.write_analysis_csv && config.artifacts.capture_attempt_diagnostics);
         const bool capture_collision_halfspaces =
         config.artifacts.enabled() &&
         (config.artifacts.show_linearized_constraints ||
@@ -1034,6 +1036,7 @@ namespace dro_mpc {
 
             if (config.artifacts.enabled() && config.artifacts.write_analysis_csv) {
                 detail::DecisionRecord decision;
+                decision.attempts = mpc_result.attempt_diagnostics;
                 decision.failure_diagnostics = mpc_result.failure_diagnostics;
                 decision.step = step;
                 decision.solve_ms = 1000.0 * mpc_result.solve_time;

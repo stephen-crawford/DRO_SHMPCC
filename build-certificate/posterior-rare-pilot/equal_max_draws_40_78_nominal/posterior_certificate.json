@@ -1,0 +1,46 @@
+{
+  "status": "conditional_offline_posterior_diagnostic_not_issued_certificate",
+  "epsilon": 0.05,
+  "collision_radius": 0.95,
+  "event": "strict disc overlap at supplied discrete future steps",
+  "mode_bounds": [
+    {
+      "mode": "away",
+      "count": 90,
+      "p_hat": 0.09036445332001997,
+      "b": 0.0,
+      "L": 0.06958756552600302,
+      "U": 0.113917144089931
+    },
+    {
+      "mode": "cut_in",
+      "count": 10,
+      "p_hat": 0.010484273589615577,
+      "b": 0.0,
+      "L": 0.004025105770774712,
+      "U": 0.02037248921162961
+    },
+    {
+      "mode": "straight",
+      "count": 900,
+      "p_hat": 0.8991512730903645,
+      "b": 0.0,
+      "L": 0.8750870368056473,
+      "U": 0.9214982943772214
+    }
+  ],
+  "direct_cp_bound": 0.0,
+  "eta_SH": null,
+  "transferred_bound": null,
+  "direct_bound_meets_target": true,
+  "transferred_bound_meets_target": null,
+  "scenario_theorem_eligible": false,
+  "sample_count": null,
+  "total_support_bound": null,
+  "beta_cp": 0.05,
+  "beta_cert": 0.01,
+  "direct_failure_budget": 0.05,
+  "transfer_failure_budget": null,
+  "presolve_sample_reduction_claim": false,
+  "assumptions": "Fixed returned trajectory; correct held-mode Gaussian marginals conditional on pre-sampling information; same mode-conditioned laws under P* and Q; stationary iid history for CP. No independence across discs/time is required for union bounds. Scenario theorem eligibility must be established separately. Floating point is not a verified numerical enclosure."
+}

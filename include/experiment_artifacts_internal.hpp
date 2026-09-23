@@ -39,6 +39,7 @@ struct ModeCoverageRecord {
 };
 
 struct DecisionRecord {
+    std::vector<SolveAttemptDiagnostics> attempts;
     FailureDiagnostics failure_diagnostics;
     int step = 0;
     double solve_ms = 0.0;

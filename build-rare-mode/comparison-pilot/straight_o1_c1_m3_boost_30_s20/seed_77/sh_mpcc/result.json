@@ -1,0 +1,77 @@
+{
+  "case": "sh_mpcc_straight_o1_c1_m3_boost_30_s20",
+  "classes": 1,
+  "environment": "straight",
+  "identity": "97c8cb82278e2b87f72feaaa226b9b00130521d37bbe0df86704117331843290",
+  "modes_per_class": 3,
+  "obstacles": 1,
+  "pair": "straight_o1_c1_m3_boost_30_s20",
+  "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+  "profile": "boost_30",
+  "repeatable": null,
+  "repeats": [
+    {
+      "metrics": {
+        "any_homotopy_geometrically_feasible": -1,
+        "average_conservatism_m": 3.564068440934356,
+        "backend": "acados_hpipm_dense_qp",
+        "backup_available": -1,
+        "backup_dro_failed": -1,
+        "backup_removal_budget_exceeded": -1,
+        "braking_collision_feasible": -1,
+        "certified_decisions": 0,
+        "collision": 0,
+        "completed_path": 1,
+        "control_effort": 358.31353372375736,
+        "controller_seed": 81752046,
+        "executed_steps": 162,
+        "failure_class": "not_applicable",
+        "fallback_sampled_collision_feasible": -1,
+        "initial_placement": [
+          {
+            "actor": "ego",
+            "obstacle_id": "-1",
+            "theta": "0",
+            "v": "1.5",
+            "vx": "",
+            "vy": "",
+            "x": "0",
+            "y": "0"
+          },
+          {
+            "actor": "obstacle",
+            "obstacle_id": "0",
+            "theta": "",
+            "v": "",
+            "vx": "0.26866578771266175",
+            "vy": "0",
+            "x": "5",
+            "y": "0.15962027693564573"
+          }
+        ],
+        "last_qp_converged": -1,
+        "margin_count": 163,
+        "margin_sum_m": 580.9431558722999,
+        "max_conservatism_m": 0.003444951192086876,
+        "missed_mode_rollout": 1,
+        "missed_obstacle_decisions": 1,
+        "mode_checks": 162,
+        "plant_seed": 48196808,
+        "sh_decisions": 162,
+        "solve_count": 162,
+        "solve_max_ms": 292.804663,
+        "solve_mean_ms": 117.63675864814815,
+        "solve_total_ms": 19057.154901,
+        "solver_identity": "acados-hpipm@676c1b879",
+        "sqp_sampled_collision_feasible": -1,
+        "termination_reason": "path_complete"
+      },
+      "signature": "dbca3f94893fb2b95457ccb165dfaf36d6d341197fce1e0db5a0b66e5936a00d",
+      "wall_seconds": 19.15771617300925
+    }
+  ],
+  "scenario_budget": 20,
+  "seed": 77,
+  "solver_style": "sh_mpcc",
+  "status": "OK"
+}

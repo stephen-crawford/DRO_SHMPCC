@@ -1,0 +1,89 @@
+{
+  "obstacle_counts": [
+    1,
+    2
+  ],
+  "class_counts": [
+    1,
+    2
+  ],
+  "environments": [
+    "straight",
+    "four_way_intersection"
+  ],
+  "mode_counts": [
+    3
+  ],
+  "solver_styles": [
+    "sh_mpcc",
+    "sh_mpcc_dro"
+  ],
+  "mode_catalog": [
+    "constant_velocity",
+    "turn_left",
+    "turn_right",
+    "accelerating",
+    "decelerating",
+    "stop"
+  ],
+  "seeds": [
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86
+  ],
+  "repeats": 2,
+  "overrides": {
+    "rollout_steps": 450,
+    "use_entropic_allocator": false,
+    "path_completion_termination": true,
+    "path_completion_fraction": 0.95,
+    "road_length": 25.0,
+    "roundabout_radius": 8.0,
+    "switch_regime": "hold",
+    "switch_prob": 0.1,
+    "risk_measure": "surrogate_var_bonferroni",
+    "obstacle_process_noise": 0.0,
+    "obstacle_prediction_noise": true,
+    "artifact_write_visualization_gif": false,
+    "artifact_write_visualization_svg": false,
+    "artifact_show_linearized_constraints": false,
+    "artifact_show_support_scenarios": false,
+    "artifact_capture_attempt_diagnostics": true,
+    "safe_horizon_enabled": false,
+    "horizon": 8
+  },
+  "mismatch_profiles": [
+    {
+      "name": "boost_0",
+      "shift_boost": 0.0,
+      "boosted_mode": 2
+    },
+    {
+      "name": "boost_5",
+      "shift_boost": 0.05,
+      "boosted_mode": 2
+    },
+    {
+      "name": "boost_15",
+      "shift_boost": 0.15,
+      "boosted_mode": 2
+    },
+    {
+      "name": "boost_30",
+      "shift_boost": 0.3,
+      "boosted_mode": 2
+    }
+  ],
+  "additional_controllers": [],
+  "scenario_budgets": [
+    40
+  ],
+  "focus_mode": "turn_right"
+}

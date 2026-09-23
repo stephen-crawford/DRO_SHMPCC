@@ -1,0 +1,6 @@
+{
+  "source": "/home/stephen/ros2_ws/src/DRO_SHMPCC/build-rare-mode/rare-pilot/weights.csv",
+  "source_sha256": "4ac8668fd26ac23c6fedf45e0ee885df1f92b40ca0ae9a4eab856fbc8caf9967",
+  "backend_sha256": "933b2fc361233561f7df2197096233502019d9bd6bbc1d46dd5ab4dac324a12f",
+  "script_sha256": "be7cc4cabfa3fe60b103ad3d63eea6882adb9acc01ec21b1076be531964fd9cf"
+}

@@ -265,6 +265,16 @@ target_compile_options(test_bounded_braking PRIVATE -fno-access-control)
 
 add_executable(test_dro_fallback tests/test_dro_fallback.cpp)
 target_link_libraries(test_dro_fallback PRIVATE scenario_mpc)
+add_executable(test_reviewer_controls tests/test_reviewer_controls.cpp)
+target_link_libraries(test_reviewer_controls PRIVATE scenario_mpc)
+add_executable(calibration_assumption_audit tools/calibration_assumption_audit.cpp)
+target_link_libraries(calibration_assumption_audit PRIVATE scenario_mpc)
+add_executable(certificate_numeric_backend tools/certificate_numeric_backend.cpp)
+target_link_libraries(certificate_numeric_backend PRIVATE scenario_mpc)
+add_executable(rare_mode_experiment tools/rare_mode_experiment.cpp)
+target_link_libraries(rare_mode_experiment PRIVATE scenario_mpc)
+add_executable(test_attempt_diagnostics tests/test_attempt_diagnostics.cpp)
+target_link_libraries(test_attempt_diagnostics PRIVATE scenario_mpc)
 
 add_executable(test_plan_acceptance tests/test_plan_acceptance.cpp)
 target_link_libraries(test_plan_acceptance PRIVATE scenario_mpc)
@@ -313,6 +323,8 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_bounded_braking unit)
     register_scenario_mpc_test(test_plan_acceptance integration)
     register_scenario_mpc_test(test_dro_fallback integration)
+    register_scenario_mpc_test(test_reviewer_controls integration)
+    register_scenario_mpc_test(test_attempt_diagnostics integration)
     add_test(NAME test_traffic_turns COMMAND test_traffic_turns "${CMAKE_CURRENT_BINARY_DIR}/traffic-turn-artifacts")
     set_tests_properties(test_traffic_turns PROPERTIES LABELS "integration;deterministic")
     register_scenario_mpc_test(test_analysis_diagnostics unit)
@@ -338,6 +350,20 @@ endif()
 # Full-route base scenarios retain GIF and RViz bundles for user inspection.
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME test_sample_efficiency
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sample_efficiency.py")
+    set_tests_properties(test_sample_efficiency PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_sample_efficiency_smoke
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sample_efficiency.py"
+                --runner $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_sample_efficiency_smoke PROPERTIES LABELS "integration;deterministic" TIMEOUT 300)
+    add_test(NAME test_reviewer_experiments
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reviewer_experiments.py")
+    set_tests_properties(test_reviewer_experiments PROPERTIES LABELS "unit;deterministic")
+    add_test(NAME test_reviewer_experiments_smoke
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reviewer_experiments.py"
+                --runner $<TARGET_FILE:experiment_runner>)
+    set_tests_properties(test_reviewer_experiments_smoke PROPERTIES LABELS "integration;deterministic" TIMEOUT 300)
         add_test(
         NAME test_switch_anticipation
         COMMAND "${Python3_EXECUTABLE}"

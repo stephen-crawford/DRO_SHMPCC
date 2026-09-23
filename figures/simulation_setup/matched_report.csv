@@ -1,0 +1,16 @@
+environment,controller,matched_trials,no_admissible_control,rate_percent
+straight,sh_mpcc,577,187,32.40901213171577
+straight,sh_mpcc_dro,577,195,33.795493934142115
+straight,sh_mpcc_dro_fallback,577,29,5.025996533795494
+s_curve,sh_mpcc,569,166,29.173989455184536
+s_curve,sh_mpcc_dro,569,160,28.1195079086116
+s_curve,sh_mpcc_dro_fallback,569,25,4.393673110720562
+four_way_intersection,sh_mpcc,575,200,34.78260869565217
+four_way_intersection,sh_mpcc_dro,575,192,33.391304347826086
+four_way_intersection,sh_mpcc_dro_fallback,575,18,3.130434782608696
+roundabout,sh_mpcc,542,86,15.867158671586715
+roundabout,sh_mpcc_dro,542,108,19.92619926199262
+roundabout,sh_mpcc_dro_fallback,542,3,0.5535055350553506
+overall,sh_mpcc,2263,639,28.23685373398144
+overall,sh_mpcc_dro,2263,655,28.943879805567832
+overall,sh_mpcc_dro_fallback,2263,75,3.314184710561202

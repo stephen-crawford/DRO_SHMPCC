@@ -46,8 +46,8 @@ open Set
 noncomputable section
 
 /--
-The Boolean/Prop-valued hit process for mode `i`, truncated to the
-first `m` trials.
+The Prop-valued hit process for mode `i`, truncated to the first `m`
+trials.
 -/
 def truncatedModeHit
     {Ω : Type*}
@@ -428,7 +428,17 @@ theorem hasLaw_truncatedModeHit_process
         ) := by
 
     exact
-      Measurable.of_eval
+      measurable_pi_lambda
+        (
+          fun ω : Ω =>
+            fun t : ℕ =>
+              truncatedModeHit
+                m
+                observation
+                i
+                t
+                ω
+        )
         hHitMeas
 
   exact
@@ -587,11 +597,32 @@ theorem categoricalModeHitSet_isSetBernoulli
     hSetMap.comp
       hProcess
 
-  simpa [
+  change
+    HasLaw
+      (
+        categoricalModeHitSet
+          m
+          observation
+          i
+      )
+      (
+        ProbabilityTheory.setBernoulli
+          (Set.Iio m)
+          p
+      )
+      μ
+
+  apply hSetLaw.congr
+
+  filter_upwards with ω
+
+  ext t
+
+  simp [
     Function.comp_def,
     categoricalModeHitSet,
     truncatedModeHit
-  ] using hSetLaw
+  ]
 
 /--
 Main result of this file.

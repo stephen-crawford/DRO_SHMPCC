@@ -1,0 +1,62 @@
+{
+  "status": "offline_numerical_diagnostic_not_an_issued_certificate",
+  "modes": [
+    {
+      "mode": "away",
+      "count": 90,
+      "p_hat": 0.09036445332001997,
+      "q": 0.09036445332001997,
+      "L": 0.06958756552600302,
+      "U": 0.113917144089931,
+      "b": 1.0
+    },
+    {
+      "mode": "cut_in",
+      "count": 10,
+      "p_hat": 0.010484273589615577,
+      "q": 0.029883644073199624,
+      "L": 0.004025105770774712,
+      "U": 0.02037248921162961,
+      "b": 1.0
+    },
+    {
+      "mode": "straight",
+      "count": 900,
+      "p_hat": 0.8991512730903645,
+      "q": 0.8797519026067804,
+      "L": 0.8750870368056473,
+      "U": 0.9214982943772214,
+      "b": 1.0
+    }
+  ],
+  "rho": 0.04073867801552649,
+  "observed_support": null,
+  "observation_count": 1000,
+  "cp_vertices": 6,
+  "epsilon": 0.05,
+  "epsilon_Q_max": 0.039662359007474085,
+  "psi_at_epsilon": 0.06303205514147288,
+  "psi_at_zero": 0.0,
+  "psi_at_epsilon_Q_max": 0.049999999999999996,
+  "S_SH": {
+    "S": 1123,
+    "risk": 0.049997772590821166,
+    "previous_S_risk": 0.0500346555068536
+  },
+  "S_WDRO": {
+    "S": 1484,
+    "risk": 0.039642776737204066,
+    "previous_S_risk": 0.03966515472440957
+  },
+  "scenario_count_ratio": 1.3214603739982191,
+  "go_30_percent": false,
+  "nonremoved_support_cap": 6,
+  "removal_budget": 2,
+  "total_support_cap": 8,
+  "beta_cp": 0.05,
+  "beta_cert": 0.01,
+  "combined_failure_union_bound": 0.060000000000000005,
+  "b_justification": "v_m <= 1 only",
+  "assumptions": "Conditional on frozen pre-sampling information: fixed q, iid scenario draws, identical within-mode conditional laws under P* and Q; iid stationary categorical history for CP. Scenario theorem/support hypotheses must separately hold. No joint-obstacle independence assumption is silently imposed.",
+  "limitation": "LP/vertex enumeration and inversion use floating point, not verified interval arithmetic. CP event adds beta_cp to beta_cert; S_SH uses beta_cert alone. Surrogate r is not b. Counts from switching/shared/adaptive histories do not automatically meet iid CP assumptions. No observed support value is inferred if absent."
+}

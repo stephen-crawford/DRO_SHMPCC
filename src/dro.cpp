@@ -1425,9 +1425,7 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
                 const Eigen::Vector2d mu = means[k];
                 const Eigen::Matrix2d Sigma = covs[k];
 
-                // Mean distance to disc center
                 const Eigen::Vector2d diff = mu - c_d;
-                const double dist = diff.norm();
 
                 // Direction from ego disc to obstacle mean
                 const Eigen::Vector2d n = safe_unit(diff);
@@ -1441,8 +1439,8 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
                     sigma_dir = std::max(std::sqrt(var_dir), sigma_floor);
                 }
 
-                // Linearised violation Vtil ~ N(mu_V, sigma_dir^2), mu_V = R - dist.
-                const double mu_V = safety_radius - dist;
+                // Retain the chosen projection, including safe_unit's fallback.
+                const double mu_V = safety_radius - n.dot(diff);
 
                 double r_kd;
                 if (risk_measure == DRORiskMeasure::SURROGATE_CVAR) {
@@ -1499,7 +1497,7 @@ std::pair<double, double> DRO::surrogate_traj_gaussian(
             double var_dir = n.transpose() * covs[k] * n;
             if (!std::isfinite(var_dir) || var_dir < 0.0) var_dir = 0.0;
             const double sd = std::max(std::sqrt(var_dir), sigma_floor);
-            const double mv = safety_radius - diff.norm();
+            const double mv = safety_radius - n.dot(diff);
 
             // A mixture component is represented by its underlying Gaussian;
             // select the dominant component with its *unclamped* VaR score.

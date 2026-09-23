@@ -1,0 +1,66 @@
+{
+  "obstacle_counts": [
+    2
+  ],
+  "class_counts": [
+    2
+  ],
+  "environments": [
+    "straight",
+    "roundabout"
+  ],
+  "mode_counts": [
+    3
+  ],
+  "mode_catalog": [
+    "constant_velocity",
+    "turn_left",
+    "turn_right",
+    "accelerating",
+    "decelerating",
+    "stop"
+  ],
+  "variants": [
+    "sh_mpcc",
+    "sh_mpcc_dro",
+    "sh_mpcc_resample",
+    "sh_mpcc_dro_fallback",
+    "hybrid_zero_one",
+    "hybrid_fixed_radius"
+  ],
+  "profiles": {
+    "standard": {
+      "shift_psi": 0.0,
+      "shift_boost": 0.0,
+      "boosted_mode": -1
+    },
+    "shift_and_boost": {
+      "shift_psi": 0.25,
+      "shift_boost": 0.15,
+      "boosted_mode": -1
+    }
+  },
+  "fixed_radius": 0.05,
+  "seeds": [
+    77,
+    78
+  ],
+  "repeats": 1,
+  "overrides": {
+    "rollout_steps": 450,
+    "use_entropic_allocator": false,
+    "path_completion_termination": true,
+    "path_completion_fraction": 0.95,
+    "road_length": 25.0,
+    "roundabout_radius": 8.0,
+    "switch_regime": "hold",
+    "switch_prob": 0.1,
+    "risk_measure": "surrogate_var_bonferroni",
+    "obstacle_process_noise": 0.0,
+    "obstacle_prediction_noise": true,
+    "artifact_write_visualization_gif": false,
+    "artifact_write_visualization_svg": false,
+    "artifact_show_linearized_constraints": false,
+    "artifact_show_support_scenarios": false
+  }
+}

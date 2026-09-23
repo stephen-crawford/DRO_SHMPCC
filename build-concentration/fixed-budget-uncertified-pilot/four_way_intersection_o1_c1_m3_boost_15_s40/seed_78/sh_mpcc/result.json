@@ -1,0 +1,17 @@
+{
+  "case": "sh_mpcc_four_way_intersection_o1_c1_m3_boost_15_s40",
+  "classes": 1,
+  "environment": "four_way_intersection",
+  "error": "Command '['/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/experiment_runner', '--config', '/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/fixed-budget-uncertified-pilot/configs/sh_mpcc_four_way_intersection_o1_c1_m3_boost_15_s40.yaml', '--seed', '78', '--output', '/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/fixed-budget-uncertified-pilot/four_way_intersection_o1_c1_m3_boost_15_s40/seed_78/sh_mpcc', '--label', 'repeat_0']' returned non-zero exit status 1.",
+  "identity": "9f6e5a80e2035b2705c49834c560ec38253ab8ea4a3af7a6c2d94f458075c667",
+  "modes_per_class": 3,
+  "obstacles": 1,
+  "pair": "four_way_intersection_o1_c1_m3_boost_15_s40",
+  "pair_directory": "four_way_intersection_o1_c1_m3_boost_15_s40",
+  "profile": "boost_15",
+  "repeats": [],
+  "scenario_budget": 40,
+  "seed": 78,
+  "solver_style": "sh_mpcc",
+  "status": "ERROR"
+}

@@ -1,0 +1,59 @@
+[EVAL SAFETY] step=0 min_center_distance=3.00424 min_clearance=2.05424 collision_this_step=0 collision_run=0 collision_radius=0.95
+[DRO SUMMARY] step=1 obstacle=0 S=40 rho=0.0608196 rho_raw=0.0608196 D_max=0.121687 D_min=0.06166 tv_bound=0.98637 eta=0.499803 eta_raw=0.499803 radius_m=1 radius_d=3 transport_cost=0.0608196 budget_usage=1 lambda=1.13614 q_support=2 nominal_risk=1.45407 qstar_risk=1.53744 risk_lift=0.083372 tv=0.791667
+[DRO MODE] step=1 obstacle=0 mode=constant_velocity p=0.6 risk=1.46797 q=0.00833333 delta_q=-0.591667 q_times_S=0.333333
+[DRO MODE] step=1 obstacle=0 mode=turn_left p=0.2 risk=1.32841 q=0 delta_q=-0.2 q_times_S=0
+[DRO MODE] step=1 obstacle=0 mode=turn_right p=0.2 risk=1.53803 q=0.991667 delta_q=0.791667 q_times_S=39.6667
+[DRO SAMPLE] step=1 obstacle=0 mode=constant_velocity q=0.00833333 q_times_S=0.333333 first_count=0 first_fraction=0 occupancy=0 occupancy_fraction=0
+[DRO SAMPLE] step=1 obstacle=0 mode=turn_left q=0 q_times_S=0 first_count=0 first_fraction=0 occupancy=0 occupancy_fraction=0
+[DRO SAMPLE] step=1 obstacle=0 mode=turn_right q=0.991667 q_times_S=39.6667 first_count=40 first_fraction=1 occupancy=800 occupancy_fraction=1
+[FREE POLY] k=1 disc=0 raw=40 facets=0 vertices=4 rho=4.8 anchor_shift=0
+[FREE POLY] k=1 disc=1 raw=40 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=1 disc=2 raw=40 facets=3 vertices=6 rho=4.8 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=40 facets=0 vertices=4 rho=5.6 anchor_shift=0
+[FREE POLY] k=2 disc=1 raw=40 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=2 disc=2 raw=40 facets=4 vertices=7 rho=5.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=40 facets=2 vertices=5 rho=6.4 anchor_shift=0
+[FREE POLY] k=3 disc=1 raw=40 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=3 disc=2 raw=40 facets=2 vertices=5 rho=6.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=40 facets=3 vertices=6 rho=7.2 anchor_shift=0
+[FREE POLY] k=4 disc=1 raw=40 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[FREE POLY] k=4 disc=2 raw=40 facets=3 vertices=6 rho=7.2 anchor_shift=0
+[FREE POLY] k=5 disc=0 raw=40 facets=2 vertices=5 rho=8 anchor_shift=0
+[FREE POLY] k=5 disc=1 raw=40 facets=2 vertices=5 rho=4 anchor_shift=0
+[FREE POLY] k=5 disc=2 raw=40 facets=3 vertices=6 rho=8 anchor_shift=0
+[FREE POLY] k=6 disc=0 raw=40 facets=2 vertices=5 rho=8.8 anchor_shift=0
+[FREE POLY] k=6 disc=1 raw=40 facets=2 vertices=5 rho=4.8 anchor_shift=0
+[FREE POLY] k=6 disc=2 raw=40 facets=5 vertices=8 rho=8.8 anchor_shift=0
+[FREE POLY] k=7 disc=0 raw=40 facets=3 vertices=6 rho=9.6 anchor_shift=0
+[FREE POLY] k=7 disc=1 raw=40 facets=2 vertices=5 rho=5.6 anchor_shift=0
+[FREE POLY] k=7 disc=2 raw=40 facets=4 vertices=7 rho=9.6 anchor_shift=0
+[FREE POLY] k=8 disc=0 raw=40 facets=3 vertices=6 rho=10.4 anchor_shift=0
+[FREE POLY] k=8 disc=1 raw=40 facets=3 vertices=6 rho=6.4 anchor_shift=0
+[FREE POLY] k=8 disc=2 raw=40 facets=4 vertices=7 rho=10.4 anchor_shift=0
+[FREE POLY] k=9 disc=0 raw=40 facets=3 vertices=6 rho=11.2 anchor_shift=0
+[FREE POLY] k=9 disc=1 raw=40 facets=3 vertices=6 rho=7.2 anchor_shift=0
+[FREE POLY] k=9 disc=2 raw=40 facets=6 vertices=9 rho=11.2 anchor_shift=0
+[FREE POLY] k=10 disc=0 raw=40 facets=3 vertices=6 rho=12 anchor_shift=0
+[FREE POLY] k=10 disc=1 raw=40 facets=3 vertices=6 rho=8 anchor_shift=0
+[FREE POLY] k=10 disc=2 raw=40 facets=5 vertices=8 rho=12 anchor_shift=0
+[FREE POLY] k=11 disc=0 raw=40 facets=4 vertices=7 rho=12.8 anchor_shift=0
+[FREE POLY] k=11 disc=1 raw=40 facets=5 vertices=8 rho=8.8 anchor_shift=0
+[FREE POLY] k=11 disc=2 raw=40 facets=5 vertices=8 rho=12.8 anchor_shift=0
+[FREE POLY] k=12 disc=0 raw=40 facets=7 vertices=10 rho=13.6 anchor_shift=0
+[FREE POLY] k=12 disc=1 raw=40 facets=7 vertices=10 rho=9.6 anchor_shift=0
+[FREE POLY] k=12 disc=2 raw=40 facets=7 vertices=10 rho=13.6 anchor_shift=0
+[FREE POLY] k=13 disc=0 raw=40 facets=6 vertices=9 rho=14.4 anchor_shift=0
+[FREE POLY] k=13 disc=1 raw=40 facets=6 vertices=9 rho=10.4 anchor_shift=0
+[FREE POLY] k=13 disc=2 raw=40 facets=6 vertices=9 rho=14.4 anchor_shift=0
+[FREE POLY] k=14 disc=0 raw=40 facets=7 vertices=10 rho=15.2 anchor_shift=0
+[FREE POLY] k=14 disc=1 raw=40 facets=7 vertices=10 rho=11.2 anchor_shift=0
+[FREE POLY] k=14 disc=2 raw=40 facets=7 vertices=10 rho=15.2 anchor_shift=0
+[FREE POLY] k=15 disc=0 raw=40 facets=6 vertices=9 rho=16 anchor_shift=0
+[FREE POLY] k=15 disc=1 raw=40 facets=6 vertices=9 rho=12 anchor_shift=0
+[FREE POLY] k=15 disc=2 raw=40 facets=5 vertices=8 rho=16 anchor_shift=0
+[FREE POLY] k=16 disc=0 raw=40 facets=7 vertices=10 rho=16.8 anchor_shift=0
+[FREE POLY] k=16 disc=1 raw=40 facets=7 vertices=10 rho=12.8 anchor_shift=0
+[FREE POLY] k=16 disc=2 raw=40 facets=3 vertices=5 rho=16.8 anchor_shift=0
+[FREE POLY] k=17 disc=0 raw=40 facets=7 vertices=10 rho=17.6 anchor_shift=0
+[FREE POLY] k=17 disc=1 raw=40 facets=7 vertices=10 rho=13.6 anchor_shift=0
+experiment_runner: Free-space polygon became empty at k=17, disc=2

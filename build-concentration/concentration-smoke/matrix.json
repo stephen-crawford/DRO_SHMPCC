@@ -1,0 +1,356 @@
+{
+  "analysis_sha256": "b5eb91142d078c25cb326d9655fe9f5223a424e8f42784ed08d3d68292983f3c",
+  "cases": [
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_0_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s20",
+      "profile": "boost_0",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_0_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s20",
+      "profile": "boost_0",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_extra_straight_o1_c1_m3_boost_0_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s20",
+      "profile": "boost_0",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_extra"
+    },
+    {
+      "case": "sh_mpcc_resample_straight_o1_c1_m3_boost_0_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s20",
+      "profile": "boost_0",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_resample"
+    },
+    {
+      "case": "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_0_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_0_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_0_s20",
+      "profile": "boost_0",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro_fallback"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_5_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s20",
+      "profile": "boost_5",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_5_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s20",
+      "profile": "boost_5",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_extra_straight_o1_c1_m3_boost_5_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s20",
+      "profile": "boost_5",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_extra"
+    },
+    {
+      "case": "sh_mpcc_resample_straight_o1_c1_m3_boost_5_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s20",
+      "profile": "boost_5",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_resample"
+    },
+    {
+      "case": "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_5_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_5_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_5_s20",
+      "profile": "boost_5",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro_fallback"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_15_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s20",
+      "profile": "boost_15",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_15_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s20",
+      "profile": "boost_15",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_extra_straight_o1_c1_m3_boost_15_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s20",
+      "profile": "boost_15",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_extra"
+    },
+    {
+      "case": "sh_mpcc_resample_straight_o1_c1_m3_boost_15_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s20",
+      "profile": "boost_15",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_resample"
+    },
+    {
+      "case": "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_15_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_15_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_15_s20",
+      "profile": "boost_15",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro_fallback"
+    },
+    {
+      "case": "sh_mpcc_straight_o1_c1_m3_boost_30_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+      "profile": "boost_30",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc"
+    },
+    {
+      "case": "sh_mpcc_dro_straight_o1_c1_m3_boost_30_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+      "profile": "boost_30",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro"
+    },
+    {
+      "case": "sh_mpcc_extra_straight_o1_c1_m3_boost_30_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+      "profile": "boost_30",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_extra"
+    },
+    {
+      "case": "sh_mpcc_resample_straight_o1_c1_m3_boost_30_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+      "profile": "boost_30",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_resample"
+    },
+    {
+      "case": "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_30_s20",
+      "classes": 1,
+      "environment": "straight",
+      "modes_per_class": 3,
+      "obstacles": 1,
+      "pair": "straight_o1_c1_m3_boost_30_s20",
+      "pair_directory": "straight_o1_c1_m3_boost_30_s20",
+      "profile": "boost_30",
+      "scenario_budget": 20,
+      "solver_style": "sh_mpcc_dro_fallback"
+    }
+  ],
+  "configs": {
+    "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_0_s20": "4e31438148518e6948662c2770c40b665c3a3da8d84067c881396ad1b7d547b7",
+    "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_15_s20": "2378273fc4d30ae5a182816f68bb7bacc50be76d31020a19f9843433ef0278da",
+    "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_30_s20": "5a21141b97481a162d1424cb71205f4fdc55a0a8b97a0561fdcb5994a99430ef",
+    "sh_mpcc_dro_fallback_straight_o1_c1_m3_boost_5_s20": "22a5892d59802ad3d9a549155384a53d958f791f5ff1f4e8a7d283edbb808a4a",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_0_s20": "a44ba673b21cdbd1eb8181ee10e0bdd45765b78fa964be5223f81b8cee15eced",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_15_s20": "8a9a8f73f339bc9cd5f016813505a108b58bf66513f656ef8073726d7fbbc406",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_30_s20": "aa34e710a2b64f2ccc4c1300ecd28818cc91cbbc1fe9d4947db4717ca68bd73b",
+    "sh_mpcc_dro_straight_o1_c1_m3_boost_5_s20": "70e103dfd13d1fb60c08de5e75d93e81f6052f4d4a8f4e6c18b8ec5535175b95",
+    "sh_mpcc_extra_straight_o1_c1_m3_boost_0_s20": "32ae703b9ace5e506f7e165f4dd9cf0fef1af70b401ca0d3793e9a9cd4d2a400",
+    "sh_mpcc_extra_straight_o1_c1_m3_boost_15_s20": "7fa59ceb43222155dce096caffcd4aa64388647ddcc4e6306266783a9f67834d",
+    "sh_mpcc_extra_straight_o1_c1_m3_boost_30_s20": "ebcbeb1982cb41f64a6d277b25a7e1ee8fc474e14d826ec9819cba2f5ed56b79",
+    "sh_mpcc_extra_straight_o1_c1_m3_boost_5_s20": "0fbe3b7bf17b775eedbf4465218a0a8c2856216071a142f3f45ddaafab07e156",
+    "sh_mpcc_resample_straight_o1_c1_m3_boost_0_s20": "c1027317f2fa566e94c770040700772552b36255b1c96016e600d84a54431ed9",
+    "sh_mpcc_resample_straight_o1_c1_m3_boost_15_s20": "bdeaff7dae4717bed46f9841d72e689968fa2b17fd621b137bd5c54f529b3027",
+    "sh_mpcc_resample_straight_o1_c1_m3_boost_30_s20": "afcfbbefe6e3800d56d442faea53c3c2b421dcb730643534b5d6ab7c538c566b",
+    "sh_mpcc_resample_straight_o1_c1_m3_boost_5_s20": "333a3799f91e7a20bbb09e6584fc1097305930ff0f16423b15c5e14bef9e3873",
+    "sh_mpcc_straight_o1_c1_m3_boost_0_s20": "06eb121f1873f5eb131c31a61f12f244e454af8ab48b6644bbcd2a40549a0497",
+    "sh_mpcc_straight_o1_c1_m3_boost_15_s20": "ca21cb8316e482b131e7a69c5eb6ba9840561e9f386eb3860e541fe6ac12bebb",
+    "sh_mpcc_straight_o1_c1_m3_boost_30_s20": "64a5f398abea60bd1ec88782c124d37556581dd33b69c987a4ff05e752656a7a",
+    "sh_mpcc_straight_o1_c1_m3_boost_5_s20": "d814be0c1d80c72a8c57cf7d6f9e8487c2c86df309bc2ea8bca63a7631d02b56"
+  },
+  "evidence_sha256": "95a08609473a03e42e708f243de2e2d970cab4e456ce3f74f6f57480043e8ae5",
+  "identity": "77fedeb464320f1c31023e1c91faa0f70f67d43348e258d4e36e08d7c03c0529",
+  "jobs": 1,
+  "runner": "/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/experiment_runner",
+  "runner_sha256": "d4cef41cb703b6182a3a192770709ecbffb11fb7e80b98ccef6f560a7603af9a",
+  "schema": 2,
+  "script_sha256": "2cfcd43fd31c419ca8ee76632320ff003562f8650b3324b42195d3872ec35c5c",
+  "settings": {
+    "additional_controllers": [
+      "sh_mpcc_extra",
+      "sh_mpcc_resample",
+      "sh_mpcc_dro_fallback"
+    ],
+    "class_counts": [
+      1
+    ],
+    "environments": [
+      "straight"
+    ],
+    "focus_mode": "turn_right",
+    "mismatch_profiles": [
+      {
+        "boosted_mode": 2,
+        "name": "boost_0",
+        "shift_boost": 0.0
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_5",
+        "shift_boost": 0.05
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_15",
+        "shift_boost": 0.15
+      },
+      {
+        "boosted_mode": 2,
+        "name": "boost_30",
+        "shift_boost": 0.3
+      }
+    ],
+    "mode_catalog": [
+      "constant_velocity",
+      "turn_left",
+      "turn_right",
+      "accelerating",
+      "decelerating",
+      "stop"
+    ],
+    "mode_counts": [
+      3
+    ],
+    "obstacle_counts": [
+      1
+    ],
+    "overrides": {
+      "artifact_capture_attempt_diagnostics": true,
+      "artifact_show_linearized_constraints": false,
+      "artifact_show_support_scenarios": false,
+      "artifact_write_visualization_gif": false,
+      "artifact_write_visualization_svg": false,
+      "horizon": 4,
+      "obstacle_prediction_noise": true,
+      "obstacle_process_noise": 0.0,
+      "path_completion_fraction": 0.95,
+      "path_completion_termination": true,
+      "risk_measure": "surrogate_var_bonferroni",
+      "road_length": 25.0,
+      "rollout_steps": 3,
+      "roundabout_radius": 8.0,
+      "switch_prob": 0.1,
+      "switch_regime": "hold",
+      "use_entropic_allocator": false
+    },
+    "repeats": 2,
+    "scenario_budgets": [
+      20
+    ],
+    "seeds": [
+      77
+    ],
+    "solver_styles": [
+      "sh_mpcc",
+      "sh_mpcc_dro"
+    ]
+  },
+  "suite": "comparison_matrix",
+  "timeout": 1800
+}

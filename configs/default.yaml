@@ -4,6 +4,8 @@
 
 # --- MPC / type / horizon ---
 mpc_type: sh_mpcc
+nominal_resampling_baseline: false
+artifact_capture_attempt_diagnostics: false
 progress_weight: 10.0
 horizon: 20
 dt: 0.1

@@ -240,6 +240,8 @@ struct MPCConfig {
 
     bool safe_horizon_enabled = true;
     bool enable_contouring_constraints = true;  //Road-boundary + contouring cost
+    // Opt-in ablation: same hybrid recovery/retry path, both attempts nominal.
+    bool nominal_resampling_baseline = false;
 
     /// Derive safe-horizon / contouring enablement from the MPC type.
     /// Call after setting `type` and before overriding those two flags by hand.
@@ -600,7 +602,8 @@ struct RuntimeConfig {
     }
 
     void normalize() {
-        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK) dro.enabled = true;
+        if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK)
+            dro.enabled = !mpc.nominal_resampling_baseline;
         // Do not call mpc.sync_from_type() here — it would overwrite SH/contouring
         // overrides intentionally set after type selection.
         mpc.sampling.sync_belief();
@@ -612,6 +615,8 @@ struct RuntimeConfig {
     }
 
     void validate() const {
+        if (mpc.nominal_resampling_baseline && mpc.type != MPCType::SH_MPCC_DRO_FALLBACK)
+            throw std::invalid_argument("nominal_resampling_baseline requires sh_mpcc_dro_fallback");
         if (!std::isfinite(mpc.objective.progress_weight) || mpc.objective.progress_weight < 0.0)
             throw std::invalid_argument("progress_weight must be finite and non-negative");
         if (mpc.horizon <= 0) throw std::invalid_argument("horizon must be positive");

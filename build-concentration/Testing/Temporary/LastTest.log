@@ -1,0 +1,1034 @@
+Start testing: Sep 22 21:06 EDT
+----------------------------------------------------------
+25/64 Testing: test_attempt_diagnostics
+25/64 Test: test_attempt_diagnostics
+Command: "/home/stephen/ros2_ws/src/DRO_SHMPCC/build-concentration/test_attempt_diagnostics"
+Directory: /home/stephen/ros2_ws/src/DRO_SHMPCC
+"test_attempt_diagnostics" start time: Sep 22 21:06 EDT
+Output:
+----------------------------------------------------------
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75199 anchor_shift=0.951987
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55188 anchor_shift=0.951881
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35153 anchor_shift=0.951526
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15069 anchor_shift=0.950684
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949987
+[QP WORST] iter=0 row=0 type=collision d=0.949987
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949839 dual_residual=3.66633 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949987 accepted_violation=0.949191 accepted=1 alpha=1 delta_u_norm=2.71461
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949191
+[QP WORST] iter=1 row=0 type=collision d=0.949191
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949139 dual_residual=8.33217 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949191 accepted_violation=0.949122 accepted=1 alpha=1 delta_u_norm=2.73707
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949122
+[QP WORST] iter=2 row=0 type=collision d=0.949122
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949145 dual_residual=8.23695 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949122 accepted_violation=0.949122 accepted=0 alpha=0 delta_u_norm=1.54214
+[SQP] line search stalled iter=2 violation=0.949122
+[SQP FINAL] final_violation=0.949122 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949122
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943741
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.933921
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.921783
+[SQP FALLBACK] final_violation=0.949122 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=2 try_homotopy=1
+[COLD START SQP FAILED] success=0 sampled_constraints_satisfied=0 used_fallback=1 trying_homotopy=1
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=2 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.951997
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55195 anchor_shift=0.951947
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35173 anchor_shift=0.951733
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15116 anchor_shift=0.951157
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949993 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.94986 dual_residual=2.83578 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949845 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=2
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=2 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[COLD START HOMOTOPY RETRY] constraints=5 warmstart_controls=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949993
+[QP WORST] iter=0 row=0 type=collision d=0.949993
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949862 dual_residual=3.66045 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949993 accepted_violation=0.949521 accepted=1 alpha=1 delta_u_norm=1.62532
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949521
+[QP WORST] iter=1 row=0 type=collision d=0.949521
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949202 dual_residual=8.36924 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949521 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.64044
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=2 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.27016 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949162 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.94602
+[SQP SUPPORT] iter=2 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=3 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=3 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.261 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0.949162 accepted_violation=0.949162 accepted=0 alpha=0 delta_u_norm=1.32373
+[SQP] line search stalled iter=3 violation=0.949162
+[SQP FINAL] final_violation=0.949162 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949162
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943442
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.930928
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.913599
+[SQP FALLBACK] final_violation=0.949162 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START HOMOTOPY RETRY] success=0 keeping_ordinary_result=1
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=4 repaired=0
+[SH ANCHOR] min_clearance=4 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.05
+[QP WORST] iter=0 row=8 type=velocity d=-0.05
+[SQP] after_solve iter=0 converged=1 status=0 iterations=5 primal_residual=1.64391e-09 dual_residual=1.57122e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=4.58972
+[SQP SUPPORT] iter=0 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=1 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=1 converged=1 status=0 iterations=4 primal_residual=2.27998e-16 dual_residual=4.8742e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.97821
+[SQP SUPPORT] iter=1 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=2 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=2.62045e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=1 success=1
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75199 anchor_shift=0.951987
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55188 anchor_shift=0.951881
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35153 anchor_shift=0.951526
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15069 anchor_shift=0.950684
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949987
+[QP WORST] iter=0 row=0 type=collision d=0.949987
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949839 dual_residual=3.66633 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949987 accepted_violation=0.949191 accepted=1 alpha=1 delta_u_norm=2.71461
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949191
+[QP WORST] iter=1 row=0 type=collision d=0.949191
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949139 dual_residual=8.33217 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949191 accepted_violation=0.949122 accepted=1 alpha=1 delta_u_norm=2.73707
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949122
+[QP WORST] iter=2 row=0 type=collision d=0.949122
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949145 dual_residual=8.23695 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949122 accepted_violation=0.949122 accepted=0 alpha=0 delta_u_norm=1.54214
+[SQP] line search stalled iter=2 violation=0.949122
+[SQP FINAL] final_violation=0.949122 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949122
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943741
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.933921
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.921783
+[SQP FALLBACK] final_violation=0.949122 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=2 try_homotopy=1
+[COLD START SQP FAILED] success=0 sampled_constraints_satisfied=0 used_fallback=1 trying_homotopy=1
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=2 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.951997
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55195 anchor_shift=0.951947
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35173 anchor_shift=0.951733
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15116 anchor_shift=0.951157
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949993 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.94986 dual_residual=2.83578 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949845 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=2
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=2 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[COLD START HOMOTOPY RETRY] constraints=5 warmstart_controls=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949993
+[QP WORST] iter=0 row=0 type=collision d=0.949993
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949862 dual_residual=3.66045 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949993 accepted_violation=0.949521 accepted=1 alpha=1 delta_u_norm=1.62532
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949521
+[QP WORST] iter=1 row=0 type=collision d=0.949521
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949202 dual_residual=8.36924 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949521 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.64044
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=2 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.27016 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949162 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.94602
+[SQP SUPPORT] iter=2 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=3 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=3 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.261 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0.949162 accepted_violation=0.949162 accepted=0 alpha=0 delta_u_norm=1.32373
+[SQP] line search stalled iter=3 violation=0.949162
+[SQP FINAL] final_violation=0.949162 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949162
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943442
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.930928
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.913599
+[SQP FALLBACK] final_violation=0.949162 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START HOMOTOPY RETRY] success=0 keeping_ordinary_result=1
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=4 repaired=0
+[SH ANCHOR] min_clearance=4 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.05
+[QP WORST] iter=0 row=8 type=velocity d=-0.05
+[SQP] after_solve iter=0 converged=1 status=0 iterations=5 primal_residual=1.64391e-09 dual_residual=1.57122e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=4.58972
+[SQP SUPPORT] iter=0 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=1 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=1 converged=1 status=0 iterations=4 primal_residual=2.27998e-16 dual_residual=4.8742e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.97821
+[SQP SUPPORT] iter=1 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=2 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=2.62045e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=1 success=1
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=8 removed=0 retained=8 fraction=0 limit=0
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=0 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=2.61955e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=8 removed=0 retained=8 fraction=0 limit=0
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=0 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=2.61955e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[DRO SUMMARY] step=1 obstacle=0 S=8 rho=0.419071 rho_raw=0.419071 D_max=5 D_min=5 tv_bound=0.0838141 eta=0.0838141 eta_raw=0.0838141 radius_m=100 radius_d=2 transport_cost=0.419071 budget_usage=1 lambda=0.189 q_support=2 nominal_risk=0.0982428 qstar_risk=0.177447 risk_lift=0.0792046 tv=0.0838141
+[DRO MODE] step=1 obstacle=0 mode=safe p=0.89604 risk=0 q=0.812225 delta_q=-0.0838141 q_times_S=6.4978
+[DRO MODE] step=1 obstacle=0 mode=threat p=0.10396 risk=0.945002 q=0.187775 delta_q=0.0838141 q_times_S=1.5022
+[DRO SAMPLE] step=1 obstacle=0 mode=safe q=0.812225 q_times_S=6.4978 first_count=6 first_fraction=0.75 occupancy=24 occupancy_fraction=0.75
+[DRO SAMPLE] step=1 obstacle=0 mode=threat q=0.187775 q_times_S=1.5022 first_count=2 first_fraction=0.25 occupancy=8 occupancy_fraction=0.25
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75199 anchor_shift=0.951987
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55188 anchor_shift=0.951881
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35153 anchor_shift=0.951526
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15069 anchor_shift=0.950684
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949987
+[QP WORST] iter=0 row=0 type=collision d=0.949987
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949839 dual_residual=3.66633 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949987 accepted_violation=0.949191 accepted=1 alpha=1 delta_u_norm=2.71461
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949191
+[QP WORST] iter=1 row=0 type=collision d=0.949191
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949139 dual_residual=8.33217 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949191 accepted_violation=0.949122 accepted=1 alpha=1 delta_u_norm=2.73707
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949122
+[QP WORST] iter=2 row=0 type=collision d=0.949122
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949145 dual_residual=8.23695 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949122 accepted_violation=0.949122 accepted=0 alpha=0 delta_u_norm=1.54214
+[SQP] line search stalled iter=2 violation=0.949122
+[SQP FINAL] final_violation=0.949122 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949122
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943741
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.933921
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.921783
+[SQP FALLBACK] final_violation=0.949122 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=2 try_homotopy=1
+[COLD START SQP FAILED] success=0 sampled_constraints_satisfied=0 used_fallback=1 trying_homotopy=1
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=2 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.951997
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55195 anchor_shift=0.951947
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35173 anchor_shift=0.951733
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15116 anchor_shift=0.951157
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949993 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.94986 dual_residual=2.83578 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949845 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=2
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=2 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[COLD START HOMOTOPY RETRY] constraints=5 warmstart_controls=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949993
+[QP WORST] iter=0 row=0 type=collision d=0.949993
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949862 dual_residual=3.66045 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949993 accepted_violation=0.949521 accepted=1 alpha=1 delta_u_norm=1.62532
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949521
+[QP WORST] iter=1 row=0 type=collision d=0.949521
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949202 dual_residual=8.36924 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949521 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.64044
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=2 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.27016 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949162 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.94602
+[SQP SUPPORT] iter=2 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=3 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=3 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.261 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0.949162 accepted_violation=0.949162 accepted=0 alpha=0 delta_u_norm=1.32373
+[SQP] line search stalled iter=3 violation=0.949162
+[SQP FINAL] final_violation=0.949162 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949162
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943442
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.930928
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.913599
+[SQP FALLBACK] final_violation=0.949162 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START HOMOTOPY RETRY] success=0 keeping_ordinary_result=1
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=4 repaired=0
+[SH ANCHOR] min_clearance=4 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.05
+[QP WORST] iter=0 row=8 type=velocity d=-0.05
+[SQP] after_solve iter=0 converged=1 status=0 iterations=5 primal_residual=1.64391e-09 dual_residual=1.57122e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=4.58972
+[SQP SUPPORT] iter=0 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=1 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=1 converged=1 status=0 iterations=4 primal_residual=2.27998e-16 dual_residual=4.8742e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.97821
+[SQP SUPPORT] iter=1 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=2 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=2.62045e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=1 success=1
+[DRO SUMMARY] step=1 obstacle=0 S=8 rho=0.419071 rho_raw=0.419071 D_max=5 D_min=5 tv_bound=0.0838141 eta=0.0838141 eta_raw=0.0838141 radius_m=100 radius_d=2 transport_cost=0.419071 budget_usage=1 lambda=0.189 q_support=2 nominal_risk=0.0982428 qstar_risk=0.177447 risk_lift=0.0792046 tv=0.0838141
+[DRO MODE] step=1 obstacle=0 mode=safe p=0.89604 risk=0 q=0.812225 delta_q=-0.0838141 q_times_S=6.4978
+[DRO MODE] step=1 obstacle=0 mode=threat p=0.10396 risk=0.945002 q=0.187775 delta_q=0.0838141 q_times_S=1.5022
+[DRO SAMPLE] step=1 obstacle=0 mode=safe q=0.812225 q_times_S=6.4978 first_count=6 first_fraction=0.75 occupancy=24 occupancy_fraction=0.75
+[DRO SAMPLE] step=1 obstacle=0 mode=threat q=0.187775 q_times_S=1.5022 first_count=2 first_fraction=0.25 occupancy=8 occupancy_fraction=0.25
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75199 anchor_shift=0.951987
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55188 anchor_shift=0.951881
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35153 anchor_shift=0.951526
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15069 anchor_shift=0.950684
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949987
+[QP WORST] iter=0 row=0 type=collision d=0.949987
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949839 dual_residual=3.66633 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949987 accepted_violation=0.949191 accepted=1 alpha=1 delta_u_norm=2.71461
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949191
+[QP WORST] iter=1 row=0 type=collision d=0.949191
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949139 dual_residual=8.33217 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949191 accepted_violation=0.949122 accepted=1 alpha=1 delta_u_norm=2.73707
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949122
+[QP WORST] iter=2 row=0 type=collision d=0.949122
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949145 dual_residual=8.23695 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949122 accepted_violation=0.949122 accepted=0 alpha=0 delta_u_norm=1.54214
+[SQP] line search stalled iter=2 violation=0.949122
+[SQP FINAL] final_violation=0.949122 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949122
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943741
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.933921
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.921783
+[SQP FALLBACK] final_violation=0.949122 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=2 try_homotopy=1
+[COLD START SQP FAILED] success=0 sampled_constraints_satisfied=0 used_fallback=1 trying_homotopy=1
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=2 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.951997
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55195 anchor_shift=0.951947
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35173 anchor_shift=0.951733
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15116 anchor_shift=0.951157
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949993 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.94986 dual_residual=2.83578 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949845 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=0 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=2
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=0 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=0 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150003 repaired=0
+[SH ANCHOR] min_clearance=0.150003 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949994 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=4 primal_residual=0.949863 dual_residual=2.73456 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.949849 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=2 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[COLD START HOMOTOPY RETRY] constraints=5 warmstart_controls=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949993
+[QP WORST] iter=0 row=0 type=collision d=0.949993
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=4 primal_residual=0.949862 dual_residual=3.66045 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949993 accepted_violation=0.949521 accepted=1 alpha=1 delta_u_norm=1.62532
+[SQP SUPPORT ADD] iter=0 scenario=4
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.949521
+[QP WORST] iter=1 row=0 type=collision d=0.949521
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.949202 dual_residual=8.36924 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.949521 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.64044
+[SQP SUPPORT] iter=1 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=2 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=2 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.27016 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=2 current_violation=0.949162 accepted_violation=0.949162 accepted=1 alpha=1 delta_u_norm=1.94602
+[SQP SUPPORT] iter=2 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=3 vars=8 constraints=21 max_d=0.949162
+[QP WORST] iter=3 row=0 type=collision d=0.949162
+[QP WORST COLLISION] scenario=4 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=3 converged=0 status=3 iterations=4 primal_residual=0.949184 dual_residual=8.261 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=3 current_violation=0.949162 accepted_violation=0.949162 accepted=0 alpha=0 delta_u_norm=1.32373
+[SQP] line search stalled iter=3 violation=0.949162
+[SQP FINAL] final_violation=0.949162 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 4
+[SUPPORT UNION IDS] 4
+[FINAL VIOL] scenario=4 k=1 obstacle=0 disc=0 signed_clearance=-0.949162
+[FINAL VIOL] scenario=4 k=2 obstacle=0 disc=0 signed_clearance=-0.943442
+[FINAL VIOL] scenario=4 k=3 obstacle=0 disc=0 signed_clearance=-0.930928
+[FINAL VIOL] scenario=4 k=4 obstacle=0 disc=0 signed_clearance=-0.913599
+[SQP FALLBACK] final_violation=0.949162 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START HOMOTOPY RETRY] success=0 keeping_ordinary_result=1
+[COLD START SEED] available=1 controls=4 states=5
+[SH ANCHOR REPAIR] sweep=0 min_clearance=4 repaired=0
+[SH ANCHOR] min_clearance=4 feasible=1
+[COLD START ORDINARY SQP] recovery_seed_available=1 homotopy_deferred=1
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.05
+[QP WORST] iter=0 row=8 type=velocity d=-0.05
+[SQP] after_solve iter=0 converged=1 status=0 iterations=5 primal_residual=1.64391e-09 dual_residual=1.57122e-05 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=4.58972
+[SQP SUPPORT] iter=0 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=1 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=1 converged=1 status=0 iterations=4 primal_residual=2.27998e-16 dual_residual=4.8742e-06 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0 accepted_violation=0 accepted=1 alpha=1 delta_u_norm=0.97821
+[SQP SUPPORT] iter=1 support_size=0 support_limit=6 support_ok=1
+[SQP] before_solve iter=2 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=2 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=2 converged=1 status=0 iterations=3 primal_residual=2.62045e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=1 success=1
+[DRO SUMMARY] step=2 obstacle=0 S=8 rho=0.419071 rho_raw=0.419071 D_max=5 D_min=5 tv_bound=0.0838141 eta=0.0838141 eta_raw=0.0838141 radius_m=100 radius_d=2 transport_cost=0.419071 budget_usage=1 lambda=0.178 q_support=2 nominal_risk=0.092525 qstar_risk=0.16712 risk_lift=0.0745948 tv=0.0838141
+[DRO MODE] step=2 obstacle=0 mode=safe p=0.89604 risk=0 q=0.812225 delta_q=-0.0838141 q_times_S=6.4978
+[DRO MODE] step=2 obstacle=0 mode=threat p=0.10396 risk=0.890002 q=0.187775 delta_q=0.0838141 q_times_S=1.5022
+[DRO SAMPLE] step=2 obstacle=0 mode=safe q=0.812225 q_times_S=6.4978 first_count=7 first_fraction=0.875 occupancy=28 occupancy_fraction=0.875
+[DRO SAMPLE] step=2 obstacle=0 mode=threat q=0.187775 q_times_S=1.5022 first_count=1 first_fraction=0.125 occupancy=4 occupancy_fraction=0.125
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL REJECTED] sampled=8 required=1 limit=0
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=1 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75188 anchor_shift=0.951881
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55011 anchor_shift=0.950107
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35 anchor_shift=0.95
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15 anchor_shift=0.95
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949763 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.948971 dual_residual=8.82661 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948963 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=1.94829e-25 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=8.39764e-25 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=1.55878e-24 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=2.44371e-24 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=1
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=1.94829e-25 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=8.39764e-25 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=1.55878e-24 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=2.44371e-24 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150102 repaired=0
+[SH ANCHOR] min_clearance=0.150102 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949795 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.949002 dual_residual=8.82808 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948996 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=1.94829e-25 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=8.39764e-25 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=1.55878e-24 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=2.44371e-24 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150102 repaired=0
+[SH ANCHOR] min_clearance=0.150102 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949795 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.949002 dual_residual=8.82808 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948996 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=1 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949763
+[QP WORST] iter=0 row=0 type=collision d=0.949763
+[QP WORST COLLISION] scenario=1 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=6 primal_residual=0.948972 dual_residual=8.3579 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949763 accepted_violation=0.948964 accepted=1 alpha=1 delta_u_norm=1.21673
+[SQP SUPPORT ADD] iter=0 scenario=1
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.948964
+[QP WORST] iter=1 row=0 type=collision d=0.948964
+[QP WORST COLLISION] scenario=1 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.948986 dual_residual=8.26114 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.948964 accepted_violation=0.948964 accepted=0 alpha=0 delta_u_norm=0.680055
+[SQP] line search stalled iter=1 violation=0.948964
+[SQP FINAL] final_violation=0.948964 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 1
+[SUPPORT UNION IDS] 1
+[FINAL VIOL] scenario=1 k=1 obstacle=0 disc=0 signed_clearance=-0.948964
+[FINAL VIOL] scenario=1 k=2 obstacle=0 disc=0 signed_clearance=-0.940249
+[FINAL VIOL] scenario=1 k=3 obstacle=0 disc=0 signed_clearance=-0.913153
+[FINAL VIOL] scenario=1 k=4 obstacle=0 disc=0 signed_clearance=-0.861219
+[SQP FALLBACK] final_violation=0.948964 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=0 try_homotopy=0
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=8 removed=0 retained=8 fraction=0 limit=0
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=0 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=2.61955e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=2 success=1
+[DRO SUMMARY] step=2 obstacle=0 S=8 rho=0.419071 rho_raw=0.419071 D_max=5 D_min=5 tv_bound=0.0838141 eta=0.0838141 eta_raw=0.0838141 radius_m=100 radius_d=2 transport_cost=0.419071 budget_usage=1 lambda=0.178 q_support=2 nominal_risk=0.092525 qstar_risk=0.16712 risk_lift=0.0745948 tv=0.0838141
+[DRO MODE] step=2 obstacle=0 mode=safe p=0.89604 risk=0 q=0.812225 delta_q=-0.0838141 q_times_S=6.4978
+[DRO MODE] step=2 obstacle=0 mode=threat p=0.10396 risk=0.890002 q=0.187775 delta_q=0.0838141 q_times_S=1.5022
+[DRO SAMPLE] step=2 obstacle=0 mode=safe q=0.812225 q_times_S=6.4978 first_count=7 first_fraction=0.875 occupancy=28 occupancy_fraction=0.875
+[DRO SAMPLE] step=2 obstacle=0 mode=threat q=0.187775 q_times_S=1.5022 first_count=1 first_fraction=0.125 occupancy=4 occupancy_fraction=0.125
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL REJECTED] sampled=8 required=1 limit=0
+[HOMOTOPY CONFLICT] obstacle=0 first=1 last=4
+[BRAKE CANDIDATE] feasible=0 incompatible=1 v0=0 terminal_v=0
+[HOMOTOPY TRY] side=auto first_conflict=1 last_conflict=4
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.75188 anchor_shift=0.951881
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.55011 anchor_shift=0.950107
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.35 anchor_shift=0.95
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.15 anchor_shift=0.95
+[HOMOTOPY DR START] side=auto constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949763 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.948971 dual_residual=8.82661 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948963 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=auto restored=0
+[HOMOTOPY TRY] side=path first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=path k=1 backup_lat=1.94829e-25 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=2 backup_lat=8.39764e-25 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=3 backup_lat=1.55878e-24 target_lat=0 desired_lat=0
+[HOMOTOPY SEED] side=path k=4 backup_lat=2.44371e-24 target_lat=0 desired_lat=0
+[HOMOTOPY RESULT] side=path path_blocked=1 incompatible=1
+[HOMOTOPY TRY] side=left first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=left k=1 backup_lat=1.94829e-25 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=2 backup_lat=8.39764e-25 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=3 backup_lat=1.55878e-24 target_lat=1.1 desired_lat=1.1
+[HOMOTOPY SEED] side=left k=4 backup_lat=2.44371e-24 target_lat=1.1 desired_lat=1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150102 repaired=0
+[SH ANCHOR] min_clearance=0.150102 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=left constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949795 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.949002 dual_residual=8.82808 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948996 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=left restored=0
+[HOMOTOPY TRY] side=right first_conflict=1 last_conflict=4
+[HOMOTOPY SEED] side=right k=1 backup_lat=1.94829e-25 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=2 backup_lat=8.39764e-25 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=3 backup_lat=1.55878e-24 target_lat=-1.1 desired_lat=-1.1
+[HOMOTOPY SEED] side=right k=4 backup_lat=2.44371e-24 target_lat=-1.1 desired_lat=-1.1
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.150102 repaired=0
+[SH ANCHOR] min_clearance=0.150102 feasible=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.9 anchor_shift=1.1
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.7 anchor_shift=1.1
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.5 anchor_shift=1.1
+[FREE POLY] k=4 disc=0 raw=8 facets=2 vertices=5 rho=4.3 anchor_shift=1.1
+[HOMOTOPY DR START] side=right constraints=5
+[DR RESTORE OUTER] iter=0 collision_violation=0.949795 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=6 primal_residual=0.949002 dual_residual=8.82808 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.948996 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[HOMOTOPY RESULT] side=right restored=0
+[RECOVERY DECISION] brake_available=0 homotopy_available=0 homotopy_score=inf prefer_braking=0
+[HOMOTOPY SELECT] no_dynamically_feasible_candidate=1
+[BRAKE DR RECOVERY START] deterministic_ok=1 direct_incompatible=1 v0=0 terminal_v=0
+[SH ANCHOR REPAIR] sweep=0 min_clearance=0.002 repaired=1
+[SH ANCHOR] min_clearance=0.002 feasible=1
+[BRAKE ANCHOR] ok=1
+[FREE POLY] k=1 disc=0 raw=8 facets=1 vertices=4 rho=1.752 anchor_shift=0.952
+[FREE POLY] k=2 disc=0 raw=8 facets=1 vertices=4 rho=2.552 anchor_shift=0.952
+[FREE POLY] k=3 disc=0 raw=8 facets=1 vertices=4 rho=3.352 anchor_shift=0.952
+[FREE POLY] k=4 disc=0 raw=8 facets=1 vertices=4 rho=4.152 anchor_shift=0.952
+[BRAKE DR START] constraints=4
+[DR RESTORE OUTER] iter=0 collision_violation=0.95 violated_rows=4 deterministic_ok=1
+[DR PROJECTION QP] converged=0 status=3 iterations=5 primal_residual=0.95 dual_residual=1.20328e+15 x_size=8 x_finite=1
+[DR PROJECTION CHECK] linear_violation=0.95 bound_violation=0
+[DR RESTORE] iter=0 collision_projection_failed=1
+[DR RESTORE OUTER] iter=0 linearized_restore_failed=1
+[BRAKE DR RESULT] restored=0
+[BRAKE RECOVERY RESULT] success=0
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=21 max_d=0.949763
+[QP WORST] iter=0 row=0 type=collision d=0.949763
+[QP WORST COLLISION] scenario=1 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=0 converged=0 status=3 iterations=6 primal_residual=0.948972 dual_residual=8.3579 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=0 current_violation=0.949763 accepted_violation=0.948964 accepted=1 alpha=1 delta_u_norm=1.21673
+[SQP SUPPORT ADD] iter=0 scenario=1
+[SQP SUPPORT] iter=0 support_size=1 support_limit=6 support_ok=1
+[SQP] before_solve iter=1 vars=8 constraints=21 max_d=0.948964
+[QP WORST] iter=1 row=0 type=collision d=0.948964
+[QP WORST COLLISION] scenario=1 k=1 obstacle=0 disc=0
+[SQP] after_solve iter=1 converged=0 status=3 iterations=4 primal_residual=0.948986 dual_residual=8.26114 x_size=8 x_finite=1
+[SQP LINESEARCH] iter=1 current_violation=0.948964 accepted_violation=0.948964 accepted=0 alpha=0 delta_u_norm=0.680055
+[SQP] line search stalled iter=1 violation=0.948964
+[SQP FINAL] final_violation=0.948964 violated_constraints=4
+[SUPPORT FINAL] sqp_union=1 final_active=1 support_limit=6
+[SUPPORT FINAL IDS] 1
+[SUPPORT UNION IDS] 1
+[FINAL VIOL] scenario=1 k=1 obstacle=0 disc=0 signed_clearance=-0.948964
+[FINAL VIOL] scenario=1 k=2 obstacle=0 disc=0 signed_clearance=-0.940249
+[FINAL VIOL] scenario=1 k=3 obstacle=0 disc=0 signed_clearance=-0.913153
+[FINAL VIOL] scenario=1 k=4 obstacle=0 disc=0 signed_clearance=-0.861219
+[SQP FALLBACK] final_violation=0.948964 fallback_violation=0.95 fallback_violated_constraints=4
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=1 seed_available=1 incompatible=0 try_homotopy=0
+[RF BACKUP] available=1 controls=4 states=5
+[RF REMOVAL ACCEPTED] sampled=8 removed=0 retained=8 fraction=0 limit=0
+[FREE POLY] k=1 disc=0 raw=8 facets=0 vertices=4 rho=0.800001 anchor_shift=0
+[FREE POLY] k=2 disc=0 raw=8 facets=0 vertices=4 rho=1.6 anchor_shift=0
+[FREE POLY] k=3 disc=0 raw=8 facets=0 vertices=4 rho=2.4 anchor_shift=0
+[FREE POLY] k=4 disc=0 raw=8 facets=0 vertices=4 rho=3.2 anchor_shift=0
+[RF SQP INIT] using_shifted_feasible_candidate=1
+[RF SUPPORT SEED] removed=0 support_limit=6
+[SQP] before_solve iter=0 vars=8 constraints=16 max_d=-0.3
+[QP WORST] iter=0 row=8 type=velocity d=-0.3
+[SQP] after_solve iter=0 converged=1 status=0 iterations=3 primal_residual=2.61955e-13 dual_residual=3.28934e-08 x_size=8 x_finite=1
+[SQP FINAL] final_violation=0 violated_constraints=0
+[SUPPORT FINAL] sqp_union=0 final_active=0 support_limit=6
+[SUPPORT FINAL IDS]
+[SUPPORT UNION IDS]
+[COLD START RECOVERY CHECK] ordinary_sqp_failed=0 seed_available=1 incompatible=0 try_homotopy=0
+[NOMINAL FALLBACK] step=2 success=1
+PASS: diagnostics preserve controls, outcomes and successive RNG draws; both attempts retained
+<end of output>
+Test time =   0.17 sec
+----------------------------------------------------------
+Test Passed.
+"test_attempt_diagnostics" end time: Sep 22 21:06 EDT
+"test_attempt_diagnostics" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 22 21:06 EDT
+
+deterministic =   0.17 sec*proc
+
+integration =   0.17 sec*proc
+

@@ -232,8 +232,15 @@ def repeat_signature(bundle, metrics):
     decisions = rows(bundle / 'decisions.csv')
     for row in decisions:
         row.pop('solve_ms')
-    return digest(json.dumps([numeric_trace(bundle), decisions, rows(bundle / 'mode_coverage.csv'),
-                              stable_metrics], sort_keys=True).encode())
+    evidence = [numeric_trace(bundle), decisions, rows(bundle / 'mode_coverage.csv'), stable_metrics]
+    if (bundle/'attempts.csv').exists():
+        attempts = rows(bundle/'attempts.csv')
+        for row in attempts:
+            row.pop('solve_ms')
+        evidence.extend([attempts, rows(bundle/'mode_mechanism.csv')])
+        if (bundle/'transport_costs.csv').exists():
+            evidence.append(rows(bundle/'transport_costs.csv'))
+    return digest(json.dumps(evidence, sort_keys=True).encode())
 
 
 def trial_root(output, case, seed):

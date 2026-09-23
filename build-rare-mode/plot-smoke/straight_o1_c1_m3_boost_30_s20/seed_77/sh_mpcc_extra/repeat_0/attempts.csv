@@ -1,0 +1,4 @@
+step,attempt,success,dro_enabled,solve_ms,scenario_count,qp_calls
+0,0,1,0,26.123372999999997,40,10
+1,0,1,0,20.153417999999999,40,10
+2,0,1,0,27.343837000000001,40,10

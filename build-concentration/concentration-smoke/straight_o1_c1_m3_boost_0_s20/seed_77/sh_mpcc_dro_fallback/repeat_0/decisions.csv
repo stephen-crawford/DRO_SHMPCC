@@ -1,0 +1,4 @@
+step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count,backup_available,backup_removal_budget_exceeded,backup_dro_failed,braking_collision_feasible,any_homotopy_geometrically_feasible,last_qp_converged,sqp_sampled_collision_feasible,fallback_sampled_collision_feasible,nominal_fallback_attempted,used_nominal_fallback
+0,24.615855999999997,1,1,0,8.9999999954241616,20,0,-1,-1,-1,-1,1,-1,-1,0,0
+1,17.052674,1,1,0,8.9998773585724088,20,1,0,-1,-1,-1,1,-1,-1,0,0
+2,19.905194000000002,1,1,0,8.9971814177575826,20,1,0,-1,-1,-1,1,-1,-1,0,0

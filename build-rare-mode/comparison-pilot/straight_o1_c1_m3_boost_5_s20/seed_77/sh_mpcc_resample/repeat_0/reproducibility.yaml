@@ -1,0 +1,17 @@
+artifact_schema_version: 3
+source_revision: "d9a691618fc05321626106b5351cf5e90cf3736b"
+source_tree_state_at_build: "dirty"
+config_source: "/home/stephen/ros2_ws/src/DRO_SHMPCC/build-rare-mode/comparison-pilot/configs/sh_mpcc_resample_straight_o1_c1_m3_boost_5_s20.yaml"
+master_seed: 77
+plant_seed: 48196808
+predictor_seed: 64974427
+controller_seed: 81752046
+method: "sh_mpcc_resample"
+scenario: "sh_mpcc_resample_straight_o1_c1_m3_boost_5_s20"
+qp_backend: "acados_hpipm_dense_qp"
+qp_solver_identity: "acados-hpipm@676c1b879"
+collision: false
+completed_path: true
+termination_reason: "path_complete"
+failed_decision_step: -1
+resolved_config: resolved_config.yaml

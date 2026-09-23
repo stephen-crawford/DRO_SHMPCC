@@ -1,0 +1,10 @@
+step,attempt,obstacle_id,mode,nominal_probability,sampling_probability,risk_score,rho,sampled_count,scenario_count,true_mode
+0,0,0,constant_velocity,0.59999999999999998,0.59999999999999998,,,23,40,constant_velocity
+0,0,0,turn_left,0.20000000000000001,0.20000000000000001,,,9,40,constant_velocity
+0,0,0,turn_right,0.20000000000000001,0.20000000000000001,,,8,40,constant_velocity
+1,0,0,constant_velocity,0.42857142857142855,0.42857142857142855,,,15,40,turn_right
+1,0,0,turn_left,0.14285714285714285,0.14285714285714285,,,9,40,turn_right
+1,0,0,turn_right,0.42857142857142855,0.42857142857142855,,,16,40,turn_right
+2,0,0,constant_velocity,0.33333333333333331,0.33333333333333331,,,20,40,turn_right
+2,0,0,turn_left,0.1111111111111111,0.1111111111111111,,,3,40,turn_right
+2,0,0,turn_right,0.55555555555555558,0.55555555555555558,,,17,40,turn_right
