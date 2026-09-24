@@ -5,6 +5,7 @@
 
 #include "experiment_artifacts_internal.hpp"
 #include "collision_constraints.hpp"
+#include "certification_snapshot.hpp"
 
 #include "schuurmans_ambiguity.hpp"
 #include "simple_gif_encoder.hpp"
@@ -165,6 +166,10 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_bool(out, "nominal_resampling_baseline", mpc.nominal_resampling_baseline);
     write_scalar(out, "progress_weight", mpc.objective.progress_weight);
     write_scalar(out, "horizon", mpc.horizon);
+    write_scalar(out, "certification_tube_radius", mpc.certification_tube_radius);
+    write_scalar(out, "bundle_amplification", mpc.bundle_amplification);
+    write_scalar(out, "bundle_beta_cp", mpc.bundle_beta_cp);
+    write_scalar(out, "bundle_extra_draws", mpc.bundle_extra_draws);
     write_scalar(out, "dt", mpc.dt);
     write_scalar(out, "num_scenarios", sampling.num_scenarios);
     write_bool(out, "automatically_compute_sample_size",
@@ -1304,14 +1309,29 @@ std::string write_rollout_artifacts(
             transport << std::setprecision(17)
                 << "step,attempt,obstacle_id,source_mode,target_mode,cost,radius_observation_count\n";
             attempts << std::setprecision(17)
-                << "step,attempt,success,dro_enabled,solve_ms,scenario_count,qp_calls\n";
+                << "step,attempt,success,dro_enabled,solve_ms,scenario_count,qp_calls,qp_ms,constraint_ms,raw_trajectories,retained_facets\n";
             mechanism << std::setprecision(17)
                 << "step,attempt,obstacle_id,mode,nominal_probability,sampling_probability,risk_score,rho,sampled_count,scenario_count,true_mode\n";
             for (const auto& decision : trace.decisions) {
                 for (size_t i = 0; i < decision.attempts.size(); ++i) {
                     const auto& a = decision.attempts[i];
+                    if (!a.certification_snapshot_json.empty()) {
+                        const auto directory = run_directory / "certification";
+                        fs::create_directories(directory);
+                        const auto path = directory / ("step_" + std::to_string(decision.step) +
+                            "_attempt_" + std::to_string(i) + ".json");
+                        std::ofstream snapshot(path);
+                        require_open(snapshot, path);
+                        snapshot << "{\"case\":" << diagnostic::json_string(record.scenario)
+                            << ",\"seed\":" << record.seed << ",\"step\":" << decision.step
+                            << ",\"attempt\":" << i << ",\"returned_attempt\":"
+                            << (i + 1 == decision.attempts.size() ? "true" : "false") << ','
+                            << a.certification_snapshot_json.substr(1) << '\n';
+                    }
                     attempts << decision.step << ',' << i << ',' << a.success << ',' << a.dro_enabled
-                        << ',' << 1000*a.elapsed_seconds << ',' << a.sampled_scenarios << ',' << a.qp_calls << '\n';
+                        << ',' << 1000*a.elapsed_seconds << ',' << a.sampled_scenarios << ',' << a.qp_calls
+                        << ',' << 1000*a.qp_seconds << ',' << 1000*a.constraint_seconds
+                        << ',' << a.raw_trajectories << ',' << a.retained_facets << '\n';
                     for (const auto& [id, weights] : a.nominal_weights) {
                         if (a.transport_costs.count(id)) {
                             size_t source = 0;
@@ -1346,6 +1366,26 @@ std::string write_rollout_artifacts(
             }
         }
         const auto decisions_path = run_directory / "decisions.csv";
+        std::ofstream costs(run_directory / "bundle_costs.csv"), allocations(run_directory / "bundle_allocations.csv");
+        require_open(costs,run_directory / "bundle_costs.csv");
+        require_open(allocations,run_directory / "bundle_allocations.csv");
+        costs << std::setprecision(17) << "step,bundle_sampling,sample_unit,sample_groups,required_groups,raw_trajectories,support_size,retained_facets,c_K,eta,combined_failure_budget,attempts,qp_calls,qp_ms,constraint_ms\n";
+        allocations << std::setprecision(17) << "step,obstacle_mode,K,U\n";
+        for (const auto& decision:trace.decisions) {
+            int qp_calls=0; double qp_ms=0,constraint_ms=0;
+            for (const auto& a:decision.attempts) {qp_calls+=a.qp_calls;qp_ms+=1000*a.qp_seconds;constraint_ms+=1000*a.constraint_seconds;}
+            costs << decision.step << ',' << decision.bundle_sampling << ',' << (decision.bundle_sampling?"bundle":"joint_scenario")
+                << ',' << decision.sample_groups << ',' << decision.required_groups << ',' << decision.scenario_count
+                << ',' << decision.support_size << ',' << decision.retained_facets << ',' << decision.amplification
+                << ',' << decision.threshold << ',' << decision.failure_budget << ',' << decision.attempts.size()
+                << ',' << qp_calls << ',';
+            if (!decision.attempts.empty()) costs << qp_ms;
+            costs << ',';
+            if (!decision.attempts.empty()) costs << constraint_ms;
+            costs << '\n';
+            for (const auto& [mode,K]:decision.multiplicities)
+                allocations << decision.step << ',' << mode << ',' << K << ',' << decision.mode_upper.at(mode) << '\n';
+        }
         const auto coverage_path = run_directory / "mode_coverage.csv";
         std::ofstream decisions(decisions_path), coverage(coverage_path);
         require_open(decisions, decisions_path);

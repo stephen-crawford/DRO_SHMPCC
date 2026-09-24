@@ -13,20 +13,87 @@ from analyze_wdro_certificate import vertices, transfer_at
 ROOT=Path(__file__).resolve().parents[1]
 
 
-def projected_probability(center,mu,cov,radius):
-    center=np.asarray(center,dtype=float);mu=np.asarray(mu,dtype=float);cov=np.asarray(cov,dtype=float)
-    if center.shape!=(2,) or mu.shape!=(2,) or cov.shape!=(2,2):raise ValueError('expected 2D positions and 2x2 covariance')
-    if not all(np.all(np.isfinite(a)) for a in [center,mu,cov]) or not math.isfinite(radius) or radius<=0:raise ValueError('nonfinite geometry or invalid radius')
-    if not np.array_equal(cov,cov.T) or np.linalg.eigvalsh(cov)[0]<0:raise ValueError('covariance must be symmetric positive semidefinite')
-    diff=mu-center;distance=math.hypot(*diff)
-    direction=diff/distance if distance>0 else np.array([1.,0.])
-    mean=float(radius-direction@diff);variance=float(direction@cov@direction)
-    if variance<0:raise ValueError('negative projected variance')
-    # Strict event ||X-center|| < R implies R-n.(X-center)>0 for any unit n.
-    probability=float(mean>0) if variance==0 else .5*math.erfc(-mean/math.sqrt(2*variance))
-    return dict(distance=distance,projected_mean=mean,projected_variance=variance,
-                probability_upper=probability,zero_distance=int(distance==0),zero_variance=int(variance==0))
+def projected_probability_with_normal(center, mu, cov, radius, direction):
+    """Projected Gaussian collision upper bound using a supplied fixed normal."""
+    center = np.asarray(center, dtype=float)
+    mu = np.asarray(mu, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    direction = np.asarray(direction, dtype=float)
 
+    if center.shape != (2,) or mu.shape != (2,) or cov.shape != (2, 2):
+        raise ValueError('expected 2D positions and 2x2 covariance')
+
+    if direction.shape != (2,):
+        raise ValueError('expected a 2D projection direction')
+
+    if (
+        not all(np.all(np.isfinite(a)) for a in [center, mu, cov, direction])
+        or not math.isfinite(radius)
+        or radius <= 0
+    ):
+        raise ValueError('nonfinite geometry or invalid radius')
+
+    if not np.array_equal(cov, cov.T) or np.linalg.eigvalsh(cov)[0] < 0:
+        raise ValueError('covariance must be symmetric positive semidefinite')
+
+    direction_norm = math.hypot(*direction)
+    if direction_norm <= 0:
+        raise ValueError('projection direction must be nonzero')
+
+    # Always use a unit projection direction.
+    direction = direction / direction_norm
+
+    diff = mu - center
+    distance = math.hypot(*diff)
+
+    mean = float(radius - direction @ diff)
+    variance = float(direction @ cov @ direction)
+
+    if variance < 0:
+        raise ValueError('negative projected variance')
+
+    # Strict event ||X-center|| < R implies
+    # R - n.(X-center) > 0 for any unit n.
+    probability = (
+        float(mean > 0)
+        if variance == 0
+        else .5 * math.erfc(-mean / math.sqrt(2 * variance))
+    )
+
+    return dict(
+        distance=distance,
+        projected_mean=mean,
+        projected_variance=variance,
+        probability_upper=probability,
+        zero_distance=int(distance == 0),
+        zero_variance=int(variance == 0),
+    )
+
+
+def projected_probability(center, mu, cov, radius):
+    """Projected bound using the adaptive center-to-mean direction."""
+    center_array = np.asarray(center, dtype=float)
+    mu_array = np.asarray(mu, dtype=float)
+
+    if center_array.shape != (2,) or mu_array.shape != (2,):
+        raise ValueError('expected 2D positions')
+
+    diff = mu_array - center_array
+    distance = math.hypot(*diff)
+
+    direction = (
+        diff / distance
+        if distance > 0
+        else np.array([1., 0.])
+    )
+
+    return projected_probability_with_normal(
+        center,
+        mu,
+        cov,
+        radius,
+        direction,
+    )
 
 def evaluate(snapshot,backend):
     if snapshot.get('obstacles')!=1:raise ValueError('only one obstacle is supported')

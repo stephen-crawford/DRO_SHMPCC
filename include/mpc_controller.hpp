@@ -187,6 +187,10 @@ public:
 
 
 private:
+    std::vector<EgoState> certification_reference_;
+    std::map<int, std::map<std::string, double>> certification_mode_bounds_;
+    bool inside_certification_tube(const std::vector<EgoState>& trajectory) const;
+    void enforce_certification_tube(MPCResult& result) const;
     // One complete solve, including the existing homotopy/braking recovery.
     MPCResult solve_attempt(const EgoState& ego_state,
         const std::map<int, ObstacleState>& obstacles,
@@ -196,6 +200,7 @@ private:
     // Standalone counterfactual tool may copy pre-decision state into isolated
     // controllers. It never mutates the live controller or its RNG.
     friend class CounterfactualProbe;
+    friend class CertificationTubeTestAccess;
 
     bool capture_linearized_constraints_ = false;
     bool capture_attempt_diagnostics_ = false;

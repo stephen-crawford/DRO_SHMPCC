@@ -1429,6 +1429,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''Compatible tests (pass an output directory, not the settings JSON):
   run_analysis_matrix.py       Analysis matrix and legacy case/seed_N/*.log
+  run_bundle_analysis_matrix.py Full analysis axes, paired baseline/bundle cost study
+                              bundle_costs and bundle_allocations artifacts
   run_reviewer_matrix.py       Reviewer pilot/large suites and ablations
   run_comparison_matrix.py     Original paired comparison matrix
                               sample_efficiency*.json (five arms/concentration)

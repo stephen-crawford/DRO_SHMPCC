@@ -311,6 +311,10 @@ inline void apply_yaml_file(
             if      (k == "mpc_type")                      { cfg.mpc.type = parse_mpc(val); cfg.mpc.sync_from_type(); }
             else if (k == "progress_weight")               cfg.mpc.objective.progress_weight = std::stod(val);
             else if (k == "horizon")                       cfg.mpc.horizon = std::stoi(val);
+            else if (k == "certification_tube_radius")     cfg.mpc.certification_tube_radius = std::stod(val);
+            else if (k == "bundle_amplification")          cfg.mpc.bundle_amplification = std::stod(val);
+            else if (k == "bundle_beta_cp")                cfg.mpc.bundle_beta_cp = std::stod(val);
+            else if (k == "bundle_extra_draws")            cfg.mpc.bundle_extra_draws = std::stoi(val);
             else if (k == "dt")                            cfg.mpc.dt = std::stod(val);
             else if (k == "num_scenarios") {
                 cfg.mpc.sampling.num_scenarios = std::stoi(val);

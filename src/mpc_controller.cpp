@@ -8,6 +8,9 @@
 #include "mpc_controller.hpp"
 #include "reference_path.hpp"
 #include "path_progress_linearization.hpp"
+#include "certification_tube.hpp"
+#include "certification_snapshot.hpp"
+#include "adversarial_bundles.hpp"
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -112,7 +115,7 @@ for (const auto& scenario : scenarios) {
     }
 
     if (scenario_bad) {
-        incompatible.insert(scenario.scenario_id);
+        incompatible.insert(scenario.support_id());
     }
 }
 
@@ -231,6 +234,52 @@ double path_length
 const auto start_time = std::chrono::high_resolution_clock::now();
 ++iteration_count_;
 const bool allow_nominal = config_.mpc.type == MPCType::SH_MPCC_DRO_FALLBACK;
+// Freeze a dynamically rolled shifted accepted plan BEFORE any scenario draw.
+// This reference survives SQP, homotopy, braking and the outer nominal retry.
+certification_reference_.clear();
+certification_mode_bounds_.clear();
+if (config_.mpc.certification_tube_radius > 0 && has_feasible_backup_ &&
+    static_cast<int>(last_feasible_controls_.size()) == config_.mpc.horizon) {
+    auto inputs = last_feasible_controls_;
+    inputs.erase(inputs.begin());
+    inputs.push_back(last_feasible_controls_.back());
+    EgoState start = ego_state;
+    if (reference_path_ && !start.has_spline())
+        start.s = reference_path_->find_closest_point(start.position());
+    certification_reference_ = reference_path_
+        ? ego_dynamics_.rollout_with_spline(start, inputs, *reference_path_)
+        : ego_dynamics_.rollout(start, inputs);
+    for (const auto& [id, state] : obstacles) {
+        const auto history = mode_histories_.find(id);
+        if (history == mode_histories_.end()) continue;
+        for (const auto& [name, mode] : history->second.available_modes) {
+            double bound = 0;
+            // Switching and body-frame nonlinear modes are not held affine Gaussians.
+            const bool eligible = !config_.mpc.sampling.markov_jump_system &&
+                                  mode.body_lateral_displacement == 0;
+            if (!eligible) bound = 1;
+            else {
+                auto mean = state;
+                Eigen::Matrix4d covariance = Eigen::Matrix4d::Zero();
+                for (int k = 1; k <= config_.mpc.horizon; ++k) {
+                    mean = mode.propagate(mean);
+                    mode.propagate_covariance(covariance);
+                    for (const auto& center : compute_ego_disc_positions(certification_reference_[k],
+                             config_.mpc.ego.num_discs, config_.mpc.ego.length))
+                        bound += tube_gaussian_probability(center, mean.to_array().head<2>(),
+                            covariance.topLeftCorner<2, 2>(), config_.mpc.ego.radius +
+                            config_.obstacle_radius + config_.mpc.constraints.safety_margin,
+                            config_.mpc.certification_tube_radius);
+                }
+            }
+            certification_mode_bounds_[id][name] = std::min(1.0, bound);
+            std::cerr << "[CERTIFICATION TUBE BOUND] step=" << iteration_count_
+                      << " obstacle=" << id << " mode=" << name
+                      << " b=" << std::min(1.0, bound) << " held_gaussian=" << eligible
+                      << " sample_reduction=0" << std::endl;
+        }
+    }
+}
 // Retry from the previous executed plan, not the failed DRO linearization.
 const auto previous_reference = allow_nominal ? reference_trajectory_ : std::vector<EgoState>{};
 const auto previous_controls = allow_nominal ? last_feasible_controls_ : std::vector<EgoInput>{};
@@ -242,18 +291,26 @@ auto begin_attempt_record = [&]() {
     current_attempt_diagnostics_ = {};
     attempt_started = std::chrono::steady_clock::now();
 };
-auto finish_attempt_record = [&](bool success, bool use_dro) {
+auto finish_attempt_record = [&](const MPCResult& attempt_result, bool use_dro) {
     if (!capture_attempt_diagnostics_) return;
-    current_attempt_diagnostics_.success = success;
+    current_attempt_diagnostics_.success = attempt_result.success;
+    current_attempt_diagnostics_.qp_seconds = attempt_result.qp_solve_time;
+    current_attempt_diagnostics_.constraint_seconds = attempt_result.constraint_construction_time;
+    current_attempt_diagnostics_.raw_trajectories = scenarios_.size();
+    current_attempt_diagnostics_.retained_facets = attempt_result.retained_collision_facets;
     current_attempt_diagnostics_.dro_enabled = use_dro;
     current_attempt_diagnostics_.elapsed_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - attempt_started).count();
+    current_attempt_diagnostics_.certification_snapshot_json = diagnostic::certification_snapshot(
+        config_, attempt_result, current_attempt_diagnostics_, obstacles,
+        mode_histories_, last_removed_scenario_ids_);
     attempts.push_back(current_attempt_diagnostics_);
 };
 begin_attempt_record();
 auto result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
                             path_progress, path_length, config_.dro.enabled);
-finish_attempt_record(result.success, config_.dro.enabled);
+enforce_certification_tube(result); // Also covers early-return branches.
+finish_attempt_record(result, config_.dro.enabled);
 if (allow_nominal && !result.success) {
     reference_trajectory_ = previous_reference;
     last_feasible_controls_ = previous_controls;
@@ -263,17 +320,48 @@ if (allow_nominal && !result.success) {
     begin_attempt_record();
     result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
                            path_progress, path_length, false);
-    finish_attempt_record(result.success, false);
+    enforce_certification_tube(result);
+    finish_attempt_record(result, false);
     result.nominal_fallback_attempted = true;
     result.used_nominal_fallback = result.success;
     std::cerr << "[NOMINAL FALLBACK] step=" << iteration_count_
               << " success=" << result.success << std::endl;
 }
 result.attempt_diagnostics = std::move(attempts);
+if (config_.mpc.certification_tube_radius > 0)
+    std::cerr << "[CERTIFICATION TUBE] step=" << iteration_count_
+              << " active=" << result.certification_tube_active
+              << " radius=" << config_.mpc.certification_tube_radius
+              << " max_displacement=" << result.certification_tube_max_displacement
+              << " rejected=" << result.certification_tube_rejected
+              << " success=" << result.success << " sample_reduction=0" << std::endl;
 result.solve_time = std::chrono::duration<double>(
     std::chrono::high_resolution_clock::now() - start_time).count();
 solve_times_.push_back(result.solve_time);
 return result;
+}
+
+bool MPCController::inside_certification_tube(const std::vector<EgoState>& trajectory) const {
+    return certification_reference_.empty() ||
+        certification_tube_displacement(certification_reference_, trajectory,
+            config_.mpc.ego.num_discs, config_.mpc.ego.length) <= config_.mpc.certification_tube_radius;
+}
+
+void MPCController::enforce_certification_tube(MPCResult& result) const {
+    result.certification_tube_active = !certification_reference_.empty();
+    result.certification_tube_reference = certification_reference_;
+    result.certification_tube_mode_bounds = certification_mode_bounds_;
+    if (!result.certification_tube_active) return;
+    result.certification_tube_max_displacement = certification_tube_displacement(
+        certification_reference_, result.ego_trajectory,
+        config_.mpc.ego.num_discs, config_.mpc.ego.length);
+    if (!inside_certification_tube(result.ego_trajectory)) {
+        result.certification_tube_rejected = true;
+        result.success = false;
+        result.certified_horizon = -1;
+        if (config_.mpc.uses_safe_horizon())
+            result.certificate_status = SafeHorizonCertificateStatus::PLAN_INFEASIBLE;
+    }
 }
 
 MPCResult MPCController::solve_attempt(
@@ -289,6 +377,11 @@ last_dro_results_.clear();
 last_removed_scenario_ids_.clear();
 
 scenarios_.clear();
+const bool bundle_sampling = config_.mpc.bundle_amplification > 0;
+BundleDesign bundle_design;
+std::map<int,BundleDesign> obstacle_bundle_designs;
+if (bundle_sampling && obstacles.empty())
+    throw std::invalid_argument("bundle experiment requires at least one obstacle");
 last_linearized_constraints_.clear();
 
 if (!reference_path_.has_value()) {
@@ -311,6 +404,7 @@ for (const auto& [obs_id, _] : obstacles) {
 
 // Step 1: Initialize reference trajectory (warmstart from previous)
 initialize_reference_trajectory(ego_with_spline, goal, reference_velocity);
+if (!certification_reference_.empty()) reference_trajectory_ = certification_reference_;
 
 // Step 2: Sample scenarios (DRO reshapes the categorical to q*, then i.i.d. sample)
 std::map<int, std::map<std::string, double>> sampling_weights;
@@ -504,7 +598,9 @@ for (const auto& [mode_id, p] : nominal_weights) {
     if (!per_obs_weights_dro.empty()) {
         sampling_weights = per_obs_weights_dro;
         used_external_sampling_weights = true;
-        if (config_.mpc.sampling.markov_jump_system) {
+        if (bundle_sampling) {
+            // K is designed below, after weights but before any scenario draws.
+        } else if (config_.mpc.sampling.markov_jump_system) {
             // Seed the Markov chain from Q*: the reweighted belief sets the
             // initial mode distribution, then the estimated transition
             // matrix propagates it over the horizon.
@@ -519,6 +615,51 @@ for (const auto& [mode_id, p] : nominal_weights) {
                 nullptr, &rng_);
         }
     }
+}
+
+if (bundle_sampling) {
+    if (!custom_per_obstacle_weights_.empty())
+        throw std::invalid_argument("external categorical overrides are not supported by bundle allocation");
+    auto allocation_config=config_;
+    allocation_config.mpc.bundle_beta_cp /= obstacles.size();
+    const int attempt_limit=config_.mpc.type==MPCType::SH_MPCC_DRO_FALLBACK ? 2 : 1;
+    allocation_config.mpc.sampling.chance_of_certificate_violation /= attempt_limit;
+    bundle_design.amplification=std::numeric_limits<double>::infinity();
+    for (const auto& [id,state]:obstacles) {
+        const auto& history=mode_histories_.at(id);
+        const auto robust=last_dro_results_.find(id);
+        auto design=design_adversarial_bundles(history,
+            robust==last_dro_results_.end() ? compute_mode_weights(history,config_.mpc.sampling.mode_belief)
+                                          : robust->second.worst_case_weights,
+            robust==last_dro_results_.end() ? std::map<std::string,double>{} : robust->second.risk_per_mode,
+            allocation_config);
+        bundle_design.amplification=std::min(bundle_design.amplification,design.amplification);
+        obstacle_bundle_designs[id]=std::move(design);
+    }
+    // No true-obstacle independence assumption: V_joint <= sum_o V_o.
+    // Artificial bundle independence and AM-GM imply detection >=
+    // 1-(1-epsilon/O)^(O*min_o c_o) whenever V_joint > epsilon.
+    const double O=obstacles.size();
+    bundle_design.threshold=-std::expm1(O*bundle_design.amplification*std::log1p(-config_.epsilon()/O));
+    allocation_config.mpc.sampling.one_minus_chance_constraint_violation_probability=1-bundle_design.threshold;
+    bundle_design.required_bundles=allocation_config.compute_required_scenarios();
+    const int S=config_.mpc.sampling.automatically_compute_sample_size
+        ? bundle_design.required_bundles : config_.mpc.sampling.num_scenarios;
+    for (const auto& [id,state]:obstacles) {
+        const auto& design=obstacle_bundle_designs.at(id);
+        auto draws=sample_adversarial_bundles(id,state,mode_histories_.at(id),design,config_.mpc.horizon,S,rng_);
+        for (auto& draw:draws) { draw.scenario_id=scenarios_.size(); scenarios_.push_back(std::move(draw)); }
+        for (std::size_t m=0;m<design.modes.size();++m)
+            std::cerr << "[BUNDLE MODE] obstacle=" << id << " mode=" << design.modes[m]
+                      << " U=" << design.upper[m] << " K=" << design.multiplicities[m] << std::endl;
+    }
+    std::cerr << "[BUNDLE DESIGN] bundles=" << S << " raw_draws=" << scenarios_.size()
+              << " obstacles=" << O << " c_K=" << bundle_design.amplification << " eta=" << bundle_design.threshold
+              << " required_bundles=" << bundle_design.required_bundles
+              << " beta_cp=" << config_.mpc.bundle_beta_cp
+              << " beta_cert_per_attempt=" << allocation_config.mpc.sampling.chance_of_certificate_violation
+              << " attempt_limit=" << attempt_limit << std::endl;
+
 }
 
 // When custom per-obstacle weights are set (e.g. from OT predictor),
@@ -558,10 +699,10 @@ custom_per_obstacle_weights_.clear();
 // from horizon length or decision dimension.  Normalized configurations
 // sample this target immediately; this fallback keeps the invariant true
 // if a caller provides an existing undersized scenario set.
-int S_actual = static_cast<int>(scenarios_.size());
+int S_actual = bundle_sampling ? scenario_group_count(scenarios_) : static_cast<int>(scenarios_.size());
 const bool support_certification_enabled = config_.mpc.uses_safe_horizon();
 const int S_required = support_certification_enabled
-    ? config_.compute_required_scenarios()
+    ? (bundle_sampling ? bundle_design.required_bundles : config_.compute_required_scenarios())
     : S_actual;
 
 auto next_scenario_id = [&]() {
@@ -573,6 +714,7 @@ auto next_scenario_id = [&]() {
 };
 
 auto sample_additional_scenarios = [&](int count, int scenario_id_offset) {
+    if (bundle_sampling) throw std::logic_error("cannot augment bundles with ordinary scenarios");
     if (config_.mpc.sampling.markov_jump_system) {
         const auto* initial_belief =
             (used_external_sampling_weights && !sampling_weights.empty())
@@ -603,7 +745,7 @@ if (S_actual < S_required && enforce_support_sample_count) {
     auto additional = sample_additional_scenarios(
         additional_count, next_scenario_id());
     scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
-} else if (S_actual < 3) {
+} else if (S_actual < 3 && !bundle_sampling) {
     // Ensure minimum scenario count even without enforcement
     int additional_count = std::max(
         5, config_.mpc.sampling.num_scenarios - S_actual
@@ -613,7 +755,7 @@ if (S_actual < S_required && enforce_support_sample_count) {
     scenarios_.insert(scenarios_.end(), additional.begin(), additional.end());
 }
 
-S_actual = static_cast<int>(scenarios_.size());
+S_actual = bundle_sampling ? scenario_group_count(scenarios_) : static_cast<int>(scenarios_.size());
 if (capture_attempt_diagnostics_) {
     current_attempt_diagnostics_.sampled_scenarios = S_actual;
     for (const auto& [id, history] : mode_histories_) {
@@ -1032,7 +1174,7 @@ if (removal_count <= removal_limit) {
             constraint_scenarios.end(),
             [&](const Scenario& scenario) {
                 return removed_scenarios.find(
-                           scenario.scenario_id)
+                           scenario.support_id())
                        != removed_scenarios.end();
             }),
         constraint_scenarios.end());
@@ -1152,6 +1294,16 @@ const double max_abs_velocity =
         std::abs(config_.mpc.ego.dynamics.max_velocity));
 
 std::vector<CollisionConstraint> constraints;
+
+auto reduce_constraints = [&](const std::vector<CollisionConstraint>& all,
+    const std::vector<EgoState>& anchor, const std::vector<EgoState>& dynamic,
+    int discs, double length, double velocity, double dt, int facets) {
+    if (!bundle_sampling) return reduce_to_free_space_polytopes(all,anchor,dynamic,discs,length,velocity,dt,facets);
+    auto retained = prune_bundle_constraints_exact(all);
+    std::cerr << "[BUNDLE FACETS] raw=" << all.size() << " retained=" << retained.size()
+              << " policy=exact_same_normal_within_bundle" << std::endl;
+    return retained;
+};
 
 auto build_homotopy_recovery_problem = [&]() -> bool {
 
@@ -1388,7 +1540,7 @@ std::cerr
                 config_.mpc.ego.length);
 
         auto candidate_constraints =
-            reduce_to_free_space_polytopes(
+            reduce_constraints(
                 candidate_raw,
                 candidate_anchor,
                 recovery_seed_trajectory,
@@ -1591,7 +1743,7 @@ auto braking_raw =
         config_.mpc.ego.length);
 
 auto braking_constraints =
-    reduce_to_free_space_polytopes(
+    reduce_constraints(
         braking_raw,
         braking_trajectory,
         braking_trajectory,
@@ -1750,7 +1902,7 @@ if (braking_deterministic_ok) {
                 config_.mpc.ego.length);
 
         auto braking_constraints =
-            reduce_to_free_space_polytopes(
+            reduce_constraints(
                 braking_raw,
                 braking_anchor,
                 braking_trajectory,
@@ -1908,7 +2060,7 @@ auto build_ordinary_constraint_problem = [&]() {
          config_.mpc.ego.length);
 
  constraints =
-     reduce_to_free_space_polytopes(
+     reduce_constraints(
          all_constraints,
          constraint_reference,
          dynamic_reference,
@@ -2216,6 +2368,30 @@ result.failure_diagnostics.any_homotopy_geometrically_feasible = failure_diagnos
 auto qp_end = std::chrono::high_resolution_clock::now();
 
 result.sampled_scenarios = S_actual;
+result.retained_collision_facets = constraints.size();
+result.bundle_sampling = bundle_sampling;
+result.raw_scenario_draws = scenarios_.size();
+if (bundle_sampling) {
+    result.bundle_amplification = bundle_design.amplification;
+    result.bundle_threshold = bundle_design.threshold;
+    result.bundle_combined_failure_budget = std::min(1.0,config_.mpc.bundle_beta_cp+
+        config_.mpc.sampling.chance_of_certificate_violation);
+    for (const auto& [id,design]:obstacle_bundle_designs) for (std::size_t m=0;m<design.modes.size();++m) {
+        const auto name=obstacles.size()==1 ? design.modes[m] : std::to_string(id)+":"+design.modes[m];
+        result.bundle_multiplicities[name]=design.multiplicities[m];
+        result.bundle_mode_upper[name]=design.upper[m];
+    }
+    // Check the entire unremoved raw conjunction, not only retained QP facets.
+    auto violations = backup_incompatible_scenarios(result.ego_trajectory,scenarios_,combined_radius,
+        config_.mpc.ego.num_discs,config_.mpc.ego.length,0.0);
+    for (int removed:last_removed_scenario_ids_) violations.erase(removed);
+    const bool finite = std::all_of(result.ego_trajectory.begin(),result.ego_trajectory.end(),
+        [](const EgoState& state){return state.to_array().allFinite();});
+    if (!finite || result.ego_trajectory.size()!=static_cast<std::size_t>(config_.mpc.horizon+1) || !violations.empty()) {
+        result.success=false;
+        result.sampled_constraints_satisfied=false;
+    }
+}
 result.required_scenarios = support_certification_enabled ? S_required : -1;
 result.sample_count_sufficient = sample_count_sufficient;
 result.certified_horizon = -1;
@@ -2265,6 +2441,7 @@ std::chrono::duration<double>(constraint_end - constraint_start).count();
 result.qp_solve_time =
 std::chrono::duration<double>(qp_end - qp_start).count();
 
+enforce_certification_tube(result); // Reject before updating the accepted-plan cache.
 if (result.success) {
 reference_trajectory_ =
 result.ego_trajectory;
@@ -4136,6 +4313,10 @@ for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter)
                 constraints,
                 trial_traj);
 
+        if (!inside_certification_tube(trial_traj)) {
+            alpha *= 0.5;
+            continue;
+        }
         if (current_violation <= 0.0) {
             // Current trajectory is collision-feasible.
             //
@@ -4841,6 +5022,30 @@ if (config_.mpc.constraints.enable_velocity_bounds) {
     d = d_new;
 }
 
+// Fixed-reference squared disc-distance constraints, linearized only for the QP.
+// Exact nonlinear geometry is checked in line search and on EVERY returned plan.
+if (!certification_reference_.empty()) {
+    const int first = C.rows();
+    const int discs = config_.mpc.ego.num_discs;
+    C.conservativeResize(first + N * discs, n_dec);
+    d.conservativeResize(first + N * discs);
+    for (int k = 1; k <= N; ++k) {
+        const auto centers = compute_ego_disc_positions(certification_reference_[k],
+            discs, config_.mpc.ego.length);
+        for (int j = 0; j < discs; ++j) {
+            const auto disc = linearize_disc_center(x_ref[k],
+                get_disc_longitudinal_offset(j, discs, config_.mpc.ego.length));
+            const Eigen::Vector2d delta = disc.center - centers[j];
+            const Eigen::RowVector3d gradient = 2 * delta.transpose() * disc.jacobian;
+            const int row = first + (k - 1) * discs + j;
+            C.row(row) = -(gradient(0) * P_all[k].row(0) +
+                gradient(1) * P_all[k].row(1) + gradient(2) * THETA_all[k]);
+            d(row) = delta.squaredNorm() - config_.mpc.certification_tube_radius *
+                config_.mpc.certification_tube_radius;
+        }
+    }
+}
+
 // Step 6: Box constraints on delta_u
 Eigen::VectorXd lb(n_dec), ub(n_dec);
 for (int k = 0; k < N; ++k) {
@@ -4906,7 +5111,8 @@ MPCStatistics MPCController::get_statistics() const {
 MPCStatistics stats;
 stats.iteration_count = iteration_count_;
 stats.num_obstacles = static_cast<int>(mode_histories_.size());
-stats.num_scenarios = static_cast<int>(scenarios_.size());
+stats.num_scenarios = config_.mpc.bundle_amplification>0
+    ? scenario_group_count(scenarios_) : static_cast<int>(scenarios_.size());
 
 if (!solve_times_.empty()) {
     double sum = 0.0;
@@ -4924,6 +5130,8 @@ return stats;
 }
 
 void MPCController::reset() {
+certification_reference_.clear();
+certification_mode_bounds_.clear();
 mode_histories_.clear();
 obstacle_class_ids_.clear();
 scenarios_.clear();

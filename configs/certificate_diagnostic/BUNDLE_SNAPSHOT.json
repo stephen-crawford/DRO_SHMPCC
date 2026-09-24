@@ -1,0 +1,13 @@
+{
+  "modes": [
+    {"mode": "safe", "count": 95, "q": 0.7, "score": 0.0},
+    {"mode": "cut", "count": 5, "q": 0.3, "score": 1.0}
+  ],
+  "c0": 2.0,
+  "extras": 2,
+  "epsilon": 0.05,
+  "beta_cp": 0.05,
+  "beta_cert": 0.01,
+  "nonremoved_support_cap": 6,
+  "removal_budget": 0
+}

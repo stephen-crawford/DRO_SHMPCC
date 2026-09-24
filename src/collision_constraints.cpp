@@ -276,11 +276,12 @@ namespace dro_mpc {
 
                     for (int d = 0; d < static_cast<int>(disc_positions.size()); ++d) {
                         auto constraint = compute_single_constraint(
-                            k, obs_id, scenario.scenario_id,
+                            k, obs_id, scenario.support_id(),
                             disc_positions[d], obs_position, combined_radius
                         );
                         if (constraint.has_value()) {
                             CollisionConstraint c = constraint.value();
+                            c.raw_scenario_id = scenario.scenario_id;
                             c.disc_index = d;
                             c.disc_offset = get_disc_longitudinal_offset(d, num_discs, vehicle_length);
                             constraints.push_back(c);

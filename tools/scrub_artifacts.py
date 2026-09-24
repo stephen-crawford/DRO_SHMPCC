@@ -5,10 +5,10 @@ from functools import lru_cache
 from pathlib import Path
 
 LABELS = ['test_suite', 'test_name', 'test_root', 'matrix_identity']
-BUNDLE_TABLES = ['decisions', 'attempts', 'mode_coverage', 'mode_mechanism', 'transport_costs']
+BUNDLE_TABLES = ['decisions', 'attempts', 'mode_coverage', 'mode_mechanism', 'transport_costs', 'bundle_costs', 'bundle_allocations']
 REPORT_TABLES = ['primary_summary', 'all_comparisons', 'pairs', 'summary', 'summary_per_seed',
                  'mechanism_per_seed', 'mechanism_summary', 'vertex_reachability',
-                 'concentration_per_solve', 'concentration_summary']
+                 'concentration_per_solve', 'concentration_summary', 'bundle_pairs', 'bundle_summary', 'bundle_rollouts']
 RARE_TABLES = ['weights', 'scene', 'coverage_trials', 'controller_trials', 'attempts', 'plans', 'plan_risk']
 
 
@@ -56,7 +56,7 @@ def enrich_identity(log, root, identity):
     identity['trial_status'] = metadata.get('status', 'UNKNOWN')
     identity['trial_error'] = metadata.get('error', '')
     identity['repeatable'] = metadata.get('repeatable', '')
-    for field in ['case', 'solver_style', 'profile', 'scenario_budget', 'environment', 'obstacles', 'classes']:
+    for field in ['case', 'solver_style', 'profile', 'scenario_budget', 'environment', 'obstacles', 'classes', 'variant', 'baseline_case', 'bundle_amplification', 'bundle_extra_draws']:
         if field in metadata: identity[field] = metadata[field]
     if 'pair' in metadata: identity['pair_case'] = metadata['pair']
     # Paired layout: setup/seed_N/controller/repeat_K.log (also works before result.json).

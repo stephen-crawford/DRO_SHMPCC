@@ -39,6 +39,14 @@ struct ModeCoverageRecord {
 };
 
 struct DecisionRecord {
+    bool bundle_sampling = false;
+    int sample_groups = 0;
+    int required_groups = 0;
+    int support_size = 0;
+    int retained_facets = 0;
+    double amplification = 0, threshold = 0, failure_budget = 0;
+    std::map<std::string,int> multiplicities;
+    std::map<std::string,double> mode_upper;
     std::vector<SolveAttemptDiagnostics> attempts;
     FailureDiagnostics failure_diagnostics;
     int step = 0;

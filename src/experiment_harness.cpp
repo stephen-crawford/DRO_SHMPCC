@@ -1048,6 +1048,17 @@ namespace dro_mpc {
                 decision.certified = mpc_result.certificate_status ==
                     SafeHorizonCertificateStatus::CERTIFIED;
                 decision.scenario_count = controller.scenarios().size();
+                decision.bundle_sampling = mpc_result.bundle_sampling;
+                decision.sample_groups = mpc_result.sampled_scenarios;
+                decision.required_groups = mpc_result.required_scenarios;
+                decision.support_size = mpc_result.support_size;
+                decision.retained_facets = mpc_result.retained_collision_facets;
+                decision.amplification = mpc_result.bundle_amplification;
+                decision.threshold = mpc_result.bundle_threshold;
+                decision.failure_budget = mpc_result.bundle_sampling ? mpc_result.bundle_combined_failure_budget
+                    : config.mpc.sampling.chance_of_certificate_violation;
+                decision.multiplicities = mpc_result.bundle_multiplicities;
+                decision.mode_upper = mpc_result.bundle_mode_upper;
                 if (mpc_result.success && mpc_result.first_input().has_value()) {
                     const auto input = *mpc_result.first_input();
                     decision.applied_control_effort = input.a * input.a + input.omega * input.omega;

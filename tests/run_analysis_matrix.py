@@ -236,10 +236,17 @@ def repeat_signature(bundle, metrics):
     if (bundle/'attempts.csv').exists():
         attempts = rows(bundle/'attempts.csv')
         for row in attempts:
-            row.pop('solve_ms')
+            for field in list(row):
+                if field.endswith('_ms'): row.pop(field)
         evidence.extend([attempts, rows(bundle/'mode_mechanism.csv')])
         if (bundle/'transport_costs.csv').exists():
             evidence.append(rows(bundle/'transport_costs.csv'))
+    if (bundle/'bundle_costs.csv').exists():
+        costs=rows(bundle/'bundle_costs.csv')
+        for row in costs:
+            for field in list(row):
+                if field.endswith('_ms'): row.pop(field)
+        evidence.extend([costs,rows(bundle/'bundle_allocations.csv')])
     return digest(json.dumps(evidence, sort_keys=True).encode())
 
 

@@ -242,6 +242,12 @@ struct MPCConfig {
     bool enable_contouring_constraints = true;  //Road-boundary + contouring cost
     // Opt-in ablation: same hybrid recovery/retry path, both attempts nominal.
     bool nominal_resampling_baseline = false;
+    // Experimental fixed disc tube. Zero disables it; sample counts are unchanged.
+    double certification_tube_radius = 0.0;
+    // Opt-in single-obstacle held-mode bundle experiment; zero disables it.
+    double bundle_amplification = 0.0;
+    double bundle_beta_cp = 0.05;
+    int bundle_extra_draws = 0;
 
     /// Derive safe-horizon / contouring enablement from the MPC type.
     /// Call after setting `type` and before overriding those two flags by hand.
@@ -615,6 +621,16 @@ struct RuntimeConfig {
     }
 
     void validate() const {
+        if (!std::isfinite(mpc.bundle_amplification) || mpc.bundle_amplification<0 ||
+            (mpc.bundle_amplification>0 && mpc.bundle_amplification<=1) || mpc.bundle_amplification>1000 ||
+            mpc.bundle_extra_draws<0 || mpc.bundle_extra_draws>10000 ||
+            !(mpc.bundle_beta_cp>0 && mpc.bundle_beta_cp<1))
+            throw std::invalid_argument("invalid bundle amplification, extras or CP confidence");
+        if (mpc.bundle_amplification>0 && ((mpc.type!=MPCType::SH_MPCC && mpc.type!=MPCType::SH_MPCC_DRO_FALLBACK) ||
+            !mpc.uses_safe_horizon() || mpc.sampling.markov_jump_system || mpc.sampling.num_scenarios<3))
+            throw std::invalid_argument("bundles require a held-mode Safe-Horizon MPCC controller");
+        if (!std::isfinite(mpc.certification_tube_radius) || mpc.certification_tube_radius < 0)
+            throw std::invalid_argument("certification_tube_radius must be finite and non-negative");
         if (mpc.nominal_resampling_baseline && mpc.type != MPCType::SH_MPCC_DRO_FALLBACK)
             throw std::invalid_argument("nominal_resampling_baseline requires sh_mpcc_dro_fallback");
         if (!std::isfinite(mpc.objective.progress_weight) || mpc.objective.progress_weight < 0.0)

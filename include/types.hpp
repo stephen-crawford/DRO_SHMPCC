@@ -381,6 +381,8 @@ struct ObstacleTrajectory {
  * @brief A scenario is a collection of obstacle trajectories.
  */
 struct Scenario {
+    int bundle_id = -1; // Raw scenario_id stays unique; >=0 identifies a macro-scenario.
+    int support_id() const { return bundle_id>=0 ? bundle_id : scenario_id; }
     int scenario_id;                                      // Unique scenario identifier
     std::map<int, ObstacleTrajectory> trajectories;       // obstacle_id -> trajectory
     
@@ -413,6 +415,7 @@ struct Scenario {
  * via a = -n and b = -upper_bound. The normal is frozen before the QP solve.
  */
 struct CollisionConstraint {
+    int raw_scenario_id = -1;
     int k;                    // Timestep index
     int obstacle_id;          // Obstacle this constraint is for
     int scenario_id;          // Scenario this constraint belongs to
@@ -502,6 +505,12 @@ struct FailureDiagnostics {
 
 /// Opt-in observational record of one outer attempt, before fallback replaces it.
 struct SolveAttemptDiagnostics {
+    // Observational snapshot serialized after this attempt returns.
+    std::string certification_snapshot_json;
+    double qp_seconds = 0;
+    double constraint_seconds = 0;
+    int raw_trajectories = 0;
+    int retained_facets = 0;
     bool success = false;
     bool dro_enabled = false;
     double elapsed_seconds = 0.0;
@@ -519,6 +528,20 @@ struct SolveAttemptDiagnostics {
 };
 
 struct MPCResult {
+    int retained_collision_facets = 0;
+    bool bundle_sampling = false;
+    int raw_scenario_draws = 0;
+    double bundle_amplification = 0;
+    double bundle_threshold = 0;
+    double bundle_combined_failure_budget = 0;
+    std::map<std::string,int> bundle_multiplicities;
+    std::map<std::string,double> bundle_mode_upper;
+    bool certification_tube_active = false;
+    bool certification_tube_rejected = false;
+    double certification_tube_max_displacement = 0;
+    std::vector<EgoState> certification_tube_reference;
+    // Conditional held-linear-Gaussian bounds, computed before sampling.
+    std::map<int, std::map<std::string, double>> certification_tube_mode_bounds;
     std::vector<SolveAttemptDiagnostics> attempt_diagnostics;
     FailureDiagnostics failure_diagnostics;
     bool success;                           // Whether the returned plan is executable

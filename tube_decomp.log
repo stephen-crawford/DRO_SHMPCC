@@ -1,0 +1,3 @@
+{"status": "FAIL", "accepted_mode_inequalities": 6, "posterior_exceedances": 2}
+{"status": "FAIL", "accepted_mode_inequalities": 7, "posterior_exceedances": 0}
+{"status": "PASS", "accepted_mode_inequalities": 8, "posterior_exceedances": 0}

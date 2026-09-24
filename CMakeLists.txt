@@ -106,6 +106,7 @@ endif()
 message(STATUS "Using acados HPIPM dense-QP backend: ${DRO_MPC_ACADOS_ROOT} (${DRO_MPC_ACADOS_GIT_COMMIT})")
 
 set(SCENARIO_MPC_SOURCES
+    src/adversarial_bundles.cpp
     src/collision_constraints.cpp
     src/dynamics.cpp
     src/environment_geometry.cpp
@@ -145,6 +146,12 @@ endif()
 # harness and writes a reproducibility/trace/visualization bundle by default.
 add_executable(counterfactual_probe tools/counterfactual_probe.cpp)
 target_link_libraries(counterfactual_probe PRIVATE scenario_mpc)
+
+add_executable(certification_tube_experiment tools/certification_tube_experiment.cpp)
+target_link_libraries(certification_tube_experiment PRIVATE scenario_mpc)
+add_executable(test_certification_tube tests/test_certification_tube.cpp)
+target_link_libraries(test_certification_tube PRIVATE scenario_mpc)
+add_test(NAME test_certification_tube COMMAND test_certification_tube)
 
 add_executable(experiment_runner tools/experiment_runner.cpp)
 target_link_libraries(experiment_runner PRIVATE scenario_mpc)
@@ -269,8 +276,19 @@ add_executable(test_reviewer_controls tests/test_reviewer_controls.cpp)
 target_link_libraries(test_reviewer_controls PRIVATE scenario_mpc)
 add_executable(calibration_assumption_audit tools/calibration_assumption_audit.cpp)
 target_link_libraries(calibration_assumption_audit PRIVATE scenario_mpc)
+add_executable(test_certification_snapshot tests/test_certification_snapshot.cpp)
+target_link_libraries(test_certification_snapshot PRIVATE scenario_mpc)
+# Same private-path integration-test convention as test_bounded_braking.
+target_compile_options(test_certification_snapshot PRIVATE -fno-access-control)
+add_test(NAME test_certification_snapshot COMMAND test_certification_snapshot)
+
 add_executable(certificate_numeric_backend tools/certificate_numeric_backend.cpp)
 target_link_libraries(certificate_numeric_backend PRIVATE scenario_mpc)
+add_executable(test_adversarial_bundles tests/test_adversarial_bundles.cpp)
+target_link_libraries(test_adversarial_bundles PRIVATE scenario_mpc)
+add_test(NAME test_adversarial_bundles COMMAND test_adversarial_bundles)
+add_executable(adversarial_bundle_experiment tools/adversarial_bundle_experiment.cpp)
+target_link_libraries(adversarial_bundle_experiment PRIVATE scenario_mpc)
 add_executable(rare_mode_experiment tools/rare_mode_experiment.cpp)
 target_link_libraries(rare_mode_experiment PRIVATE scenario_mpc)
 add_executable(test_attempt_diagnostics tests/test_attempt_diagnostics.cpp)
