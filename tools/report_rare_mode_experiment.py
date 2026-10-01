@@ -56,7 +56,7 @@ def main(argv=None):
     save(args.output/'coverage_summary.csv',samples)
     save(args.output/'policy_summary.csv',policy)
     notes=dict(matched_groups=len(good),excluded_groups=len(grouped)-len(good),
-        sampling='Fixed nominal history, fixed geometric reference; split batches are unconditional and spend exactly the same total budget.',
+        sampling='Fixed nominal history, fixed geometric reference; split batches spend the same total budget. wdro_stratified forces one draw per mode then draws S-M from q; it is non-IID and has no existing scenario certificate.',
         controller='Real conditional fallback; counts and probabilities refer to actual draws. No iid union formula is asserted for conditional retries.',
         holdout='plan_risk.csv evaluates accepted open-loop plans exactly over three deterministic modes under stated synthetic laws. Not closed-loop rollout risk.',
         safety='Manual low scenario budgets do not inherit the automatic sample-count guarantee; sample_count_sufficient is exported.',

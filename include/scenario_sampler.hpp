@@ -67,7 +67,10 @@ std::vector<Scenario> sample_scenarios(
     const ModeBeliefConfig& mode_belief = {},
     const std::map<int, Eigen::MatrixXd>* per_obstacle_transitions = nullptr,
     std::mt19937* rng = nullptr,
-    int scenario_id_offset = 0
+    int scenario_id_offset = 0,
+    // One forced draw per available mode per obstacle, then residual IID draws.
+    // Held modes only; S >= each mode count. No IID scenario certificate.
+    bool stratified = false
 );
 
 }  // namespace dro_mpc

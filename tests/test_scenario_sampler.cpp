@@ -86,6 +86,37 @@ int main() {
               "Markov sampling honors a deterministic transition matrix and horizon");
     }
 
+    {
+        auto library = modes;
+        library["left"] = modes.begin()->second;
+        library["right"] = modes.begin()->second;
+        const std::map<int, ModeHistory> hh{{4, ModeHistory(4, library)}};
+        const std::map<int, ModeDistribution> vertex{{4, {{"constant_velocity",0.}, {"left",0.}, {"right",1.}}}};
+        std::mt19937 iid_rng(77), explicit_rng(77), strat_rng(77);
+        const auto iid = sample_scenarios(obstacles,hh,&vertex,3,20,{},nullptr,&iid_rng);
+        const auto explicit_iid = sample_scenarios(obstacles,hh,&vertex,3,20,{},nullptr,&explicit_rng,0,false);
+        const auto strat = sample_scenarios(obstacles,hh,&vertex,3,20,{},nullptr,&strat_rng,10,true);
+        std::map<std::string,int> counts;
+        bool unchanged = iid_rng == explicit_rng;
+        for (size_t i=0;i<iid.size();++i) {
+            unchanged = unchanged && same_trajectory(iid[i].trajectories.at(4),explicit_iid[i].trajectories.at(4));
+            ++counts[strat[i].trajectories.at(4).mode_id];
+        }
+        check(unchanged,"default and explicit IID paths preserve trajectories and RNG state");
+        check(counts["constant_velocity"]==1 && counts["left"]==1 && counts["right"]==18 &&
+              strat.front().scenario_id==10 && strat.back().scenario_id==29,
+              "vertex q produces stratified counts 1,1,18 at S=20 with unique IDs");
+        bool rejected=false;
+        try { sample_scenarios(obstacles,hh,&vertex,3,2,{},nullptr,&strat_rng,0,true); }
+        catch (const std::invalid_argument&) { rejected=true; }
+        check(rejected,"stratified budget below mode count is rejected");
+        const std::map<int,Eigen::MatrixXd> transitions{{4,Eigen::MatrixXd::Identity(3,3)}};
+        rejected=false;
+        try { sample_scenarios(obstacles,hh,&vertex,3,20,{},&transitions,&strat_rng,0,true); }
+        catch (const std::invalid_argument&) { rejected=true; }
+        check(rejected,"stratified Markov sampling is rejected");
+    }
+
     std::cout << (failures == 0 ? "ALL SCENARIO-SAMPLER TESTS PASSED\n"
                                 : "SCENARIO-SAMPLER TESTS FAILED\n");
     return failures == 0 ? 0 : 1;

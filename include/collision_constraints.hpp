@@ -10,8 +10,15 @@
 
 #include "types.hpp"
 #include <optional>
+#include <stdexcept>
 
 namespace dro_mpc {
+
+// Distinguish an empty sampled linearization from configuration/programming errors.
+class EmptyFreeSpacePolygon : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 /**
  * @brief A fixed (pre-optimization) linearized collision half-space.

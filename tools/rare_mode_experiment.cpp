@@ -38,13 +38,14 @@ static double margin(const std::vector<EgoState>& plan, const ObstacleState& ini
 }
 
 int main(int argc,char** argv) {
-    if (argc!=4) {
-        std::cerr << "usage: rare_mode_experiment NEW_OUTPUT_DIRECTORY COVERAGE_REPLICATES SOLVE_SEEDS\n";
+    if (argc!=4 && argc!=5) {
+        std::cerr << "usage: rare_mode_experiment NEW_OUTPUT_DIRECTORY COVERAGE_REPLICATES SOLVE_SEEDS [DANGEROUS_COUNT]\n";
         return 2;
     }
     const fs::path root=argv[1];
     const int repetitions=std::stoi(argv[2]), solve_seeds=std::stoi(argv[3]);
-    if (repetitions<1 || solve_seeds<1 || fs::exists(root)) {
+    const int dangerous_count=argc==5 ? std::stoi(argv[4]) : 10;
+    if (repetitions<1 || solve_seeds<1 || dangerous_count<1 || dangerous_count>910 || fs::exists(root)) {
         std::cerr << "positive trial counts and a new output directory are required\n";
         return 2;
     }
@@ -60,7 +61,7 @@ int main(int argc,char** argv) {
         modes.emplace(name,ModeModel(name,Eigen::Matrix4d::Identity(),drift,Eigen::MatrixXd::Zero(4,2)));
     }
     ModeHistory history(0,modes,0);
-    const std::map<std::string,int> counts{{"straight",900},{"away",90},{"cut_in",10}};
+    const std::map<std::string,int> counts{{"straight",910-dangerous_count},{"away",90},{"cut_in",dangerous_count}};
     int tick=0;
     for (const auto& [name,count]:counts)
         for (int i=0;i<count;++i) history.record_observation(tick++,0,name);
@@ -100,18 +101,19 @@ int main(int argc,char** argv) {
     for (int budget:{16,40,80,160}) {
         for (int trial=0;trial<repetitions;++trial) {
             const unsigned seed=static_cast<unsigned>(10001+trial);
-            for (const auto& scheme:{"nominal_single","nominal_split","wdro_single","wdro_nominal_split_unconditional"}) {
+            for (const auto& scheme:{"nominal_single","nominal_split","wdro_single","wdro_nominal_split_unconditional","wdro_stratified"}) {
                 std::mt19937 rng(seed);
                 const std::string name=scheme;
                 const bool split=name=="nominal_split" || name=="wdro_nominal_split_unconditional";
-                const bool use_dro=name=="wdro_single" || name=="wdro_nominal_split_unconditional";
+                const bool stratified=name=="wdro_stratified";
+                const bool use_dro=stratified || name=="wdro_single" || name=="wdro_nominal_split_unconditional";
                 const int first=split ? budget/2 : budget;
                 auto batch=sample_scenarios(obstacles,histories,use_dro ? &q_weights : &p_weights,
-                    horizon,first,runtime.mpc.sampling.mode_belief,nullptr,&rng);
+                    horizon,first,runtime.mpc.sampling.mode_belief,nullptr,&rng,0,stratified);
                 int count=hits(batch);
                 if (split) count+=hits(sample_scenarios(obstacles,histories,&p_weights,horizon,budget-first,
                     runtime.mpc.sampling.mode_belief,nullptr,&rng,first));
-                const double expected=1.-std::pow(1.-(use_dro?qd:pd),first)*std::pow(1.-pd,budget-first);
+                const double expected=stratified ? 1. : 1.-std::pow(1.-(use_dro?qd:pd),first)*std::pow(1.-pd,budget-first);
                 coverage << budget << ',' << seed << ',' << scheme << ',' << budget << ',' << count << ','
                          << (count>0) << ',' << expected << '\n';
             }

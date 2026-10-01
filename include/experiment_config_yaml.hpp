@@ -376,6 +376,7 @@ inline void apply_yaml_file(
             else if (k == "chance_of_certificate_violation" || k == "beta")
                                                            cfg.mpc.sampling.chance_of_certificate_violation = std::stod(val);
             else if (k == "dro_enabled")                   cfg.dro.enabled = to_bool(val);
+            else if (k == "wdro_stratified_sampling")       cfg.mpc.wdro_stratified_sampling = to_bool(val);
             else if (k == "nominal_resampling_baseline")    cfg.mpc.nominal_resampling_baseline = to_bool(val);
             else if (k == "fixed_rho")                     cfg.dro.fixed_rho = std::stod(val);
             else if (k == "risk_measure")                  cfg.dro.solver.radius_calibration.risk_measure = parse_risk(val);

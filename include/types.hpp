@@ -507,6 +507,7 @@ struct SolveAttemptDiagnostics {
     double elapsed_seconds = 0.0;
     int sampled_scenarios = 0;
     int qp_calls = 0;
+    double trajectory_generation_seconds = 0.0; // Opt-in wall time inside sample_scenarios only.
     // Held-mode counts; switching trajectories count each scenario's initial mode.
     std::map<int, std::map<std::string, int>> initial_mode_counts;
     std::map<int, std::map<std::string, double>> sampling_weights;

@@ -15,7 +15,7 @@ import comparison_evidence as evidence
 ROOT = analysis.ROOT
 PAIR_STYLES = ('sh_mpcc', 'sh_mpcc_dro')
 SHIFT_KEYS = {'shift_psi', 'shift_boost', 'boosted_mode', 'rare_mode', 'rare_mode_probability'}
-EXTRA_STYLES = ('sh_mpcc_extra', 'sh_mpcc_resample', 'sh_mpcc_dro_fallback')
+EXTRA_STYLES = ('sh_mpcc_extra', 'sh_mpcc_resample', 'sh_mpcc_dro_fallback', 'sh_mpcc_dro_stratified')
 
 
 def load_settings(path):
@@ -25,6 +25,10 @@ def load_settings(path):
     extras = settings.get('additional_controllers', [])
     if len(extras)!=len(set(extras)) or any(s not in EXTRA_STYLES for s in extras):
         raise ValueError('invalid additional_controllers')
+    if 'sh_mpcc_dro_stratified' in extras:
+        overrides = settings.get('overrides', {})
+        if overrides.get('safe_horizon_enabled') is not False or overrides.get('switch_regime', 'hold') != 'hold' or not settings.get('scenario_budgets'):
+            raise ValueError('stratified arm requires uncertified fixed-budget held-mode settings')
     budgets = settings.get('scenario_budgets')
     if budgets is not None and (not budgets or len(budgets)!=len(set(budgets)) or
                                any(type(s) is not int or s<3 for s in budgets)):
@@ -90,6 +94,7 @@ def config_text(case, settings):
     if 'scenario_budget' in case:
         values.update(num_scenarios=case['scenario_budget']*(2 if style=='sh_mpcc_extra' else 1),
                       automatically_compute_sample_size=False)
+    values.update(wdro_stratified_sampling=style=='sh_mpcc_dro_stratified')
     values.update(method_name=style,scenario_tag=case['case'])
     lines = analysis.config_text(dict(case,solver_style=base_style), settings).splitlines()
     found=set()
@@ -186,7 +191,7 @@ def summarize(pairs):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--settings', type=Path, default=ROOT/'configs/comparison_matrix/settings.json')
+    parser.add_argument('--settings', type=Path, default=ROOT/'configs/causal_matrix/settings.json')
     parser.add_argument('--runner', type=Path, default=ROOT/'build-base/experiment_runner')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--case', help='Exact pair name; selects both controllers')

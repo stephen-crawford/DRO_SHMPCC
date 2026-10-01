@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 LABELS = ['test_suite', 'test_name', 'test_root', 'matrix_identity']
-BUNDLE_TABLES = ['decisions', 'attempts', 'mode_coverage', 'mode_mechanism', 'transport_costs']
+BUNDLE_TABLES = ['decisions', 'attempts', 'mode_coverage', 'mode_mechanism', 'transport_costs', 'rollout']
 REPORT_TABLES = ['primary_summary', 'all_comparisons', 'pairs', 'summary', 'summary_per_seed',
                  'mechanism_per_seed', 'mechanism_summary', 'vertex_reachability',
                  'concentration_per_solve', 'concentration_summary']
@@ -64,7 +64,7 @@ def enrich_identity(log, root, identity):
         identity['solver_style'] = log.parent.name
         identity['case'] = log.parent.name + '_' + identity['pair_case']
     if 'solver_style' not in identity:
-        for style in ['sh_mpcc_dro_fallback', 'sh_mpcc_resample', 'sh_mpcc_extra', 'sh_mpcc_dro', 'sh_mpcc']:
+        for style in ['sh_mpcc_dro_stratified', 'sh_mpcc_dro_fallback', 'sh_mpcc_resample', 'sh_mpcc_extra', 'sh_mpcc_dro', 'sh_mpcc']:
             if Path(identity['case']).name.startswith(style+'_'):
                 identity['solver_style'] = style
                 break
@@ -73,7 +73,7 @@ def enrich_identity(log, root, identity):
     if config.exists():
         for line in config.read_text().splitlines():
             key, sep, value = line.partition(':')
-            if sep and key in ['safe_horizon_enabled', 'automatically_compute_sample_size', 'num_scenarios', 'nominal_resampling_baseline']:
+            if sep and key in ['safe_horizon_enabled', 'automatically_compute_sample_size', 'num_scenarios', 'nominal_resampling_baseline', 'wdro_stratified_sampling', 'scenario_guarantee_status']:
                 identity[key] = value.strip()
         identity['certification_status'] = ('not_requested' if identity.get('safe_horizon_enabled') == 'false'
                                             else 'see_decisions')
@@ -111,3 +111,33 @@ def collect_reports(root, output):
                 tables.setdefault('rare_'+name, []).extend(
                     dict(row, **labels, source_artifact=str(source)) for row in read_csv(source))
     return tables
+
+
+def expected_runs(root, output):
+    """List planned paired runs even when no process or log was created."""
+    records = []
+    for path in sorted(root.rglob('matrix.json')):
+        if path.is_relative_to(output):
+            continue
+        manifest = read_json(path)
+        if not isinstance(manifest, dict):
+            continue
+        settings = manifest.get('settings', {})
+        for case in manifest.get('cases', []):
+            if 'pair_directory' not in case:
+                continue
+            for seed in settings.get('seeds', []):
+                for repeat in range(settings.get('repeats', 1)):
+                    log = path.parent/case['pair_directory']/f'seed_{seed}'/case['solver_style']/f'repeat_{repeat}.log'
+                    records.append(dict(context(path, root), case=case['case'],
+                        pair_case=case['pair'], seed=seed, repeat=repeat,
+                        solver_style=case['solver_style'],
+                        scenario_budget=case.get('scenario_budget', ''),
+                        profile=case.get('profile', ''),
+                        log_file=str(log.relative_to(root)), log_exists=int(log.exists())))
+    return records
+
+
+if __name__ == '__main__':
+    from scrub_analysis_logs import main
+    main()

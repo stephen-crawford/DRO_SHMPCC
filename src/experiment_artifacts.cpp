@@ -163,6 +163,9 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     out << "# Resolved, replayable ExperimentConfig.\n";
     write_scalar(out, "mpc_type", mpc_type_name(mpc.type));
     write_bool(out, "nominal_resampling_baseline", mpc.nominal_resampling_baseline);
+    write_bool(out, "wdro_stratified_sampling", mpc.wdro_stratified_sampling);
+    if (mpc.wdro_stratified_sampling)
+        out << "scenario_guarantee_status: not_applicable_non_iid_stratified\n";
     write_scalar(out, "progress_weight", mpc.objective.progress_weight);
     write_scalar(out, "horizon", mpc.horizon);
     write_scalar(out, "dt", mpc.dt);

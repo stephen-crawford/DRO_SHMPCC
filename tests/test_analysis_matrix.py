@@ -116,6 +116,34 @@ class MatrixTests(unittest.TestCase):
         matrix.write_csv(root/'trace.csv', trace)
         return case
 
+    def test_repeat_signature_excludes_attempt_timings_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = self.synthetic_bundle(root)
+            metrics = matrix.analyze(root, case)
+            attempt = dict(step=0, attempt=0, solve_ms=1, qp_ms=.5,
+                           constraint_ms=.2, scenario_count=10, qp_calls=2, success=1)
+            matrix.write_csv(root/'attempts.csv', [attempt])
+            matrix.write_csv(root/'mode_mechanism.csv', [dict(sampled_count=10)])
+            baseline = matrix.repeat_signature(root, metrics)
+            attempt.update(solve_ms=7, qp_ms=4, constraint_ms=2)
+            matrix.write_csv(root/'attempts.csv', [attempt])
+            self.assertEqual(baseline, matrix.repeat_signature(root, metrics))
+            for field in ('scenario_count', 'qp_calls', 'success'):
+                changed = dict(attempt)
+                changed[field] += 1
+                matrix.write_csv(root/'attempts.csv', [changed])
+                self.assertNotEqual(baseline, matrix.repeat_signature(root, metrics))
+            matrix.write_csv(root/'attempts.csv', [attempt])
+            matrix.write_csv(root/'mode_mechanism.csv', [dict(sampled_count=9)])
+            self.assertNotEqual(baseline, matrix.repeat_signature(root, metrics))
+            # Older artifacts without detailed timing columns remain supported.
+            matrix.write_csv(root/'mode_mechanism.csv', [dict(sampled_count=10)])
+            attempt.pop('qp_ms')
+            attempt.pop('constraint_ms')
+            matrix.write_csv(root/'attempts.csv', [attempt])
+            self.assertEqual(baseline, matrix.repeat_signature(root, metrics))
+
     def test_signed_disc_margins_and_rollout_miss_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

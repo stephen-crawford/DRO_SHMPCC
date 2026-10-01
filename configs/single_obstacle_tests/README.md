@@ -27,18 +27,10 @@ parameters otherwise inherit the defaults. These feedback-driven plant policies
 are stress fixtures; logged scenario certificates do not establish a probability
 guarantee for those policies.
 
-Run from the repository root:
-
-```bash
-python3 tests/run_single_obstacle_matrix.py --runner build-base/experiment_runner \
-  --output build-base/single-obstacle-artifacts --jobs 4
-```
-
-Use `--resume` to retain completed cases and retry errors. Each case gets two
-complete artifact bundles, logs, and `test_result.json`. `index.html` and
-`results.json` update as cases finish. Tests check repeatability, actual four-mode
-plant dynamics, actor counts, GIF frames, completion and collision. FAIL results
-and incomplete trajectories remain visible; no solver limits are weakened.
+The visualization-only matrix launcher was retired during consolidation. These
+YAML files remain historical fixtures and can be passed individually to
+`build-base/experiment_runner --config CONFIG --seed 77 --output OUTPUT`.
+Use `configs/causal_matrix/README.md` for the current empirical experiment.
 
 RViz (substitute CASE):
 
@@ -57,8 +49,7 @@ freeze the plant or fabricate a successful control.
 
 Linearized collision constraint diagnostics are enabled by default. Set
 `artifact_show_linearized_constraints: false` in YAML, or pass
-`--no-linearized-constraints` to `experiment_runner` or
-`tests/run_single_obstacle_matrix.py` to disable them (`--linearized-constraints`
+`--no-linearized-constraints` to `experiment_runner` to disable them (`--linearized-constraints`
 enables them explicitly). GIF frames draw all retained horizon/disc collision
 boundaries in white, with short ticks pointing into `a.dot(disc_center) >= b`.
 The 2 m segments are boundary markers, not finite constraint extents. SVG shows

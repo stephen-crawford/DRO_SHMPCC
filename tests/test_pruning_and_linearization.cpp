@@ -123,6 +123,22 @@ int main()
     constexpr double dt = 1.0;
 
     {
+        const std::vector<CollisionConstraint> contradictory = {
+            make_constraint(1, 90, Eigen::Vector2d(1.0, 0.0), 1.0),
+            make_constraint(1, 91, Eigen::Vector2d(-1.0, 0.0), 1.0)
+        };
+        bool typed_rejection = false;
+        try {
+            (void)reduce_to_free_space_polytopes(contradictory, anchor_reference,
+                dynamic_reference, num_discs, vehicle_length, max_abs_velocity, dt, 20);
+        } catch (const EmptyFreeSpacePolygon&) {
+            typed_rejection = true;
+        }
+        check(typed_rejection, "contradictory sampled halfspaces raise the specific empty-polygon exception");
+    }
+
+
+    {
         const std::vector<CollisionConstraint> all = {
             make_constraint(1, 10, Eigen::Vector2d(1.0, 0.0), 0.0),
             make_constraint(1, 11, Eigen::Vector2d(1.0, 0.0), 1.0)

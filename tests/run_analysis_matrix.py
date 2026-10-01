@@ -237,6 +237,9 @@ def repeat_signature(bundle, metrics):
         attempts = rows(bundle/'attempts.csv')
         for row in attempts:
             row.pop('solve_ms')
+            # Wall-clock diagnostics are not deterministic numerical evidence.
+            row.pop('qp_ms', None)
+            row.pop('constraint_ms', None)
         evidence.extend([attempts, rows(bundle/'mode_mechanism.csv')])
         if (bundle/'transport_costs.csv').exists():
             evidence.append(rows(bundle/'transport_costs.csv'))

@@ -87,3 +87,16 @@ The fixed-budget decision export contained 3,840 rows, all with zero requested
 and issued certificates; both repeat indices were retained. All 32 failed probe
 logs retained ERROR status. No runtime warnings or errors occurred in these
 scrubber runs. Candidate changes tested; behavior requires user verification.
+
+
+## Current causal matrix
+
+`python3 tools/scrub_artifacts.py ROOT --out CSV` invokes the same normalizer as
+`scrub_analysis_logs.py`. `expected_runs.csv` includes every planned paired run,
+even if no log was written. `artifact_rollout.csv` preserves structured rollout
+outcomes alongside the decision/attempt/mode evidence.
+
+Run `python3 tools/analyze_comparison_results.py CSV --out REPORT` for complete
+five-arm comparisons. This keeps analysis separate from raw normalization.
+See [the current matrix](../configs/causal_matrix/README.md) for axes, commands,
+completeness rules and the observed repeatability limitation.

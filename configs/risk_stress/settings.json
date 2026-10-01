@@ -1,0 +1,17 @@
+{
+  "families": [
+    {"name":"rare_turn", "danger_counts":[20,50,80,100,150,200], "history_lag":0},
+    {"name":"rare_braking", "danger_counts":[20,50,80,100,150,200], "history_lag":0},
+    {"name":"late_switch", "danger_counts":[20,50,80,100,150,200], "history_lag":5},
+    {"name":"two_sided_trap", "danger_counts":[20,50,80,100,150,200], "history_lag":0},
+    {"name":"rare_benign", "danger_counts":[20,50,80,100,150,200], "history_lag":0},
+    {"name":"common_dangerous", "danger_counts":[300], "history_lag":0},
+    {"name":"equal_probability", "danger_counts":[333], "history_lag":0},
+    {"name":"equal_geometry", "danger_counts":[50], "history_lag":0}
+  ],
+  "scenario_budgets":[20,40,10],
+  "switch_steps":[5,10,15,20],
+  "seeds":[77,78,79,80,81,82,83,84,85,86],
+  "steps":80,
+  "arms":["sh_mpcc","sh_mpcc_dro","sh_mpcc_extra","sh_mpcc_resample","sh_mpcc_dro_fallback"]
+}

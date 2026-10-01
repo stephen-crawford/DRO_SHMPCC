@@ -7,7 +7,7 @@ import random
 import run_analysis_matrix as analysis
 
 ARM_LABELS = {'sh_mpcc': 'A', 'sh_mpcc_extra': 'B', 'sh_mpcc_dro': 'C',
-              'sh_mpcc_resample': 'D', 'sh_mpcc_dro_fallback': 'E'}
+              'sh_mpcc_resample': 'D', 'sh_mpcc_dro_fallback': 'E', 'sh_mpcc_dro_stratified': 'F'}
 
 
 def flat_yaml(path):
@@ -39,7 +39,7 @@ def run_checked_trial(case,seed,args,settings,identity):
             resolved=flat_yaml(bundle/'resolved_config.yaml')
             for key in ['shift_psi','shift_boost','boosted_mode','rare_mode','rare_mode_probability',
                         'nominal_resampling_baseline','dro_enabled','artifact_capture_attempt_diagnostics',
-                        'safe_horizon_enabled','automatically_compute_sample_size']:
+                        'safe_horizon_enabled','automatically_compute_sample_size','wdro_stratified_sampling']:
                 if requested[key]!=resolved[key]:raise ValueError(f'resolved {key} differs from requested profile')
             if not requested['automatically_compute_sample_size'] and requested['num_scenarios']!=resolved['num_scenarios']:
                 raise ValueError('resolved scenario budget differs from requested budget')

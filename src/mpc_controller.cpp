@@ -130,6 +130,8 @@ MPCController::MPCController(const RuntimeConfig& config)
 // callers, which already normalize during their conversion lifecycle.
 config_.normalize();
 config_.validate();
+if (config_.mpc.wdro_stratified_sampling)
+    std::cerr << "[SAMPLING] WDRO stratified: one sample per available mode plus residual q* draws; logged q is the residual law, q_times_S is not expected stratified count; non-IID, existing scenario guarantees do not apply; certification disabled" << std::endl;
 default_modes_ = create_obstacle_mode_models(config_.mpc.dt);
 
 // Initialize DRO module from nested DROConfig.
@@ -250,9 +252,23 @@ auto finish_attempt_record = [&](bool success, bool use_dro) {
         std::chrono::steady_clock::now() - attempt_started).count();
     attempts.push_back(current_attempt_diagnostics_);
 };
+// Uncertified experiments may reject an empty linearized problem and use the
+// existing retry policy. Certified controllers retain the original exception.
+auto run_attempt = [&](bool use_dro) {
+    try {
+        return solve_attempt(ego_state, obstacles, goal, reference_velocity,
+                             path_progress, path_length, use_dro);
+    } catch (const EmptyFreeSpacePolygon& error) {
+        if (config_.mpc.uses_safe_horizon()) throw;
+        MPCResult rejected;  // No executable controls and no requested certificate.
+        rejected.sampled_scenarios = static_cast<int>(scenarios_.size());
+        std::cerr << "[FREE POLY REJECT] step=" << iteration_count_
+                  << " dro=" << use_dro << " success=0 reason=" << error.what() << std::endl;
+        return rejected;
+    }
+};
 begin_attempt_record();
-auto result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
-                            path_progress, path_length, config_.dro.enabled);
+auto result = run_attempt(config_.dro.enabled);
 finish_attempt_record(result.success, config_.dro.enabled);
 if (allow_nominal && !result.success) {
     reference_trajectory_ = previous_reference;
@@ -261,8 +277,7 @@ if (allow_nominal && !result.success) {
     // A fresh draw from the nominal belief; external/Q* weights must not leak in.
     custom_per_obstacle_weights_.clear();
     begin_attempt_record();
-    result = solve_attempt(ego_state, obstacles, goal, reference_velocity,
-                           path_progress, path_length, false);
+    result = run_attempt(false);
     finish_attempt_record(result.success, false);
     result.nominal_fallback_attempted = true;
     result.used_nominal_fallback = result.success;
@@ -311,6 +326,18 @@ for (const auto& [obs_id, _] : obstacles) {
 
 // Step 1: Initialize reference trajectory (warmstart from previous)
 initialize_reference_trajectory(ego_with_spline, goal, reference_velocity);
+
+// Observe only sampler execution, excluding DRO and bookkeeping. Forward every argument unchanged.
+// With diagnostics disabled, this delegates directly without reading the clock.
+auto sample_scenarios = [&](const auto&... arguments) {
+    if (!capture_attempt_diagnostics_)
+        return dro_mpc::sample_scenarios(arguments...);
+    const auto sampling_start = std::chrono::steady_clock::now();
+    auto sampled = dro_mpc::sample_scenarios(arguments...);
+    current_attempt_diagnostics_.trajectory_generation_seconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - sampling_start).count();
+    return sampled;
+};
 
 // Step 2: Sample scenarios (DRO reshapes the categorical to q*, then i.i.d. sample)
 std::map<int, std::map<std::string, double>> sampling_weights;
@@ -516,10 +543,13 @@ for (const auto& [mode_id, p] : nominal_weights) {
             scenarios_ = sample_scenarios(
                 obstacles, mode_histories_, &per_obs_weights_dro,
                 config_.mpc.horizon, S, config_.mpc.sampling.mode_belief,
-                nullptr, &rng_);
+                nullptr, &rng_, 0, config_.mpc.wdro_stratified_sampling);
         }
     }
 }
+
+if (config_.mpc.wdro_stratified_sampling && scenarios_.empty() && !obstacles.empty())
+    throw std::runtime_error("stratified WDRO sampling has no available WDRO batch");
 
 // When custom per-obstacle weights are set (e.g. from OT predictor),
 // use them for scenario sampling (only fires when DRO is off).
@@ -549,6 +579,26 @@ if (scenarios_.empty()) {
             config_.mpc.sampling.mode_belief, nullptr, &rng_
         );
     }
+}
+
+// Explicitly requested, non-IID experiment only. Ordinary sampling above still advances
+// its RNG normally; no constraints, solver settings, or acceptance logic are changed.
+if (experimental_scenarios_) {
+    auto batch = std::move(*experimental_scenarios_);
+    experimental_scenarios_.reset();
+    std::set<int> ids;
+    for (const auto& scenario : batch) {
+        if (!ids.insert(scenario.scenario_id).second || scenario.trajectories.size() != obstacles.size())
+            throw std::invalid_argument("invalid experimental scenario identities");
+        for (const auto& [id, state] : obstacles) {
+            const auto trajectory = scenario.trajectories.find(id);
+            if (trajectory == scenario.trajectories.end() ||
+                trajectory->second.steps.size() != static_cast<size_t>(config_.mpc.horizon + 1))
+                throw std::invalid_argument("invalid experimental scenario horizon/obstacles");
+        }
+    }
+    scenarios_ = std::move(batch);
+    std::cerr << "[SCENARIO INTERVENTION] non_iid=1 guarantees=not_requested\n";
 }
 
 // Clear custom weights after use (they're set per-solve by external code)
@@ -4924,6 +4974,7 @@ return stats;
 }
 
 void MPCController::reset() {
+experimental_scenarios_.reset();
 mode_histories_.clear();
 obstacle_class_ids_.clear();
 scenarios_.clear();

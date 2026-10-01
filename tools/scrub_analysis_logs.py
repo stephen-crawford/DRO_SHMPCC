@@ -8,7 +8,7 @@ import statistics
 from collections import Counter
 from pathlib import Path
 from scrub_artifacts import (LABELS, BUNDLE_TABLES, REPORT_TABLES, RARE_TABLES,
-                             enrich_identity, artifact_tables, collect_reports)
+                             enrich_identity, artifact_tables, collect_reports, expected_runs)
 
 
 KV_RE = re.compile(
@@ -822,7 +822,7 @@ def parse_log(log_path, root):
     )
     variants = {'sh_mpcc': 'non_dro', 'sh_mpcc_dro': 'dro',
                 'sh_mpcc_extra': 'extra_nominal', 'sh_mpcc_resample': 'nominal_resample',
-                'sh_mpcc_dro_fallback': 'dro_fallback'}
+                'sh_mpcc_dro_fallback': 'dro_fallback', 'sh_mpcc_dro_stratified': 'dro_stratified'}
     if identity.get('solver_style') in variants:
         variant = variants[identity['solver_style']]
     if identity.get('nominal_resampling_baseline') == 'true':
@@ -1510,6 +1510,9 @@ Example:
         dro_mode_rows.extend(modes)
         dro_sample_rows.extend(samples)
         control_step_rows.extend(controls)
+
+    write_csv(args.out / 'expected_runs.csv', expected_runs(root, args.out),
+              LABELS + ['pair_case', 'seed', 'repeat', 'solver_style', 'log_file', 'log_exists'])
 
     preferred = LABELS + [
         "pair_case",

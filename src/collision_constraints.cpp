@@ -871,7 +871,7 @@ namespace dro_mpc {
                         *constraint);
 
                 if (polygon.empty()) {
-                    throw std::runtime_error(
+                    throw EmptyFreeSpacePolygon(
                         "Free-space polygon became empty at k="
                         + std::to_string(k)
                         + ", disc="

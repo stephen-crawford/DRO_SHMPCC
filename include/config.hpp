@@ -242,6 +242,8 @@ struct MPCConfig {
     bool enable_contouring_constraints = true;  //Road-boundary + contouring cost
     // Opt-in ablation: same hybrid recovery/retry path, both attempts nominal.
     bool nominal_resampling_baseline = false;
+    // Experimental non-IID coverage floor; existing scenario certificates do not apply.
+    bool wdro_stratified_sampling = false;
 
     /// Derive safe-horizon / contouring enablement from the MPC type.
     /// Call after setting `type` and before overriding those two flags by hand.
@@ -615,6 +617,11 @@ struct RuntimeConfig {
     }
 
     void validate() const {
+        if (mpc.wdro_stratified_sampling &&
+            (!dro.enabled || mpc.uses_safe_horizon() ||
+             mpc.sampling.automatically_compute_sample_size || mpc.sampling.markov_jump_system ||
+             mpc.type == MPCType::SH_MPCC_DRO_FALLBACK))
+            throw std::invalid_argument("wdro_stratified_sampling requires raw WDRO, held modes, manual budget and safe_horizon_enabled=false; IID scenario guarantees do not apply");
         if (mpc.nominal_resampling_baseline && mpc.type != MPCType::SH_MPCC_DRO_FALLBACK)
             throw std::invalid_argument("nominal_resampling_baseline requires sh_mpcc_dro_fallback");
         if (!std::isfinite(mpc.objective.progress_weight) || mpc.objective.progress_weight < 0.0)

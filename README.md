@@ -248,8 +248,7 @@ states, and checks its returned trajectory against vehicle propagation.
 
 Linearized collision constraint diagnostics are enabled by default. Set
 `artifact_show_linearized_constraints: false` in YAML, or pass
-`--no-linearized-constraints` to `experiment_runner` or
-`tests/run_single_obstacle_matrix.py` to disable them (`--linearized-constraints`
+`--no-linearized-constraints` to `experiment_runner` to disable them (`--linearized-constraints`
 enables them explicitly). GIF frames draw all retained horizon/disc collision
 boundaries in white, with short ticks pointing into `a.dot(disc_center) >= b`.
 The 2 m segments are boundary markers, not finite constraint extents. SVG shows
@@ -266,7 +265,15 @@ collision and SH certification rates, complete sampled-mode coverage, timing,
 control effort and signed conservatism metrics. Generate or mass-run it with
 `python3 tests/run_analysis_matrix.py --output build-base/analysis-matrix`.
 
-### Comparison matrix
+### Current empirical test matrix
+
+Use the [single causal comparison matrix](configs/causal_matrix/README.md) for
+mismatch → mode representation → controller behavior → safety/completion → cost.
+`tests/run_comparison_matrix.py` now defaults to that five-arm matrix. The analysis
+runner remains its shared execution implementation; earlier settings are retained
+for reproducing historical results.
+
+### Comparison matrix (historical settings)
 
 The [comparison matrix](configs/comparison_matrix/README.md) searches seed-paired
 SH-MPCC versus SH-MPCC with DRO outcomes under distribution shift and mode boost.

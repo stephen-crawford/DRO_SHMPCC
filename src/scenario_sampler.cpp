@@ -191,8 +191,19 @@ std::vector<Scenario> sample_scenarios(
     const ModeBeliefConfig& mode_belief,
     const std::map<int, Eigen::MatrixXd>* per_obstacle_transitions,
     std::mt19937* rng,
-    int scenario_id_offset
+    int scenario_id_offset,
+    bool stratified
 ) {
+    if (stratified && per_obstacle_transitions != nullptr)
+        throw std::invalid_argument("stratified sampling supports held modes only");
+    if (stratified) {
+        for (const auto& [id, state] : obstacles) {
+            const auto history = mode_histories.find(id);
+            if (history == mode_histories.end() || history->second.available_modes.empty() ||
+                num_scenarios < static_cast<int>(history->second.available_modes.size()))
+                throw std::invalid_argument("stratified sampling requires a complete mode library and S >= M");
+        }
+    }
     // Create local RNG if not provided
     std::mt19937 local_rng;
     if (rng == nullptr) {
@@ -266,8 +277,16 @@ std::vector<Scenario> sample_scenarios(
                     obs_id, obs_state, *plan.available_modes, plan.weights,
                     plan.transition, modes, horizon, *rng);
             } else {
+                ModeDistribution forced;
+                const ModeDistribution* weights = &plan.weights;
+                if (stratified && s < static_cast<int>(plan.available_modes->size())) {
+                    auto mode = plan.available_modes->begin();
+                    std::advance(mode, s);
+                    forced[mode->first] = 1.0;
+                    weights = &forced;
+                }
                 trajectories[obs_id] = sample_obstacle_trajectory(
-                    obs_id, obs_state, *plan.available_modes, plan.weights,
+                    obs_id, obs_state, *plan.available_modes, *weights,
                     horizon, *rng);
             }
         }

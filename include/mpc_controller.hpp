@@ -149,6 +149,17 @@ public:
     /// scenario sampling. Cleared after each solve() call.
     void set_custom_mode_weights(int obstacle_id,
                                  const std::map<std::string, double>& weights);
+    /// One-shot batch for explicitly uncertified count-intervention experiments.
+    /// Ordinary arms never set this. The experiment must supply paired trajectory/noise banks.
+    void set_experimental_scenarios(std::vector<Scenario> batch) {
+        if (config_.mpc.uses_safe_horizon() || config_.dro.enabled ||
+            config_.mpc.type != MPCType::SH_MPCC || config_.mpc.sampling.markov_jump_system ||
+            config_.mpc.wdro_stratified_sampling ||
+            batch.size() != static_cast<size_t>(config_.mpc.sampling.num_scenarios))
+            throw std::invalid_argument("scenario intervention requires raw uncertified SH_MPCC and exactly S scenarios");
+        experimental_scenarios_ = std::move(batch);
+    }
+
     /// Clear all custom mode weights.
     void clear_custom_mode_weights();
 
@@ -352,6 +363,7 @@ private:
 
     /// Custom per-obstacle mode weights (set externally, e.g. from OT predictor).
     std::map<int, std::map<std::string, double>> custom_per_obstacle_weights_;
+    std::optional<std::vector<Scenario>> experimental_scenarios_;
 
 };
 
