@@ -416,6 +416,11 @@ inline std::string risk_scoring_model_name(DRORiskScoringModel model) {
     /// Exact primal discrete-Wasserstein OT reweighting.
     bool use_primal_ot = true;
 
+    /// Paper Q_risk allocator. False retains the legacy unconstrained allocators.
+    bool use_domination_constraints = true;
+    /// tau_r in metres of penetration, prescribed before certification sampling.
+    double dangerous_risk_threshold = 0.01;
+
     DRORiskMeasure risk_measure =
         DRORiskMeasure::SURROGATE_VAR_BONFERRONI;
 
@@ -566,7 +571,14 @@ struct RuntimeConfig {
         int nonremoved_support_cap,
         int removal_budget = 0
     ) const {
-        const double eps = epsilon();
+        return compute_required_scenarios_for_risk(epsilon(), nonremoved_support_cap, removal_budget);
+    }
+
+    /// Same Safe-Horizon formula with the pre-sampling transfer target epsilon/zeta.
+    int compute_required_scenarios_for_risk(double eps, int nonremoved_support_cap,
+                                            int removal_budget = 0) const {
+        if (!(eps > 0.0 && eps < 1.0))
+            throw std::invalid_argument("scenario risk target must be in (0, 1)");
         const double beta = mpc.sampling.chance_of_certificate_violation;
         const int n = std::max(0, nonremoved_support_cap) +
                       std::max(0, removal_budget);
@@ -644,6 +656,11 @@ struct RuntimeConfig {
             throw std::invalid_argument("scenario_removal_budget must be non-negative");
 
         const auto& radius = dro.solver.radius_calibration;
+        if (!std::isfinite(radius.dangerous_risk_threshold) || radius.dangerous_risk_threshold <= 0.0)
+            throw std::invalid_argument("dangerous_risk_threshold must be finite and positive");
+        if (radius.use_domination_constraints &&
+            (!(radius.alpha_one_sided >= 0.5) || !(radius.alpha_one_sided < 1.0)))
+            throw std::invalid_argument("paper penetration bound requires alpha in [0.5, 1)");
         if (!is_valid_wasserstein_radius_method(
             radius.wasserstein_radius_method)) {
                 throw std::invalid_argument(

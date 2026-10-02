@@ -210,6 +210,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_scalar(out, "alpha_one_sided", radius.alpha_one_sided);
     write_scalar(out, "calibration_scale", radius.calibration_scale);
     write_bool(out, "use_primal_ot", radius.use_primal_ot);
+    write_bool(out, "use_domination_constraints", radius.use_domination_constraints);
+    write_scalar(out, "dangerous_risk_threshold", radius.dangerous_risk_threshold);
     write_scalar(out, "risk_measure", risk_measure_name(radius.risk_measure));
     write_scalar(out, "risk_scoring_model",
                  risk_scoring_model_name(radius.risk_scoring_model));
@@ -1354,9 +1356,23 @@ std::string write_rollout_artifacts(
         require_open(decisions, decisions_path);
         require_open(coverage, coverage_path);
         decisions << std::setprecision(17)
-            << "step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count,backup_available,backup_removal_budget_exceeded,backup_dro_failed,braking_collision_feasible,any_homotopy_geometrically_feasible,last_qp_converged,sqp_sampled_collision_feasible,fallback_sampled_collision_feasible,nominal_fallback_attempted,used_nominal_fallback\n";
+            << "step,solve_ms,success,certificate_requested,certified,applied_control_effort,scenario_count,backup_available,backup_removal_budget_exceeded,backup_dro_failed,braking_collision_feasible,any_homotopy_geometrically_feasible,last_qp_converged,sqp_sampled_collision_feasible,fallback_sampled_collision_feasible,nominal_fallback_attempted,used_nominal_fallback,domination_factor,sampling_violation_target,transfer_bound_satisfied\n";
+        std::ofstream transfer(run_directory / "distribution_transfer.csv");
+        require_open(transfer, run_directory / "distribution_transfer.csv");
+        transfer << std::setprecision(17)
+            << "step,obstacle_id,mode,envelope,q,risk,nominal_domination,domination,rho,transport_cost\n";
         coverage << "step,obstacle_id,class_id,true_mode,sampled_modes,represented,scenario_count\n";
         for (const auto& decision : trace.decisions) {
+            for (const auto& [id, allocation] : decision.dro_results) {
+                for (const auto& [mode, upper] : allocation.coordinate_envelope) {
+                    transfer << decision.step << ',' << id << ',' << mode << ',' << upper
+                        << ',' << allocation.worst_case_weights.at(mode)
+                        << ',' << allocation.risk_per_mode.at(mode)
+                        << ',' << allocation.nominal_domination_factor
+                        << ',' << allocation.domination_factor << ',' << allocation.rho_used
+                        << ',' << allocation.implied_transport_cost << '\n';
+                }
+            }
             decisions << decision.step << ',' << decision.solve_ms << ',' << decision.success << ','
                 << decision.certificate_requested << ',' << decision.certified << ','
                 << decision.applied_control_effort << ',' << decision.scenario_count
@@ -1370,6 +1386,9 @@ std::string write_rollout_artifacts(
                 << ',' << decision.failure_diagnostics.fallback_sampled_collision_feasible
                 << ',' << decision.nominal_fallback_attempted
                 << ',' << decision.used_nominal_fallback
+                << ',' << decision.distribution_domination_factor
+                << ',' << decision.sampling_violation_target
+                << ',' << decision.transfer_bound_satisfied
                 << '\n';
             for (const auto& item : decision.mode_coverage) {
                 coverage << decision.step << ',' << item.obstacle_id << ',' << item.class_id << ','

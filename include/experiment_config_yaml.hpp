@@ -389,6 +389,8 @@ inline void apply_yaml_file(
             else if (k == "calibration_scale")             cfg.dro.solver.radius_calibration.calibration_scale = std::stod(val);
             else if (k == "alpha_one_sided")               cfg.dro.solver.radius_calibration.alpha_one_sided = std::stod(val);
             else if (k == "use_calibrated_radius")         cfg.dro.solver.radius_calibration.use_calibrated_radius = to_bool(val);
+            else if (k == "use_domination_constraints") cfg.dro.solver.radius_calibration.use_domination_constraints = to_bool(val);
+            else if (k == "dangerous_risk_threshold") cfg.dro.solver.radius_calibration.dangerous_risk_threshold = std::stod(val);
             else if (k == "use_primal_ot")                 cfg.dro.solver.radius_calibration.use_primal_ot = to_bool(val);
             else if (k == "min_radius")                    cfg.dro.solver.min_radius = std::stod(val);
             else if (k == "max_radius")                    cfg.dro.solver.max_radius = std::stod(val);

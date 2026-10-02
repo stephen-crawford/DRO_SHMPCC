@@ -10,6 +10,7 @@
 #include "primal_ot.hpp"
 #include "mode_weights.hpp"
 #include "schuurmans_ambiguity.hpp"
+#include <boost/math/distributions/normal.hpp>
 #include <cmath>
 #include <algorithm>
 #include <chrono>
@@ -540,12 +541,10 @@ DRO::ResolvedAmbiguityRadius DRO::resolve_ambiguity_radius(
         );
     }
 
-    const double beta =
-        std::clamp(
-            calibration.confidence_beta,
-            1e-8,
-            0.5
-        );
+    const double beta = calibration.wasserstein_radius_method ==
+            WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON
+        ? calibration.confidence_beta
+        : std::clamp(calibration.confidence_beta, 1e-8, 0.5);
 
     const double D_max =
         transport_diameter(
@@ -896,6 +895,36 @@ DROResult DRO::compute_worst_case_weights(
 
     result.rho_clamped_to_max =
         resolved_radius.clamped_to_max;
+
+    // Paper's Q_risk: compute u over the full ball, then constrain the
+    // destination marginal. This runs even for flat risk and zero-radius balls.
+    if (divergence == AmbiguityDivergence::WASSERSTEIN &&
+        config_.radius_calibration.use_domination_constraints) {
+        std::vector<double> p(mode_count), risk(mode_count);
+        for (int j = 0; j < mode_count; ++j) {
+            p[j] = nominal_weights.at(mode_ids[j]);
+            risk[j] = result.risk_per_mode.at(mode_ids[j]);
+        }
+        const auto allocation = solve_dominating_ot(p, risk,
+            result.transport_cost_matrix, rho,
+            config_.radius_calibration.dangerous_risk_threshold);
+        if (!allocation.transport.solved)
+            throw std::runtime_error("Q_risk transport optimization failed");
+        for (int j = 0; j < mode_count; ++j) {
+            double q = 0.0;
+            for (int i = 0; i < mode_count; ++i) q += allocation.transport.plan[i][j];
+            result.worst_case_weights[mode_ids[j]] = q;
+            result.coordinate_envelope[mode_ids[j]] = allocation.envelope[j];
+        }
+        result.nominal_domination_factor = allocation.nominal_domination;
+        result.domination_factor = allocation.domination;
+        result.domination_constraints_satisfied = true;
+        result.worst_case_risk = allocation.transport.expected_risk;
+        result.implied_transport_cost = allocation.transport.transport_cost;
+        result.recovery_feasible = true;
+        update_support_diagnostics(result, mode_count);
+        return result;
+    }
 
     // ------------------------------------------------------------------
     // Degenerate DRO objective:
@@ -1384,7 +1413,15 @@ std::map<std::string, double> DRO::compute_surrogate_risk_vector(
 
     // z_alpha is only the VaR coefficient; the CVaR branch cannot be expressed as
     // a coefficient swap (see cvar_clamped_gaussian) and is handled at the use site.
-    const double z_alpha = normal_quantile(alpha_eff);
+    // Evaluate the upper tail directly: forming 1-tail can round to one,
+    // and clamping alpha' would invalidate the paper's union-bound level.
+    if (bonferroni && !(alpha >= 0.5 && alpha < 1.0))
+        throw std::invalid_argument("Bonferroni penetration bound requires alpha in [0.5, 1)");
+    const double z_alpha = bonferroni
+        ? boost::math::quantile(boost::math::complement(
+            boost::math::normal_distribution<double>(),
+            (1.0 - alpha) / std::max(1.0, static_cast<double>(horizon) * std::max(1, num_discs))))
+        : normal_quantile(alpha_eff);
     const double sigma_floor = config_.radius_calibration.sigma_floor;
 
     for (const auto& mode_id : mode_ids) {

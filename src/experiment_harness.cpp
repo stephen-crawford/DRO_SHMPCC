@@ -1047,6 +1047,10 @@ namespace dro_mpc {
                     SafeHorizonCertificateStatus::NOT_REQUESTED;
                 decision.certified = mpc_result.certificate_status ==
                     SafeHorizonCertificateStatus::CERTIFIED;
+                decision.distribution_domination_factor = mpc_result.distribution_domination_factor;
+                decision.sampling_violation_target = mpc_result.sampling_violation_target;
+                decision.transfer_bound_satisfied = mpc_result.transfer_bound_satisfied;
+                decision.dro_results = controller.last_dro_results();
                 decision.scenario_count = controller.scenarios().size();
                 if (mpc_result.success && mpc_result.first_input().has_value()) {
                     const auto input = *mpc_result.first_input();

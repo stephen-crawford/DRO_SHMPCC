@@ -7,6 +7,7 @@
 #define DRO_MPC_EXPERIMENT_ARTIFACTS_INTERNAL_HPP
 
 #include "experiment_harness.hpp"
+#include "dro.hpp"
 
 #include <string>
 #include <set>
@@ -48,6 +49,10 @@ struct DecisionRecord {
     bool nominal_fallback_attempted = false;
     bool used_nominal_fallback = false;
     bool certified = false;
+    double distribution_domination_factor = 1.0;
+    double sampling_violation_target = 0.0;
+    bool transfer_bound_satisfied = false;
+    std::map<int, DROResult> dro_results;
     double applied_control_effort = 0.0;
     size_t scenario_count = 0;
     std::vector<ModeCoverageRecord> mode_coverage;

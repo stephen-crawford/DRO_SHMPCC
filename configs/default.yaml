@@ -57,6 +57,9 @@ confidence_beta: 0.05
 alpha_one_sided: 0.95
 calibration_scale: 1.0
 use_primal_ot: true
+# Paper Q_risk takes precedence over legacy primal/entropic allocator switches.
+use_domination_constraints: true
+dangerous_risk_threshold: 0.01
 risk_measure: surrogate_var_bonferroni
 # Named profile for comparing collision-score fidelity while retaining the
 # configured W2-Bures ambiguity geometry. `inherit` uses risk_measure exactly.
@@ -71,6 +74,7 @@ joint_risk_samples: 8000
 joint_risk_seed: 349247176686
 mixture_sequence_samples: 512
 sigma_floor: 1.0e-6
+# Legacy allocator setting, used only when use_domination_constraints is false.
 use_entropic_allocator: true
 entropic_tau: 0.05
 

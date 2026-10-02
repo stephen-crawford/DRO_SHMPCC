@@ -76,6 +76,10 @@ struct RiskEvaluationDiagnostics {
 struct DROResult {
      std::map<std::string, double> worst_case_weights;
     double optimal_lambda = 0.0;
+    std::map<std::string, double> coordinate_envelope;
+    double nominal_domination_factor = std::numeric_limits<double>::infinity();
+    double domination_factor = std::numeric_limits<double>::infinity();
+    bool domination_constraints_satisfied = false;
 
     double rho_used = 0.0;
     double rho_before_clamp = 0.0;
@@ -112,6 +116,7 @@ struct DROResult {
     bool satisfies_full_support = false;// qstar_support_floor > 0, i.e. Assumption 1 holds.
 
     double likelihood_ratio_bound() const {
+        if (domination_constraints_satisfied) return domination_factor;
         if (!(qstar_support_floor > 0.0)) {
             return std::numeric_limits<double>::infinity();
         }

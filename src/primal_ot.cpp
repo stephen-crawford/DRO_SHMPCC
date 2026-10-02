@@ -1,6 +1,7 @@
     #include "primal_ot.hpp"
 
     #include <cmath>
+    #include <algorithm>
     #include <limits>
     #include <numeric>
     
@@ -131,7 +132,8 @@
         const std::vector<double>& nominal_weights,
         const std::vector<double>& risk_vector,
         const std::vector<std::vector<double>>& D,
-        double rho)
+        double rho,
+        const std::vector<double>& destination_lower_bounds)
     {
         PrimalOTResult out;
 
@@ -145,7 +147,9 @@
         if (M == 0 ||
             static_cast<int>(risk_vector.size()) != M ||
             static_cast<int>(D.size()) != M ||
-            rho < 0.0) {
+            !std::isfinite(rho) || rho < 0.0 ||
+            (!destination_lower_bounds.empty() &&
+             static_cast<int>(destination_lower_bounds.size()) != M)) {
             return out;
         }
 
@@ -186,13 +190,15 @@
 
         const int PI = 0;
         const int SLACK = M * M;
-        const int ART0 = M * M + 1;
+        const int L = destination_lower_bounds.empty() ? 0 : M;
+        const int SURPLUS0 = M * M + 1;
+        const int ART0 = SURPLUS0 + L;
 
         const int n =
-            M * M + 1 + M;
+            M * M + 1 + M + 2 * L;
 
         const int mrows =
-            M + 1;
+            M + 1 + L;
 
         const double BIG_M = 1e7;
 
@@ -215,7 +221,7 @@
             }
         }
 
-        for (int i = 0; i < M; ++i)
+        for (int i = 0; i < M + L; ++i)
             c[ART0 + i] = BIG_M;
 
         // ---------------------------------------------------------
@@ -272,6 +278,19 @@
 
         basis[M] = SLACK;
 
+        // Destination floor: sum_i pi_ij - surplus_j + artificial_j = lower_j.
+        for (int j = 0; j < L; ++j) {
+            const double lower = destination_lower_bounds[j];
+            if (!std::isfinite(lower) || lower < 0.0 || lower > 1.0)
+                return out;
+            const int row = M + 1 + j;
+            for (int i = 0; i < M; ++i) A[row][i * M + j] = 1.0;
+            A[row][SURPLUS0 + j] = -1.0;
+            A[row][ART0 + M + j] = 1.0;
+            b[row] = lower;
+            basis[row] = ART0 + M + j;
+        }
+
         // ---------------------------------------------------------
         // Solve LP
         // ---------------------------------------------------------
@@ -296,7 +315,7 @@
 
         double artificial_mass = 0.0;
 
-        for (int i = 0; i < M; ++i) {
+        for (int i = 0; i < M + L; ++i) {
             artificial_mass +=
                 std::max(0.0, x[ART0 + i]);
         }
@@ -388,9 +407,63 @@
         for (int j = 0; j < M; ++j)
             out.expected_risk += risk[j] * q[j];
 
+        for (int j = 0; j < L; ++j) {
+            if (q[j] < destination_lower_bounds[j] - 1e-8)
+                return PrimalOTResult{};
+        }
         out.solved = true;
 
         return out;
     }
     
+    DominatingOTResult solve_dominating_ot(
+        const std::vector<double>& p, const std::vector<double>& risk,
+        const std::vector<std::vector<double>>& D,
+        double rho, double risk_threshold)
+    {
+        DominatingOTResult out;
+        const size_t M = p.size();
+        if (M == 0 || risk.size() != M || !std::isfinite(risk_threshold) ||
+            risk_threshold <= 0.0) return out;
+        double total = 0.0;
+        for (size_t j = 0; j < M; ++j) {
+            if (!std::isfinite(p[j]) || p[j] <= 0.0 ||
+                !std::isfinite(risk[j]) || risk[j] < 0.0) return out;
+            total += p[j];
+        }
+        if (std::abs(total - 1.0) > 1e-10) return out;
+        out.envelope.resize(M);
+        for (size_t j = 0; j < M; ++j) {
+            std::vector<double> coordinate(M, 0.0);
+            coordinate[j] = 1.0;
+            const auto maximum = solve_primal_ot(p, coordinate, D, rho);
+            if (!maximum.solved) return out;
+            out.envelope[j] = maximum.expected_risk;
+            out.nominal_domination = std::max(out.nominal_domination,
+                                             out.envelope[j] / p[j]);
+        }
+        std::vector<double> lower(M);
+        for (size_t j = 0; j < M; ++j) {
+            lower[j] = out.envelope[j] / out.nominal_domination;
+            if (risk[j] >= risk_threshold) lower[j] = std::max(lower[j], p[j]);
+        }
+        if (*std::min_element(risk.begin(), risk.end()) ==
+            *std::max_element(risk.begin(), risk.end())) {
+            out.transport.plan.assign(M, std::vector<double>(M, 0.0));
+            for (size_t j = 0; j < M; ++j) out.transport.plan[j][j] = p[j];
+            out.transport.expected_risk = std::inner_product(p.begin(), p.end(), risk.begin(), 0.0);
+            out.transport.solved = true;
+        } else {
+            out.transport = solve_primal_ot(p, risk, D, rho, lower);
+        }
+        if (!out.transport.solved) return out;
+        for (size_t j = 0; j < M; ++j) {
+            double q = 0.0;
+            for (size_t i = 0; i < M; ++i) q += out.transport.plan[i][j];
+            if (!(q > 0.0)) { out.transport = {}; return out; }
+            out.domination = std::max(out.domination, out.envelope[j] / q);
+        }
+        return out;
+    }
+
     }  // namespace dro_mpc

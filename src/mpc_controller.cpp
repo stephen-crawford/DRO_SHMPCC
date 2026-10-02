@@ -358,11 +358,22 @@ if (config_.mpc.sampling.markov_jump_system) {
     }
 }
 
+double joint_domination = 1.0;
+double sampling_violation_target = config_.epsilon();
+const bool transfer_construction = use_dro && !obstacles.empty() &&
+    config_.dro.solver.radius_calibration.use_domination_constraints &&
+    config_.dro.solver.radius_calibration.divergence == AmbiguityDivergence::WASSERSTEIN &&
+    !config_.mpc.sampling.markov_jump_system && !config_.mpc.wdro_stratified_sampling;
+
 // When DRO is enabled: compute worst-case distribution q* and resample all S
 // scenarios from it.  Safe-Horizon certification is joint over the full
 // prediction horizon, so DRO's risk assessment must cover that same N.
 if (use_dro && !reference_trajectory_.empty()) {
-    const int S = config_.mpc.sampling.num_scenarios;
+    int S = config_.mpc.sampling.num_scenarios;
+    auto allocated_config = dro_.config();
+    if (transfer_construction)
+        allocated_config.radius_calibration.confidence_beta /= static_cast<double>(obstacles.size());
+    DRO allocated_dro(allocated_config);
     const int risk_horizon = config_.mpc.horizon;
 
     // Compute DRO q* from the nominal p hat
@@ -405,7 +416,7 @@ if (use_dro && !reference_trajectory_.empty()) {
         }
 
         last_dro_results_[obs_id] =
-            dro_.compute_worst_case_weights(
+            allocated_dro.compute_worst_case_weights(
                 nominal_weights,
                 observed_counts, 
                 obs_state,
@@ -522,6 +533,27 @@ for (const auto& [mode_id, p] : nominal_weights) {
 }
     }
 
+    // Freeze the law, product domination factor, and sample count before drawing
+    // the current certification batch. The downstream SH optimization is unchanged.
+    if (transfer_construction) {
+        if (last_dro_results_.size() != obstacles.size())
+            throw std::runtime_error("distribution transfer requires a law for every obstacle");
+        for (const auto& [id, allocation] : last_dro_results_) {
+            if (!allocation.domination_constraints_satisfied)
+                throw std::runtime_error("distribution transfer requires Q_risk feasibility");
+            joint_domination *= allocation.domination_factor;
+        }
+        sampling_violation_target = config_.epsilon() / joint_domination;
+        if (!(sampling_violation_target > 0.0) || !std::isfinite(joint_domination))
+            throw std::runtime_error("distribution domination factor is not finite");
+        if (config_.mpc.uses_safe_horizon() && config_.mpc.sampling.automatically_compute_sample_size) {
+            S = config_.compute_required_scenarios_for_risk(sampling_violation_target,
+                config_.mpc.constraints.support_cap_n_bar, config_.scenario_removal_budget());
+            if (config_.compute_effective_epsilon(S, config_.support_limit()) > sampling_violation_target)
+                throw std::runtime_error("transfer target exceeds supported sample sizing range");
+        }
+    }
+
     // Resample ALL S scenarios from q*.
     std::map<int, std::map<std::string, double>> per_obs_weights_dro;
     for (const auto& [obs_id, dro_result] : last_dro_results_) {
@@ -611,7 +643,8 @@ custom_per_obstacle_weights_.clear();
 int S_actual = static_cast<int>(scenarios_.size());
 const bool support_certification_enabled = config_.mpc.uses_safe_horizon();
 const int S_required = support_certification_enabled
-    ? config_.compute_required_scenarios()
+    ? config_.compute_required_scenarios_for_risk(sampling_violation_target,
+        config_.mpc.constraints.support_cap_n_bar, config_.scenario_removal_budget())
     : S_actual;
 
 auto next_scenario_id = [&]() {
@@ -1985,6 +2018,8 @@ if (use_multi_homotopy_recovery) {
             // or retain terminal rejection if this was already nominal.
             auto failed = generate_safe_fallback(ego_with_spline);
             failed.failure_diagnostics = failure_diagnostics;
+            failed.distribution_domination_factor = transfer_construction ? joint_domination : 1.0;
+            failed.sampling_violation_target = sampling_violation_target;
             failed.sampled_scenarios = S_actual;
             failed.required_scenarios = support_certification_enabled ? S_required : -1;
             failed.sample_count_sufficient = sample_count_sufficient;
@@ -2265,6 +2300,8 @@ result.failure_diagnostics.any_homotopy_geometrically_feasible = failure_diagnos
 
 auto qp_end = std::chrono::high_resolution_clock::now();
 
+result.distribution_domination_factor = transfer_construction ? joint_domination : 1.0;
+result.sampling_violation_target = sampling_violation_target;
 result.sampled_scenarios = S_actual;
 result.required_scenarios = support_certification_enabled ? S_required : -1;
 result.sample_count_sufficient = sample_count_sufficient;
@@ -2302,6 +2339,15 @@ result.certificate_status = SafeHorizonCertificateStatus::SUPPORT_EXCEEDED;
 result.certificate_status = SafeHorizonCertificateStatus::CERTIFIED;
 result.certified_horizon = config_.mpc.horizon;
 }
+// This records the theorem's numerical conditions, conditional on its data/model
+// assumptions; it does not certify that a simulator supplied IID stationary labels.
+result.transfer_bound_satisfied = transfer_construction &&
+    result.certificate_status == SafeHorizonCertificateStatus::CERTIFIED &&
+    config_.dro.solver.radius_calibration.use_calibrated_radius &&
+    config_.dro.fixed_rho < 0.0 &&
+    config_.dro.solver.radius_calibration.wasserstein_radius_method ==
+        WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON &&
+    config_.compute_effective_epsilon(S_actual, config_.support_limit()) <= sampling_violation_target;
 for (const auto& [obs_id, dro_result] : last_dro_results_) {
     result.ambiguity_radius_used = std::max(
         result.ambiguity_radius_used,

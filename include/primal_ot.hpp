@@ -4,6 +4,7 @@
 //     max_{pi >= 0}  sum_{i,j} pi_ij * r_j
 //     s.t.  sum_j pi_ij = p_i           for all i   (source marginals fixed)
 //           sum_{i,j} pi_ij * D_ij <= rho            (Wasserstein budget)
+//           sum_i pi_ij >= lower_j                  (optional destination floors)
 //
 // and returns q*_j = sum_i pi_ij. 
 // 
@@ -12,7 +13,7 @@
 //
 // Solved with a self-contained two-phase dense simplex (Bland's rule for
 // anti-cycling). Problem size here is tiny (M^2+1 vars, M+1 rows), so this is
-// exact and fast.
+// numerically solved using the existing simplex tolerances.
 #ifndef DRO_MPC_PRIMAL_OT_HPP
 #define DRO_MPC_PRIMAL_OT_HPP
 
@@ -42,7 +43,22 @@ PrimalOTResult solve_primal_ot(
     const std::vector<double>& nominal_weights,
     const std::vector<double>& risk_vector,
     const std::vector<std::vector<double>>& D,
-    double rho);
+    double rho,
+    const std::vector<double>& destination_lower_bounds = {});
+
+struct DominatingOTResult {
+    PrimalOTResult transport;
+    std::vector<double> envelope;
+    double nominal_domination = 1.0;
+    double domination = 1.0;
+};
+
+/// Coordinate envelope and maximizer over Q_risk. Requires full-support p.
+DominatingOTResult solve_dominating_ot(
+    const std::vector<double>& nominal_weights,
+    const std::vector<double>& risk_vector,
+    const std::vector<std::vector<double>>& D,
+    double rho, double risk_threshold);
 
 }  // namespace dro_mpc
 

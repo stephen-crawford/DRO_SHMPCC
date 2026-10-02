@@ -560,6 +560,10 @@ struct MPCResult {
     double qp_solve_time = 0.0;                 // Time for QP/SQP solve [s]
     /// Largest ambiguity radius used across obstacles during this solve.
     double ambiguity_radius_used = 0.0;
+    double distribution_domination_factor = 1.0;
+    double sampling_violation_target = 0.0;
+    // Conditional theorem arithmetic, not an empirical validation of assumptions.
+    bool transfer_bound_satisfied = false;
     /// Sum of per-obstacle risk-vector evaluation times during this solve [s].
     double dro_risk_evaluation_time = 0.0;
 

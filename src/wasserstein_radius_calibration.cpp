@@ -184,8 +184,9 @@ std::pair<double, double> clopper_pearson_interval(
             "Invalid successes/trials in Clopper-Pearson interval.");
     }
 
-    const double a =
-        std::clamp(alpha, 1e-14, 1.0 - 1e-14);
+    if (!(alpha > 0.0 && alpha < 1.0))
+        throw std::invalid_argument("Clopper-Pearson alpha must be in (0, 1)");
+    const double a = alpha;
 
     const double tail =
         0.5 * a;
@@ -226,8 +227,7 @@ std::pair<double, double> clopper_pearson_interval(
 
         upper =
             boost::math::quantile(
-                distribution,
-                1.0 - tail
+                boost::math::complement(distribution, tail)
             );
     }
 
@@ -997,12 +997,9 @@ finite_sample_wasserstein_radius(
      */
     if (sample_count > 0) {
 
-        const double beta_safe =
-            std::clamp(
-                beta,
-                1e-12,
-                1.0 - 1e-12
-            );
+        if (!(beta > 0.0 && beta < 1.0))
+            throw std::invalid_argument("Clopper-Pearson beta must be in (0, 1)");
+        const double beta_safe = beta;
 
         /*
          * Bonferroni simultaneous confidence allocation:
