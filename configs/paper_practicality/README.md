@@ -85,3 +85,25 @@ the route simulations assess its computational and control practicality.
 Coverage is pointwise in replanning time. No time-uniform calibration or mission
 collision guarantee is implemented. The simulations do not remove the product
 factor's scaling cost or make uncertified recovery steps certified.
+
+## Feedback ablation and paper figures
+
+`tests/run_paper_ablation.py` adds a three-arm comparison: nominal sampling at
+S0, constrained reweighting at fixed S0 (without a true-law transfer certificate),
+and full distribution transfer with automatic sizing. It reuses the canonical
+runner and only accepts reused results with identical executable/configuration
+hashes. Both S-curve cases use seeds 77–81; straight/intersection use 77–79.
+
+```sh
+python3 tests/run_paper_ablation.py --output results/paper-ablation-new \
+  --practicality results/paper-basic-new --scaling results/paper-scaling-new
+python3 tools/report_paper_ablation.py --matrix results/paper-ablation-new \
+  --output results/paper-feedback-new
+```
+
+The runner retains execution errors and exits nonzero when an attempted run
+fails. The report keeps those rows with unavailable final metrics left blank.
+Figure 1 preserves the original nine runs per baseline/full-transfer arm;
+consult the expanded ablation table alongside it. Figure 2 uses the preselected
+one-obstacle S-curve full-transfer seed 77. Summary latency pools usable cycles;
+failed prefixes are excluded, and errors remain explicit in the completion table.
