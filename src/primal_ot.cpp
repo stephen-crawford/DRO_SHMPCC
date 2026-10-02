@@ -419,7 +419,8 @@
     DominatingOTResult solve_dominating_ot(
         const std::vector<double>& p, const std::vector<double>& risk,
         const std::vector<std::vector<double>>& D,
-        double rho, double risk_threshold)
+        double rho, double risk_threshold,
+        const std::vector<double>& coordinate_envelope)
     {
         DominatingOTResult out;
         const size_t M = p.size();
@@ -432,13 +433,21 @@
             total += p[j];
         }
         if (std::abs(total - 1.0) > 1e-10) return out;
+        if (!coordinate_envelope.empty() && coordinate_envelope.size() != M) return out;
         out.envelope.resize(M);
         for (size_t j = 0; j < M; ++j) {
-            std::vector<double> coordinate(M, 0.0);
-            coordinate[j] = 1.0;
-            const auto maximum = solve_primal_ot(p, coordinate, D, rho);
-            if (!maximum.solved) return out;
-            out.envelope[j] = maximum.expected_risk;
+            if (coordinate_envelope.empty()) {
+                // Legacy outer-ball envelope; the paper caller supplies C's envelope.
+                std::vector<double> coordinate(M, 0.0);
+                coordinate[j] = 1.0;
+                const auto maximum = solve_primal_ot(p, coordinate, D, rho);
+                if (!maximum.solved) return out;
+                out.envelope[j] = maximum.expected_risk;
+            } else {
+                const double u = coordinate_envelope[j];
+                if (!std::isfinite(u) || u < 0.0 || u > 1.0) return out;
+                out.envelope[j] = u;
+            }
             out.nominal_domination = std::max(out.nominal_domination,
                                              out.envelope[j] / p[j]);
         }
@@ -460,6 +469,8 @@
         for (size_t j = 0; j < M; ++j) {
             double q = 0.0;
             for (size_t i = 0; i < M; ++i) q += out.transport.plan[i][j];
+            // The paper maximizes only over coordinates with u_m > 0.
+            if (out.envelope[j] == 0.0) continue;
             if (!(q > 0.0)) { out.transport = {}; return out; }
             out.domination = std::max(out.domination, out.envelope[j] / q);
         }

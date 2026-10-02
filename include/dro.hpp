@@ -323,6 +323,7 @@ public:
 
 private:
     struct ResolvedAmbiguityRadius {
+        std::vector<double> coordinate_envelope;  // CP polytope, when calibrated
         double value = 0.0;
         double before_clamp = 0.0;
         bool clamped_to_min = false;

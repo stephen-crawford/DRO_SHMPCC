@@ -6,8 +6,8 @@ legacy allocator switches; the legacy entropic flag is otherwise ignored.
 No MPC objective, collision halfspace, support estimator, removal policy,
 recovery policy, or downstream solver tolerance was changed.
 
-The controller computes the coordinate envelope `u_m` with one existing transport
-LP per mode, then maximizes `q.dot(r)` with destination floors
+The controller computes the coordinate envelope directly from the Clopper–Pearson
+polytope, `u_m = min(U_m, 1 - sum_{j != m} L_j)`, then maximizes `q.dot(r)` with destination floors
 `u_m / max_j(u_j/p_hat_j)` and `p_hat_m` for `r_m >= tau_r`.
 `dangerous_risk_threshold` sets `tau_r`; the unoptimized default is **0.01 m**.
 Exactly flat scores retain the nominal distribution, a valid tied optimizer.
@@ -22,6 +22,14 @@ risk target `epsilon / product(zeta_v)`. Manual sample budgets remain manual;
 an insufficient budget receives no SH certificate. The configured support cap
 (including the existing removal budget) is unchanged. This can be expensive when
 little calibration data are available or many obstacles are considered.
+The CP-transfer path keeps calibration histories separate for each obstacle,
+including obstacles assigned the same class; other configurations retain their
+existing class-sharing behavior. The Wasserstein radius remains the maximum
+transport distance over CP-polytope vertices and constrains allocation only.
+See [the equation map](../../docs/PAPER_EQUATION_MAP.md) for the updated paper's
+formulation, matching settings, tests, and numerical limitations. Archived
+`acc-paper-*-20261002` runs made before this revision use the earlier outer-ball
+envelope and must not be relabeled as results of the updated formulation.
 
 `decisions.csv` adds the joint factor, sampling-law target, and
 `transfer_bound_satisfied`. The latter means the numerical transfer conditions

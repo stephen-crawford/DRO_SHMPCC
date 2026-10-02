@@ -53,12 +53,15 @@ struct DominatingOTResult {
     double domination = 1.0;
 };
 
-/// Coordinate envelope and maximizer over Q_risk. Requires full-support p.
+/// Maximizer over Q_risk. Requires full-support p.
+/// Supply the CP-polytope envelope for the paper formulation. Omitting it retains
+/// the legacy Wasserstein-ball envelope for non-paper callers.
 DominatingOTResult solve_dominating_ot(
     const std::vector<double>& nominal_weights,
     const std::vector<double>& risk_vector,
     const std::vector<std::vector<double>>& D,
-    double rho, double risk_threshold);
+    double rho, double risk_threshold,
+    const std::vector<double>& coordinate_envelope = {});
 
 }  // namespace dro_mpc
 

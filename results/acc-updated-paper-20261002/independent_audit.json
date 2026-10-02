@@ -1,0 +1,20 @@
+{
+  "cases": 120,
+  "seed": 20261002,
+  "mode_counts": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "tolerance": 1e-07,
+  "maxima": {
+    "cp_endpoints": 7.105427357601002e-15,
+    "envelope": 7.105427357601002e-15,
+    "radius": 1.4710455076283324e-14,
+    "risk_objective": 2.822186928597148e-13,
+    "feasibility": 1.5987211554602254e-14
+  },
+  "failures": []
+}

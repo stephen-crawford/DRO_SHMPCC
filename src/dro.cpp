@@ -631,6 +631,7 @@ DRO::ResolvedAmbiguityRadius DRO::resolve_ambiguity_radius(
                     beta
                 );
 
+            resolved.coordinate_envelope = cp.coordinate_envelope;
             const double raw_radius =
                 cp.rho;
 
@@ -896,8 +897,9 @@ DROResult DRO::compute_worst_case_weights(
     result.rho_clamped_to_max =
         resolved_radius.clamped_to_max;
 
-    // Paper's Q_risk: compute u over the full ball, then constrain the
-    // destination marginal. This runs even for flat risk and zero-radius balls.
+    // Paper Q_risk uses u from the CP polytope, with rho only a transport budget.
+    // Non-CP/explicit-radius configurations retain the legacy outer-ball envelope.
+    // Both paths run even for flat risk and zero-radius pseudometrics.
     if (divergence == AmbiguityDivergence::WASSERSTEIN &&
         config_.radius_calibration.use_domination_constraints) {
         std::vector<double> p(mode_count), risk(mode_count);
@@ -907,7 +909,8 @@ DROResult DRO::compute_worst_case_weights(
         }
         const auto allocation = solve_dominating_ot(p, risk,
             result.transport_cost_matrix, rho,
-            config_.radius_calibration.dangerous_risk_threshold);
+            config_.radius_calibration.dangerous_risk_threshold,
+            resolved_radius.coordinate_envelope);
         if (!allocation.transport.solved)
             throw std::runtime_error("Q_risk transport optimization failed");
         for (int j = 0; j < mode_count; ++j) {

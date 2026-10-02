@@ -192,6 +192,9 @@ target_link_libraries(test_sample_complexity PRIVATE scenario_mpc)
 add_executable(test_dynamics tests/test_dynamics.cpp)
 target_link_libraries(test_dynamics PRIVATE scenario_mpc)
 
+add_executable(test_paper_formulation tests/test_paper_formulation.cpp)
+target_link_libraries(test_paper_formulation PRIVATE scenario_mpc)
+
 add_executable(test_distribution_transfer tests/test_distribution_transfer.cpp)
 target_link_libraries(test_distribution_transfer PRIVATE scenario_mpc)
 
@@ -325,6 +328,7 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_scenario_sampler unit)
     register_scenario_mpc_test(test_waypoint_trajectory unit)
     register_scenario_mpc_test(test_environment_topologies unit)
+    register_scenario_mpc_test(test_paper_formulation integration)
     register_scenario_mpc_test(test_distribution_transfer integration)
     register_scenario_mpc_test(test_primal_ot unit)
     register_scenario_mpc_test(test_ground_cost unit)

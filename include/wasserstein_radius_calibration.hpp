@@ -13,6 +13,8 @@ struct FiniteSampleWassersteinRadius {
     // Simultaneous confidence polytope diagnostics.
     std::vector<double> lower;
     std::vector<double> upper;
+    // Paper coordinate envelope: sup_{p in C} p_m, independent of D.
+    std::vector<double> coordinate_envelope;
 
     int sample_count = 0;
     int vertex_count = 0;

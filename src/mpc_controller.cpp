@@ -21,6 +21,17 @@ namespace dro_mpc {
 
 namespace {
 
+// The paper calibrates a separate categorical law p^{v,*} for each obstacle.
+// Class pooling would require an additional common-law assumption.
+bool uses_paper_calibration(const RuntimeConfig& config) {
+    const auto& radius = config.dro.solver.radius_calibration;
+    return config.dro.enabled && radius.use_domination_constraints &&
+        radius.use_calibrated_radius && config.dro.fixed_rho < 0.0 &&
+        radius.divergence == AmbiguityDivergence::WASSERSTEIN &&
+        radius.wasserstein_radius_method == WassersteinRadiusCalibrationMethod::CLOPPER_PEARSON &&
+        !config.mpc.sampling.markov_jump_system;
+}
+
 // A negative signed clearance is a
 // violation; a small positive clearance is treated as binding support.
 constexpr double kSupportBindingTolerance = 1e-3;
@@ -163,7 +174,8 @@ history.max_history_length = config_.mpc.sampling.max_history_length;
 // normally synchronized, so deduplicate observations that were broadcast.
 std::vector<ModeObservation> class_observations;
 for (const auto& [other_id, other_class_id] : obstacle_class_ids_) {
-    if (other_class_id == obstacle_class_id && other_id != obstacle_id) {
+    if (!uses_paper_calibration(config_) &&
+        other_class_id == obstacle_class_id && other_id != obstacle_id) {
         auto it = mode_histories_.find(other_id);
         if (it != mode_histories_.end()) {
             class_observations.insert(
@@ -208,10 +220,11 @@ if (timestep < 0) {
     timestep = iteration_count_;
 }
 
-// Record observation for all obstacles sharing this class
+// Paper counts are obstacle-specific; legacy configurations retain class sharing.
 const int current_obstacle_class_id = obstacle_class_ids_.at(obstacle_id);
 for (auto& [other_id, hist] : mode_histories_) {
-    if (hist.obstacle_class_id == current_obstacle_class_id) {
+    if (uses_paper_calibration(config_) ? other_id == obstacle_id
+        : hist.obstacle_class_id == current_obstacle_class_id) {
         hist.record_observation(
             timestep,
             obstacle_id,       // obstacle that ACTUALLY produced the observation

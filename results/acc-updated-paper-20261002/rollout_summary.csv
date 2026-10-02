@@ -1,0 +1,3 @@
+case,seed,completed,steps,collision,min_clearance_m,progress_fraction,max_S,max_zeta,median_ms,conditional_transfer_steps
+one_obstacle_s_curve,77,1,160,0,0.0075,0.9502,5639,3.95,15.794010499999999,145
+two_obstacle_s_curve,80,1,192,0,0.0084,0.9540,82156,42.87829386786123,70.10262349999999,167

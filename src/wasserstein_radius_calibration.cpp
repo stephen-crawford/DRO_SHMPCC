@@ -1039,6 +1039,17 @@ finite_sample_wasserstein_radius(
         }
     }
 
+    // Updated paper, Coordinate envelope: u_m = min(U_m, 1-sum_{j!=m} L_j).
+    // Retain C itself as the certified set; rho below is a design budget.
+    result.coordinate_envelope.resize(M);
+    for (std::size_t m = 0; m < M; ++m) {
+        double other_lower = 0.0;
+        for (std::size_t j = 0; j < M; ++j) {
+            if (j != m) other_lower += result.lower[j];
+        }
+        result.coordinate_envelope[m] = std::min(result.upper[m], 1.0 - other_lower);
+    }
+
     /*
      * Confidence polytope:
      *
