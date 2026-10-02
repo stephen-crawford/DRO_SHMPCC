@@ -461,3 +461,10 @@ endif()
 if(DRO_MPC_ENABLE_ROS2)
     ament_package()
 endif()
+
+# Batch driver for the updated-paper certificate and scaling experiments.
+add_executable(paper_certificate_probe tools/paper_certificate_probe.cpp)
+target_link_libraries(paper_certificate_probe PRIVATE scenario_mpc)
+
+add_executable(paper_shift_experiment tools/paper_shift_experiment.cpp)
+target_link_libraries(paper_shift_experiment PRIVATE scenario_mpc)

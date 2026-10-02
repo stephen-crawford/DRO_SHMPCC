@@ -1018,6 +1018,11 @@ namespace dro_mpc {
             }
             auto mpc_result = controller.solve(
                 ego, obstacles, goal, trajectory_speed, path_progress, path_length);
+            if (config.rollout.result_callback) {
+                config.rollout.result_callback(
+                    {step, ego, obstacles, goal, trajectory_speed, path_progress, path_length},
+                    mpc_result, controller);
+            }
 
             if (config.artifacts.enabled() &&
                 (

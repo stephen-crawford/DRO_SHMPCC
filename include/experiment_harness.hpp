@@ -344,6 +344,10 @@ struct RolloutExperimentConfig {
     /// Diagnostic copies must not advance the live controller or plant RNG.
     std::function<void(const DecisionContext&, const MPCController&)> decision_callback;
 
+    /// Optional read-only observer of the returned decision, before applying it.
+    /// Validation must use its own RNG and must not change the live result.
+    std::function<void(const DecisionContext&, const MPCResult&, const MPCController&)> result_callback;
+
     /// Called after mode observation, before solve.
     std::function<void(int, int, ObstacleSim&, MPCController&, std::mt19937&)>
         step_callback;
