@@ -65,6 +65,7 @@ int main() {
         "Bonferroni upper tail is evaluated without rounding or clamping alpha prime");
 
     RuntimeConfig cfg;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.horizon=3;
     cfg.mpc.ego.num_discs=1;
     cfg.mpc.ego.length=0;

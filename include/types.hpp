@@ -532,15 +532,20 @@ struct MPCResult {
     std::vector<EgoInput> control_inputs;   // Planned control inputs
     /// Scenarios binding or violated on the returned trajectory only.
     std::vector<int> active_scenarios;
-    /// Sorted unique union of scenarios binding or violated over SQP iterates.
+    /// Sorted unique union of active joint scenarios at feasible convex iterates,
+    /// including every removed scenario (de Groot Eqs. 13–14 and Theorem 5).
     /// This is the conservative online support estimate used by Safe-Horizon MPC.
     std::vector<int> support_scenarios;
     int support_size = 0;                   // support_scenarios.size()
     int support_limit = -1;                 // configured total support cap
     bool support_cap_satisfied = false;     // support_size <= support_limit
     SupportCapStatus support_cap_status = SupportCapStatus::NOT_EVALUATED;
-    /// SQP iterates plus the final returned-plan verification included above.
+    /// Feasible convex iterations contributing to the returned decision.
     int support_iterations_evaluated = 0;
+    bool support_iterations_feasible = false;
+    /// Algorithm 1 stopped at the cap; an earlier eligible iterate may be returned.
+    bool support_cap_terminated = false;
+    int returned_sqp_iteration = -1;
     /// Number of joint scenarios used to form this decision problem.
     int sampled_scenarios = 0;
     /// Scenario-theoretic minimum for the configured support cap; -1 outside SH.

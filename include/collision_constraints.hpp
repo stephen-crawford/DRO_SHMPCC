@@ -165,12 +165,12 @@ DiscConstraintRow linearize_constraint_at_state(
 /**
  * @brief Compute linearized collision constraints for all scenarios.
  *
- * Following Section 7:
+ * Following de Groot Eqs. (26)–(28):
  *
  * For each scenario s and obstacle o at timestep k:
- * 1. Compute ego disc positions p_ego (Eq. 16)
- * 2. Compute direction from obstacle to ego (Eq. 17)
- * 3. Formulate linearized constraint (Eq. 18)
+ * 1. Compute ego disc positions p_ego
+ * 2. Compute the fixed direction from the numerical reference (Eq. 27)
+ * 3. Form the conservative collision half-space (Eqs. 26–28)
  *
  * @param reference_trajectory Reference ego trajectory for linearization
  * @param scenarios List of sampled scenarios
@@ -193,7 +193,6 @@ std::vector<CollisionConstraint> compute_linearized_constraints(
 /**
  * @brief Compute ego disc positions for collision checking.
  *
- * Following Eq. 16:
  * For multi-disc representation, discs are placed along the vehicle centerline.
  *
  * @param state Ego vehicle state

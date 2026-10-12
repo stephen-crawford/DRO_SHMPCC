@@ -27,6 +27,7 @@ int fail(const char* message) {
 
 int main() {
     ExperimentConfig config = default_experiment_config();
+    config.mpc.sampling.multimodal_bilevel = true;
     config.rollout.rollout_steps = 8;
     config.mpc.horizon = 10;
     config.mpc.sampling.set_manual_sample_count(12);

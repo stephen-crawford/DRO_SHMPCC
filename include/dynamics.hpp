@@ -173,6 +173,11 @@ private:
  */
 std::map<std::string, ModeModel> create_obstacle_mode_models(double dt = 0.1);
 
+/// Paper Eqs. (34)/(36): Gaussian noise in position increments, fixed velocity.
+/// position_noise_variance is each diagonal entry of Sigma_w, not a deviation.
+std::map<std::string, ModeModel> create_gaussian_position_mode_models(
+    double dt, double position_noise_variance);
+
 /**
  * @brief Resolve the configured obstacle mode set against a model catalog.
  *

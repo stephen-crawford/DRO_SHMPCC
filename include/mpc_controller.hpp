@@ -144,6 +144,14 @@ public:
     /// Clear reference path (disables MPCC cost terms).
     void clear_reference_path();
 
+    /// Prediction paths for the next direct-sampling solve. Input stage k maps
+    /// to solver stage k+1; measured obstacle positions remain solver stage 0.
+    void set_obstacle_predictions(ObstaclePredictions predictions) {
+        if (config_.mpc.sampling.multimodal_bilevel)
+            throw std::invalid_argument("supplied predictions require direct trajectory sampling");
+        obstacle_predictions_ = std::move(predictions);
+    }
+
     /// Set custom per-obstacle mode weights (e.g. from OT predictor).
     /// When set, these override the internal weight_type computation for
     /// scenario sampling. Cleared after each solve() call.
@@ -212,6 +220,8 @@ private:
     bool capture_attempt_diagnostics_ = false;
     SolveAttemptDiagnostics current_attempt_diagnostics_;
     std::vector<CollisionConstraint> last_linearized_constraints_;
+    // Optional diagnostic snapshot before SQP reduction or scenario removal.
+    std::vector<CollisionConstraint> last_pre_reduction_constraints_;
 
     // ------------------------------------------------------------------------
     // Recursive-feasibility state
@@ -236,6 +246,9 @@ private:
         const Eigen::Vector2d& goal,
         double reference_velocity
     );
+
+    /// Resample the previous piecewise-constant controls after one execution interval.
+    std::vector<EgoInput> shifted_backup_controls() const;
 
     /// Build the cold-start numerical trajectory used by the MPC linearization.
     std::vector<EgoState> generate_straight_line_trajectory(
@@ -282,7 +295,8 @@ private:
 
     bool trajectory_is_deterministically_admissible(
     const std::vector<EgoState>& trajectory,
-    const std::vector<EgoInput>& inputs
+    const std::vector<EgoInput>& inputs,
+    double tolerance = 0.0
     ) const;  
     
     bool project_onto_linearized_set(
@@ -345,6 +359,11 @@ private:
     const std::vector<EgoState>& backup_trajectory
     ) const;
 
+    std::vector<EgoState> select_deterministic_anchor(
+        const EgoState&, const std::map<int, ObstacleState>&,
+        const std::vector<EgoState>&, const std::vector<EgoInput>&,
+        const std::vector<EgoState>&);
+
     RuntimeConfig config_;
     EgoDynamics ego_dynamics_;
     AcadosQPSolver qp_solver_;
@@ -352,6 +371,8 @@ private:
     std::map<int, ModeHistory> mode_histories_;
     std::map<int, int> obstacle_class_ids_;  // obstacle_id -> obstacle_class_id
     std::vector<Scenario> scenarios_;
+    DirectTrajectorySampler direct_sampler_;
+    ObstaclePredictions obstacle_predictions_;
     DRO dro_;
     std::map<int, DROResult> last_dro_results_;
     std::vector<EgoState> reference_trajectory_;
@@ -364,6 +385,14 @@ private:
     /// Custom per-obstacle mode weights (set externally, e.g. from OT predictor).
     std::map<int, std::map<std::string, double>> custom_per_obstacle_weights_;
     std::optional<std::vector<Scenario>> experimental_scenarios_;
+    // Friend-only frozen-context experiment; never selected from current samples.
+    std::string experimental_anchor_candidate_;
+    // Friend-only full-solve replay of a specified joint-scenario deletion.
+    int experimental_removed_scenario_ = -1;
+    // Friend-only fixed-orientation hard-constraint replay.
+    bool experimental_fixed_normals_ = false;
+    // Approved numerical-margin diagnostic; metres, off by default.
+    double experimental_collision_tightening_ = 0.0;
 
 };
 

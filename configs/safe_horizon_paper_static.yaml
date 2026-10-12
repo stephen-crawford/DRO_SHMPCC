@@ -1,0 +1,47 @@
+# Safe Horizon MPC: Sec. VIII-C / IX-B of SafeHorizonMPC.pdf (2023 preprint).
+# Existing dynamics, integrator and unlisted objective terms remain framework
+# choices; the predictor below implements Eq. (34). This is not a reproduction
+# of every pedestrian experiment or of the authors' FORCES Pro solver.
+mpc_type: sh_mpcc
+multimodal_bilevel: true
+dro_enabled: false
+nominal_resampling_baseline: false
+wdro_stratified_sampling: false
+horizon: 20
+dt: 0.2
+control_dt: 0.05
+sqp_max_iterations: 15
+one_minus_chance_constraint_violation_probability: 0.95
+chance_of_certificate_violation: 0.01
+automatically_compute_sample_size: true
+# PDF n_bar=9 INCLUDES R=1; this API uses a nonremoved cap, hence 8+1=9.
+support_cap_n_bar: 8
+scenario_removal_budget: 1
+# Table II, static-obstacle experiment (IX-C).
+# Use reference-velocity tracking for this profile, rather than the framework's
+# optional progress reward. The original objective remains available elsewhere.
+progress_weight: 0.0
+velocity_weight: 0.05
+steering_weight: 0.05
+contour_weight: 0.02
+lag_weight: 0.1
+
+# Eq. (34): literal Sigma_w diagonal entries 0.3 from IX-C.
+# Eq. (35) has a different covariance convention; it is a marginal baseline,
+# not the joint trajectory model used here. Change variance explicitly if needed.
+obstacle_prediction_model: gaussian_position
+obstacle_position_noise_variance: 0.3
+num_obstacles: 1
+obs_modes: [stop]
+rare_mode: ""
+switch_prob: 0.0
+rare_mode_probability: 0.0
+obstacle_initial_states: [6.0,0.0,0.0,0.0]
+obstacle_process_noise: 0.0
+num_discs: 1
+ego_length: 0.0
+ego_radius: 0.325
+obstacle_radius: 0.3
+safety_margin: 0.0
+environment: two_lane_highway
+road_length: 12.0

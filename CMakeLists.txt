@@ -117,6 +117,7 @@ set(SCENARIO_MPC_SOURCES
     src/qp_solver.cpp
     src/reference_path.cpp
     src/scenario_sampler.cpp
+    src/direct_trajectory_sampler.cpp
     src/dro.cpp
     src/wasserstein_radius_calibration.cpp
     src/exact_wasserstein_inversion.cpp
@@ -145,6 +146,15 @@ endif()
 # harness and writes a reproducibility/trace/visualization bundle by default.
 add_executable(counterfactual_probe tools/counterfactual_probe.cpp)
 target_link_libraries(counterfactual_probe PRIVATE scenario_mpc)
+
+add_executable(week2_budget_response tools/week2_budget_response.cpp)
+target_link_libraries(week2_budget_response PRIVATE scenario_mpc)
+
+add_executable(oracle_transfer tools/oracle_transfer.cpp)
+target_link_libraries(oracle_transfer PRIVATE scenario_mpc)
+
+add_executable(audit_anchor_support tools/audit_anchor_support.cpp)
+target_link_libraries(audit_anchor_support PRIVATE scenario_mpc)
 
 add_executable(experiment_runner tools/experiment_runner.cpp)
 target_link_libraries(experiment_runner PRIVATE scenario_mpc)
@@ -189,6 +199,9 @@ target_link_libraries(test_pruning_and_linearization PRIVATE scenario_mpc)
 add_executable(test_sample_complexity tests/test_sample_complexity.cpp)
 target_link_libraries(test_sample_complexity PRIVATE scenario_mpc)
 
+add_executable(test_sample_size_minimality tests/test_sample_size_minimality.cpp)
+target_link_libraries(test_sample_size_minimality PRIVATE scenario_mpc)
+
 add_executable(test_dynamics tests/test_dynamics.cpp)
 target_link_libraries(test_dynamics PRIVATE scenario_mpc)
 
@@ -203,6 +216,9 @@ target_link_libraries(test_primal_ot PRIVATE scenario_mpc)
 
 add_executable(test_scenario_sampler tests/test_scenario_sampler.cpp)
 target_link_libraries(test_scenario_sampler PRIVATE scenario_mpc)
+
+add_executable(test_direct_trajectory_sampler tests/test_direct_trajectory_sampler.cpp)
+target_link_libraries(test_direct_trajectory_sampler PRIVATE scenario_mpc)
 
 add_executable(test_traffic_turns tests/test_traffic_turns.cpp)
 target_link_libraries(test_traffic_turns PRIVATE scenario_mpc)
@@ -227,6 +243,11 @@ target_link_libraries(test_safe_horizon_configuration PRIVATE scenario_mpc)
 
 add_executable(test_support_accounting tests/test_support_accounting.cpp)
 target_link_libraries(test_support_accounting PRIVATE scenario_mpc)
+
+add_executable(test_safe_horizon_algorithm tests/test_safe_horizon_algorithm.cpp)
+target_link_libraries(test_safe_horizon_algorithm PRIVATE scenario_mpc)
+# Exercise the real SQP loop with deterministic source rows, without changing its API.
+target_compile_options(test_safe_horizon_algorithm PRIVATE -fno-access-control)
 
 add_executable(test_projection tests/test_projection.cpp)
 target_link_libraries(test_projection PRIVATE scenario_mpc)
@@ -326,6 +347,7 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_mode_belief unit)
     register_scenario_mpc_test(test_mode_catalog unit)
     register_scenario_mpc_test(test_scenario_sampler unit)
+    register_scenario_mpc_test(test_direct_trajectory_sampler integration)
     register_scenario_mpc_test(test_waypoint_trajectory unit)
     register_scenario_mpc_test(test_environment_topologies unit)
     register_scenario_mpc_test(test_paper_formulation integration)
@@ -352,8 +374,10 @@ if(BUILD_TESTING)
     register_scenario_mpc_test(test_experiment_artifacts integration)
     register_scenario_mpc_test(test_experiment_runner_cli integration)
     register_scenario_mpc_test(test_sample_complexity unit)
+    register_scenario_mpc_test(test_sample_size_minimality unit)
     register_scenario_mpc_test(test_safe_horizon_configuration unit)
     register_scenario_mpc_test(test_support_accounting integration)
+    register_scenario_mpc_test(test_safe_horizon_algorithm integration)
     register_scenario_mpc_test(test_acados_reproducibility integration)
     register_scenario_mpc_test(pipeline_verify integration)
 
@@ -370,6 +394,14 @@ endif()
 # Full-route base scenarios retain GIF and RViz bundles for user inspection.
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(DRO_MPC_REFERENCE_SAMPLER_SOURCE "" CACHE FILEPATH
+        "Optional scenario_module/src/sampler.cpp for an executable source comparison")
+    if(DRO_MPC_REFERENCE_SAMPLER_SOURCE)
+        add_test(NAME test_reference_trajectory_sampling
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/compare_reference_sampling.py"
+                --reference "${DRO_MPC_REFERENCE_SAMPLER_SOURCE}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(test_reference_trajectory_sampling PROPERTIES LABELS "integration;deterministic")
+    endif()
     add_test(NAME test_sample_efficiency
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sample_efficiency.py")
     set_tests_properties(test_sample_efficiency PROPERTIES LABELS "unit;deterministic")

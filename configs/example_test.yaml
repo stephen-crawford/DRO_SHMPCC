@@ -1,3 +1,4 @@
+multimodal_bilevel: true
 # Overlay example. Unspecified keys come from configs/default.yaml.
 # Load with: yaml_config::load_experiment_config("configs/example_test.yaml")
 

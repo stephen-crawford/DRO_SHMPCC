@@ -16,6 +16,7 @@
 #include <limits>
 #include <string>
 #include <array>
+#include <tuple>
 
 namespace dro_mpc {
 
@@ -36,7 +37,7 @@ bool uses_paper_calibration(const RuntimeConfig& config) {
 // violation; a small positive clearance is treated as binding support.
 constexpr double kSupportBindingTolerance = 1e-3;
 
-/// Add the distinct scenario IDs whose collision constraints are either
+/// Diagnostic only: add the distinct scenario IDs whose collision constraints are either
 /// binding or violated by trajectory.  Scenario support is a property of a
 /// joint scenario, so multiple obstacle/stage/disc constraints with the same
 /// scenario_id deliberately contribute only once.
@@ -316,6 +317,11 @@ bool use_dro
 last_dro_results_.clear();
 last_removed_scenario_ids_.clear();
 
+// The optional hybrid recovery is an extension; nominal SH solves follow
+// Algorithm 1 rather than selecting a collision homotopy from the sample set.
+const bool paper_scenario_algorithm = config_.mpc.uses_safe_horizon() &&
+    config_.mpc.type != MPCType::SH_MPCC_DRO_FALLBACK;
+
 scenarios_.clear();
 last_linearized_constraints_.clear();
 
@@ -332,7 +338,8 @@ if (!ego_with_spline.has_spline() && reference_path_.has_value()) {
 
 // Ensure all obstacles have mode histories
 for (const auto& [obs_id, _] : obstacles) {
-    if (mode_histories_.find(obs_id) == mode_histories_.end()) {
+    if (config_.mpc.sampling.multimodal_bilevel &&
+        mode_histories_.find(obs_id) == mode_histories_.end()) {
         initialize_obstacle(obs_id, 0);
     }
 }
@@ -340,15 +347,121 @@ for (const auto& [obs_id, _] : obstacles) {
 // Step 1: Initialize reference trajectory (warmstart from previous)
 initialize_reference_trajectory(ego_with_spline, goal, reference_velocity);
 
-// Observe only sampler execution, excluding DRO and bookkeeping. Forward every argument unchanged.
-// With diagnostics disabled, this delegates directly without reading the clock.
-auto sample_scenarios = [&](const auto&... arguments) {
-    if (!capture_attempt_diagnostics_)
-        return dro_mpc::sample_scenarios(arguments...);
-    const auto sampling_start = std::chrono::steady_clock::now();
-    auto sampled = dro_mpc::sample_scenarios(arguments...);
-    current_attempt_diagnostics_.trajectory_generation_seconds +=
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - sampling_start).count();
+// Select and freeze anchors from measured state and past controls before sampling.
+std::vector<EgoInput> backup_inputs;
+std::vector<EgoState> backup_trajectory;
+bool backup_available = false;
+FailureDiagnostics failure_diagnostics;
+
+const int N = config_.mpc.horizon;
+
+if (has_feasible_backup_ &&
+    static_cast<int>(last_feasible_controls_.size()) == N) {
+
+    backup_inputs = shifted_backup_controls();
+
+    // Re-roll from the ACTUAL measured current state.
+    if (reference_path_.has_value()) {
+        backup_trajectory =
+            ego_dynamics_.rollout_with_spline(
+                ego_with_spline,
+                backup_inputs,
+                *reference_path_);
+    } else {
+        backup_trajectory =
+            ego_dynamics_.rollout(
+                ego_with_spline,
+                backup_inputs);
+    }
+
+    backup_available =
+        static_cast<int>(backup_trajectory.size()) == N + 1 &&
+        trajectory_is_deterministically_admissible(
+            backup_trajectory,
+            backup_inputs);
+
+    std::cerr
+        << "[RF BACKUP]"
+        << " available=" << backup_available
+        << " controls=" << backup_inputs.size()
+        << " states=" << backup_trajectory.size()
+        << std::endl;
+}
+
+auto pre_sampling_constraint_reference = backup_available
+    ? backup_trajectory : reference_trajectory_;
+
+if (paper_scenario_algorithm && config_.mpc.sampling.deterministic_anchor_selection)
+    pre_sampling_constraint_reference = select_deterministic_anchor(
+        ego_with_spline,obstacles,pre_sampling_constraint_reference,
+        backup_available ? backup_inputs : std::vector<EgoInput>{},
+        backup_available ? backup_trajectory : std::vector<EgoState>{});
+
+// Experimental directions are frozen before any certification draw.
+using FixedNormalKey = std::tuple<int,std::string,int,int>;
+std::map<FixedNormalKey,Eigen::Vector2d> fixed_normals;
+if (experimental_fixed_normals_) {
+    if (!std::isfinite(experimental_collision_tightening_) || experimental_collision_tightening_<0)
+        throw std::runtime_error("invalid experimental collision tightening");
+    if (!paper_scenario_algorithm || !config_.mpc.sampling.deterministic_anchor_selection ||
+        config_.scenario_removal_budget()!=0 || config_.mpc.sampling.anchor_pilot_samples!=0 ||
+        config_.mpc.sampling.markov_jump_system || config_.dro.enabled || !reference_path_)
+        throw std::runtime_error("fixed normals require ordinary deterministic held-mode SH with R=0");
+    constexpr double degeneracy_distance=1e-9; // metres; diagnostic convention only.
+    for (const auto& [id,state]:obstacles) for (const auto& [mode,model]:mode_histories_.at(id).available_modes) {
+        if (model.body_lateral_displacement!=0) throw std::runtime_error("fixed normals require linear modal forecasts");
+        auto mean=state;
+        std::map<int,Eigen::Vector2d> previous_nondegenerate;
+        for (int k=0;k<=N;++k) {
+            if (k>0) mean=model.propagate(mean);
+            const auto discs=compute_ego_disc_positions(pre_sampling_constraint_reference[k],config_.mpc.ego.num_discs,config_.mpc.ego.length);
+            for (int disc=0;disc<static_cast<int>(discs.size());++disc) {
+                const Eigen::Vector2d difference=discs[disc]-mean.position();
+                Eigen::Vector2d normal;const char* rule="mean";
+                if (difference.norm()>degeneracy_distance) {
+                    normal=difference.normalized();previous_nondegenerate[disc]=normal;
+                } else if (previous_nondegenerate.count(disc)) {
+                    normal=previous_nondegenerate.at(disc);rule="previous";
+                } else {
+                    const auto road=reference_path_->get_point_at(reference_path_->find_closest_point(discs[disc]));
+                    const double side=experimental_anchor_candidate_=="right"?-1.0:1.0;
+                    normal=side*Eigen::Vector2d(-std::sin(road.heading),std::cos(road.heading));rule="road";
+                }
+                fixed_normals[{id,mode,k,disc}]=normal;
+                std::cerr<<"[FIXED NORMAL] obstacle="<<id<<" mode="<<mode<<" k="<<k<<" disc="<<disc<<" rule="<<rule<<'\n';
+            }
+        }
+    }
+}
+
+const auto direct_predictions = config_.mpc.sampling.multimodal_bilevel
+    ? ObstaclePredictions{}
+    : (obstacle_predictions_.empty()
+        ? constant_velocity_predictions(obstacles, config_.mpc.horizon, config_.mpc.dt,
+                                        config_.mpc.sampling.trajectory_noise_stddev)
+        : std::move(obstacle_predictions_));
+obstacle_predictions_.clear();
+
+// Dispatch every ordinary batch, including augmentation, through the selected
+// sampler. The legacy branch forwards its original arguments unchanged.
+auto sample_scenarios = [&](
+    const std::map<int, ObstacleState>& states,
+    const std::map<int, ModeHistory>& histories,
+    const std::map<int, ModeDistribution>* weights,
+    int horizon, int count, const ModeBeliefConfig& belief,
+    const std::map<int, Eigen::MatrixXd>* transitions,
+    std::mt19937* rng, int offset = 0, bool stratified = false) {
+    const auto sampling_start = capture_attempt_diagnostics_
+        ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    auto sampled = config_.mpc.sampling.multimodal_bilevel
+        ? dro_mpc::sample_scenarios(states, histories, weights, horizon, count,
+                                   belief, transitions, rng, offset, stratified)
+        : direct_sampler_.sample(states, direct_predictions, horizon, count,
+                                 config_.mpc.dt, config_.mpc.sampling.trajectory_sample_batches,
+                                 *rng, offset);
+    if (capture_attempt_diagnostics_)
+        current_attempt_diagnostics_.trajectory_generation_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - sampling_start).count();
     return sampled;
 };
 
@@ -596,6 +709,41 @@ for (const auto& [mode_id, p] : nominal_weights) {
 if (config_.mpc.wdro_stratified_sampling && scenarios_.empty() && !obstacles.empty())
     throw std::runtime_error("stratified WDRO sampling has no available WDRO batch");
 
+// Independent pilot stream prepares geometry before any ordinary certification draw.
+// Its batch never enters scenarios_, support accounting, or the certificate sample count.
+if (paper_scenario_algorithm && config_.mpc.sampling.anchor_pilot_samples > 0) {
+    if (config_.dro.enabled || !scenarios_.empty())
+        throw std::runtime_error("pilot preparation must precede certification sampling");
+    std::seed_seq pilot_seed{0x414e4348u, config_.random_seed,
+                            static_cast<unsigned>(iteration_count_)};
+    std::mt19937 pilot_rng(pilot_seed);
+    DirectTrajectorySampler pilot_sampler;
+    const auto pilot = !config_.mpc.sampling.multimodal_bilevel
+        ? pilot_sampler.sample(obstacles, direct_predictions, config_.mpc.horizon,
+            config_.mpc.sampling.anchor_pilot_samples, config_.mpc.dt,
+            config_.mpc.sampling.trajectory_sample_batches, pilot_rng)
+        : dro_mpc::sample_scenarios(
+        obstacles, mode_histories_, custom_per_obstacle_weights_.empty()
+            ? nullptr : &custom_per_obstacle_weights_,
+        config_.mpc.horizon, config_.mpc.sampling.anchor_pilot_samples,
+        config_.mpc.sampling.mode_belief,
+        config_.mpc.sampling.markov_jump_system ? &sampling_transitions : nullptr,
+        &pilot_rng);
+    const auto original_anchor = pre_sampling_constraint_reference;
+    const auto pilot_start = std::chrono::steady_clock::now();
+    const bool prepared = prepare_safe_horizon_anchors(
+        pre_sampling_constraint_reference, pilot, config_.combined_radius(),
+        config_.mpc.ego.num_discs, config_.mpc.ego.length);
+    double displacement = 0;
+    for (size_t k = 0; k < original_anchor.size(); ++k)
+        displacement = std::max(displacement,
+            (original_anchor[k].position() - pre_sampling_constraint_reference[k].position()).norm());
+    std::cerr << "[ANCHOR PILOT] M=" << pilot.size() << " prepared=" << prepared
+              << " displacement=" << displacement << " backup=" << backup_available
+              << " repair_ms=" << 1000 * std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - pilot_start).count() << '\n';
+}
+
 // When custom per-obstacle weights are set (e.g. from OT predictor),
 // use them for scenario sampling (only fires when DRO is off).
 if (scenarios_.empty() && !custom_per_obstacle_weights_.empty()) {
@@ -725,6 +873,14 @@ if (capture_attempt_diagnostics_) {
             current_attempt_diagnostics_.radii[id] = robust->second.rho_used;
             current_attempt_diagnostics_.transport_costs[id] = robust->second.transport_cost_matrix;
             current_attempt_diagnostics_.radius_observation_counts[id] = robust->second.radius_observation_count;
+        }
+    }
+    if (!config_.mpc.sampling.multimodal_bilevel) {
+        for (const auto& [id, modes] : direct_predictions) {
+            ModeDistribution weights;
+            for (const auto& mode : modes) weights[mode.mode_id] = mode.probability;
+            current_attempt_diagnostics_.nominal_weights[id] = weights;
+            current_attempt_diagnostics_.sampling_weights[id] = std::move(weights);
         }
     }
     for (const auto& scenario : scenarios_) {
@@ -863,67 +1019,6 @@ if (use_dro) {
                 << std::endl;
         }
     }
-}
-
-// ------------------------------------------------------------------------
-// Construct shifted dynamically feasible candidate from previous solution.
-// ------------------------------------------------------------------------
-
-std::vector<EgoInput> backup_inputs;
-std::vector<EgoState> backup_trajectory;
-bool backup_available = false;
-FailureDiagnostics failure_diagnostics;
-
-const int N = config_.mpc.horizon;
-
-if (has_feasible_backup_ &&
-    static_cast<int>(last_feasible_controls_.size()) == N) {
-
-    backup_inputs.reserve(N);
-
-    // Shift u_1,...,u_{N-1}.
-    for (int k = 1; k < N; ++k) {
-        backup_inputs.push_back(
-            last_feasible_controls_[k]);
-    }
-
-    /*
-    * One-step terminal extension.
-    *
-    * This is the part that eventually corresponds to kappa_f in
-    * the recursive-feasibility proof.
-    */
-    EgoInput terminal_input =
-        last_feasible_controls_.back();
-
-    backup_inputs.push_back(terminal_input);
-
-    // Re-roll from the ACTUAL measured current state.
-    if (reference_path_.has_value()) {
-        backup_trajectory =
-            ego_dynamics_.rollout_with_spline(
-                ego_with_spline,
-                backup_inputs,
-                *reference_path_);
-    } else {
-        backup_trajectory =
-            ego_dynamics_.rollout(
-                ego_with_spline,
-                backup_inputs);
-    }
-
-    backup_available =
-        static_cast<int>(backup_trajectory.size()) == N + 1 &&
-        trajectory_is_deterministically_admissible(
-            backup_trajectory,
-            backup_inputs);
-
-    std::cerr
-        << "[RF BACKUP]"
-        << " available=" << backup_available
-        << " controls=" << backup_inputs.size()
-        << " states=" << backup_trajectory.size()
-        << std::endl;
 }
 
 // ------------------------------------------------------------------------
@@ -1094,7 +1189,16 @@ std::vector<EgoInput> feasible_warmstart_inputs;
 
 bool use_multi_homotopy_recovery = false;
 
-if (config_.mpc.uses_safe_horizon() &&
+if (paper_scenario_algorithm) {
+    if (backup_available) {
+        dynamic_reference = backup_trajectory;
+        feasible_warmstart_inputs = backup_inputs;
+    }
+    // Approved restriction: current scenarios cannot choose or repair anchors.
+    // Scenario positions still determine their individual halfspace rows.
+    constraint_reference = pre_sampling_constraint_reference;
+}
+else if (config_.mpc.uses_safe_horizon() &&
 backup_available) {
 
 removed_scenarios =
@@ -2003,8 +2107,24 @@ auto build_ordinary_constraint_problem = [&]() {
          config_.mpc.ego.num_discs,
          config_.mpc.ego.length);
 
- constraints =
-     reduce_to_free_space_polytopes(
+ if (experimental_fixed_normals_) {
+     for (auto& row:all_constraints) {
+         const auto scenario=std::find_if(constraint_scenarios.begin(),constraint_scenarios.end(),
+             [&](const Scenario& sample){return sample.scenario_id==row.scenario_id;});
+         if (scenario==constraint_scenarios.end()) throw std::runtime_error("missing fixed-normal scenario");
+         const auto& trajectory=scenario->trajectories.at(row.obstacle_id);
+         row.a=fixed_normals.at({row.obstacle_id,trajectory.mode_id,row.k,row.disc_index});
+         row.b=config_.combined_radius()+row.a.dot(trajectory.steps.at(row.k).mean);
+         if (experimental_collision_tightening_>0) row.b+=experimental_collision_tightening_;
+     }
+ }
+
+ // Preserve all source rows on the paper path: removal can expose facets
+ // that were redundant before a scenario was removed.
+ if (paper_scenario_algorithm) {
+     constraints = std::move(all_constraints);
+ } else {
+ constraints = reduce_to_free_space_polytopes(
          all_constraints,
          constraint_reference,
          dynamic_reference,
@@ -2013,6 +2133,7 @@ auto build_ordinary_constraint_problem = [&]() {
          max_abs_velocity,
          config_.mpc.dt,
          20);
+ }
 
 };  // build_ordinary_constraint_problem
 
@@ -2067,7 +2188,10 @@ constraints, reference_trajectory_,
 config_.mpc.constraints.clearance_filter_distance);
 }
 
-if (capture_linearized_constraints_) last_linearized_constraints_ = constraints;
+if (capture_linearized_constraints_) {
+    last_linearized_constraints_ = constraints;
+    last_pre_reduction_constraints_ = constraints;
+}
 
 auto constraint_end = std::chrono::high_resolution_clock::now();
 
@@ -2126,6 +2250,7 @@ const bool recovery_seed_has_conflict =
     !recovery_seed_incompatible.empty();
 
 const bool try_cold_start_homotopy =
+    !paper_scenario_algorithm &&
     config_.mpc.uses_safe_horizon() &&
     !backup_available &&
     recovery_seed_available &&
@@ -2394,11 +2519,136 @@ config_.mpc.horizon) {
 return result;
 }
 
+std::vector<EgoInput> MPCController::shifted_backup_controls() const {
+    std::vector<EgoInput> shifted;
+    shifted.reserve(last_feasible_controls_.size());
+    // Numerical warm start only: sample the previous zero-order-held sequence
+    // at the new prediction grid, then re-roll it from the measured state.
+    const int shift = static_cast<int>(std::floor(
+        config_.mpc.execution_dt() / config_.mpc.dt));
+    for (int k = 0; k < static_cast<int>(last_feasible_controls_.size()); ++k)
+        shifted.push_back(last_feasible_controls_[std::min(
+            k + shift, static_cast<int>(last_feasible_controls_.size()) - 1)]);
+    return shifted;
+}
+
+std::vector<EgoState> MPCController::select_deterministic_anchor(
+    const EgoState& ego, const std::map<int, ObstacleState>& obstacles,
+    const std::vector<EgoState>& reference, const std::vector<EgoInput>& backup_inputs,
+    const std::vector<EgoState>& backup_trajectory) {
+    const int N = config_.mpc.horizon;
+    const double dt = config_.mpc.dt;
+    auto rollout = [&](const std::vector<EgoInput>& inputs) {
+        return reference_path_ ? ego_dynamics_.rollout_with_spline(ego,inputs,*reference_path_)
+                               : ego_dynamics_.rollout(ego,inputs);
+    };
+    std::vector<EgoInput> nominal_inputs = backup_inputs;
+    if (static_cast<int>(nominal_inputs.size()) != N) {
+        nominal_inputs.clear();
+        for (int k=0;k<N;++k)
+            nominal_inputs.emplace_back(
+                std::clamp((reference[k+1].v-reference[k].v)/dt,
+                    config_.mpc.ego.dynamics.min_acceleration,config_.mpc.ego.dynamics.max_acceleration),
+                std::clamp((reference[k+1].theta-reference[k].theta)/dt,
+                    -config_.mpc.ego.dynamics.max_omega,config_.mpc.ego.dynamics.max_omega));
+    }
+    struct Candidate {const char* name; std::vector<EgoInput> inputs;
+        std::vector<EgoState> states; double score=-std::numeric_limits<double>::infinity(); bool admissible=false;};
+    // Exact-score ties prefer nominal, brake, left, right. No RNG is used.
+    std::vector<Candidate> candidates;
+    candidates.push_back({"nominal",nominal_inputs,rollout(nominal_inputs)});
+    auto brake=make_braking_seed_inputs(ego,backup_inputs,backup_trajectory);
+    candidates.push_back({"brake",brake,rollout(brake)});
+    for (int side : {1,-1}) {
+        Candidate candidate{side>0?"left":"right",{}, {ego}};
+        if (reference_path_ && config_.mpc.enable_contouring_constraints) {
+            const double lateral_limit = config_.mpc.constraints.road_width/2 -
+                config_.mpc.ego.radius-config_.mpc.constraints.safety_margin;
+            const auto first=reference_path_->get_point_at(reference_path_->find_closest_point(ego.position()));
+            const Eigen::Vector2d normal(-std::sin(first.heading),std::cos(first.heading));
+            const double initial_lateral=normal.dot(ego.position()-first.position);
+            const double target=side*lateral_limit;
+            for (int k=0;k<N;++k) {
+                const double t=static_cast<double>(k+1)/N;
+                const auto pp=reference_path_->get_point_at(
+                    reference_path_->find_closest_point(candidate.states.back().position()));
+                // Cubic offset ramp: y(t)=y0+(target-y0)*(3t²-2t³).
+                // Track its tangent using bounded yaw commands and the existing RK4.
+                const double lateral_rate=(target-initial_lateral)*(6*t-6*t*t)/(N*dt);
+                const double heading=pp.heading+std::atan2(lateral_rate,
+                    std::max(0.0,reference[k+1].v));
+                const double error=std::atan2(std::sin(heading-candidate.states.back().theta),
+                                             std::cos(heading-candidate.states.back().theta));
+                candidate.inputs.emplace_back(nominal_inputs[k].a,
+                    std::clamp(error/dt,-config_.mpc.ego.dynamics.max_omega,config_.mpc.ego.dynamics.max_omega));
+                candidate.states=rollout(candidate.inputs);
+            }
+        }
+        candidates.push_back(std::move(candidate));
+    }
+    struct Envelope {int k; Eigen::Vector2d mean; double radius;};
+    std::vector<Envelope> envelopes;
+    for (const auto& [id,state] : obstacles) {
+        for (const auto& [mode_id,model] : mode_histories_.at(id).available_modes) {
+            if (model.body_lateral_displacement != 0)
+                throw std::runtime_error("deterministic anchors require linear Gaussian modal forecasts");
+            auto mean=state;
+            Eigen::Matrix4d covariance=Eigen::Matrix4d::Zero();
+            for (int k=1;k<=N;++k) {
+                mean=model.propagate(mean);
+                covariance=model.A*covariance*model.A.transpose()+model.G*model.G.transpose();
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eigen(covariance.topLeftCorner<2,2>());
+                if (eigen.info()!=Eigen::Success || eigen.eigenvalues().minCoeff()<0)
+                    throw std::runtime_error("invalid deterministic forecast covariance");
+                envelopes.push_back({k,mean.position(),config_.combined_radius()+
+                    config_.mpc.sampling.anchor_inflation_kappa*std::sqrt(eigen.eigenvalues().maxCoeff())});
+            }
+        }
+    }
+    int selected=-1;
+    for (size_t i=0;i<candidates.size();++i) {
+        auto& candidate=candidates[i];
+        candidate.admissible=static_cast<int>(candidate.inputs.size())==N &&
+            trajectory_is_deterministically_admissible(candidate.states,candidate.inputs);
+        if (candidate.admissible) {
+            candidate.score=std::numeric_limits<double>::infinity();
+            for (const auto& envelope:envelopes)
+                for (const auto& disc:compute_ego_disc_positions(candidate.states[envelope.k],
+                        config_.mpc.ego.num_discs,config_.mpc.ego.length))
+                    candidate.score=std::min(candidate.score,(disc-envelope.mean).norm()-envelope.radius);
+            if (selected<0 || candidate.score>candidates[selected].score) selected=static_cast<int>(i);
+        }
+        std::cerr << "[ANCHOR CANDIDATE] name=" << candidate.name << " admissible=" << candidate.admissible
+                  << " score=" << candidate.score << '\n';
+    }
+    if (obstacles.empty() && candidates[0].admissible) selected=0;
+    if (!experimental_anchor_candidate_.empty()) {
+        const auto forced=std::find_if(candidates.begin(),candidates.end(),[&](const Candidate& c) {
+            return experimental_anchor_candidate_==c.name;
+        });
+        if (forced==candidates.end() || !forced->admissible)
+            throw std::runtime_error("requested experimental anchor is inadmissible");
+        selected=static_cast<int>(forced-candidates.begin());
+    }
+    std::cerr << "[ANCHOR SELECT] kappa=" << config_.mpc.sampling.anchor_inflation_kappa
+              << " name=" << (selected<0?"none":candidates[selected].name)
+              << " score=" << (selected<0?-std::numeric_limits<double>::infinity():candidates[selected].score) << '\n';
+    return selected<0?reference:candidates[selected].states;
+}
+
 void MPCController::initialize_reference_trajectory(
 const EgoState& ego_state,
 const Eigen::Vector2d& goal,
 double reference_velocity
 ) {
+if (config_.mpc.execution_dt() < config_.mpc.dt && has_feasible_backup_ &&
+    static_cast<int>(last_feasible_controls_.size()) == config_.mpc.horizon) {
+    const auto inputs = shifted_backup_controls();
+    reference_trajectory_ = reference_path_.has_value()
+        ? ego_dynamics_.rollout_with_spline(ego_state, inputs, *reference_path_)
+        : ego_dynamics_.rollout(ego_state, inputs);
+    return;
+}
 if (!reference_trajectory_.empty() && reference_trajectory_.size() > 1) {
 // Shift previous trajectory forward
 reference_trajectory_.erase(reference_trajectory_.begin());
@@ -2460,15 +2710,16 @@ for (int k = 0; k < config_.mpc.horizon; ++k) {
         desired_theta = current.theta;
     }
 
-    // MPCC seeds follow the reference geometry, independently of an endpoint
-    // or a requested tracking speed; its objective rewards spline progress.
+    // Follow reference geometry; a progress-reward objective seeds toward the
+    // speed bound, while a tracking objective seeds toward reference velocity.
     const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
                          (config_.mpc.type == MPCType::SH_MPCC ||
                           config_.mpc.type == MPCType::SH_MPCC_DRO_FALLBACK);
     if (is_mpcc && reference_path_.has_value()) {
         desired_theta = reference_path_->get_heading_at(current.s);
     }
-    const double seed_speed = is_mpcc ? config_.mpc.ego.dynamics.max_velocity
+    const double seed_speed = is_mpcc && config_.mpc.objective.progress_weight > 0.0
+                                     ? config_.mpc.ego.dynamics.max_velocity
                                      : reference_velocity;
     double v = std::min(current.v + 0.5 * config_.mpc.dt, seed_speed);
 
@@ -2493,7 +2744,8 @@ return trajectory;
 
 bool MPCController::trajectory_is_deterministically_admissible(
 const std::vector<EgoState>& trajectory,
-const std::vector<EgoInput>& inputs
+const std::vector<EgoInput>& inputs,
+double tolerance
 ) const
 {
 if (static_cast<int>(inputs.size()) !=
@@ -2513,14 +2765,14 @@ for (const auto& input : inputs) {
     }
 
     if (input.a <
-            config_.mpc.ego.dynamics.min_acceleration ||
+            config_.mpc.ego.dynamics.min_acceleration - tolerance ||
         input.a >
-            config_.mpc.ego.dynamics.max_acceleration) {
+            config_.mpc.ego.dynamics.max_acceleration + tolerance) {
         return false;
     }
 
     if (std::abs(input.omega) >
-        config_.mpc.ego.dynamics.max_omega) {
+        config_.mpc.ego.dynamics.max_omega + tolerance) {
         return false;
     }
 }
@@ -2551,9 +2803,9 @@ for (std::size_t k = 0;
         config_.mpc.constraints.enable_velocity_bounds) {
 
         if (state.v <
-                config_.mpc.ego.dynamics.min_velocity ||
+                config_.mpc.ego.dynamics.min_velocity - tolerance ||
             state.v >
-                config_.mpc.ego.dynamics.max_velocity) {
+                config_.mpc.ego.dynamics.max_velocity + tolerance) {
 
             return false;
         }
@@ -2583,7 +2835,7 @@ for (std::size_t k = 0;
                     point.position));
 
         if (lateral_error >
-            config_.mpc.constraints.road_width / 2.0) {
+            config_.mpc.constraints.road_width / 2.0 + tolerance) {
 
             return false;
         }
@@ -3966,13 +4218,15 @@ MPCResult MPCController::solve_optimization_sqp(
 const EgoState& ego_state,
 const Eigen::Vector2d& goal,
 double reference_velocity,
-const std::vector<CollisionConstraint>& constraints,
+const std::vector<CollisionConstraint>& sampled_constraints,
 const std::set<int>& pre_support_scenarios,
 const std::vector<EgoInput>& feasible_warmstart_inputs,
 double path_progress,
 double path_length
 ) {
 const int N = config_.mpc.horizon;
+auto constraints = sampled_constraints;
+auto retained_sampled_constraints = sampled_constraints;
 
 // 1. Build initial reference trajectory and extract inputs
 auto x_ref = generate_straight_line_trajectory(ego_state, goal, reference_velocity);
@@ -4053,12 +4307,11 @@ if (static_cast<int>(feasible_warmstart_inputs.size()) == N) {
 // recursion assumes x_ref[k+1] == f(x_ref[k], u_ref[k]). Geometric preparation
 // belongs to the separate normal anchors, never to this control rollout.
 
-// de Groot's online support estimate is the union of distinct scenarios
-// that are active OR violated at each SQP iterate.  It is intentionally
-// not just the support set of the final trajectory: a scenario that held
-// any intermediate convex approximation in place must remain counted.
-// The configuration resolves the reference-compatible total cap n̄ + R.
+// Eqs. (13)–(14): count activity at the feasible CONVEX QP solution.
+// A nonlinear rollout/line-search point is not that convex solution.
 const bool support_certification_enabled = config_.mpc.uses_safe_horizon();
+const bool paper_scenario_algorithm = support_certification_enabled &&
+    config_.mpc.type != MPCType::SH_MPCC_DRO_FALLBACK;
 const int support_limit = support_certification_enabled
     ? config_.support_limit()
     : -1;
@@ -4071,18 +4324,99 @@ std::cerr
 << " support_limit=" << support_limit
 << std::endl;
 int support_iterations_evaluated = 0;
-auto account_support_evaluation = [&](const std::vector<EgoState>& trajectory) {
-    if (!support_certification_enabled) return true;
-    collect_active_or_violated_scenarios(
-        constraints, trajectory, support_scenarios);
-    ++support_iterations_evaluated;
-    return static_cast<int>(support_scenarios.size()) <= support_limit;
+bool support_accounting_valid = true;
+bool support_cap_terminated = false;
+bool no_eligible_iterate = false;
+int returned_sqp_iteration = -1;
+std::set<int> removed_scenarios = pre_support_scenarios;
+if (experimental_removed_scenario_ >= 0) {
+    if (!paper_scenario_algorithm || config_.scenario_removal_budget()!=1 ||
+        !removed_scenarios.empty() ||
+        std::none_of(sampled_constraints.begin(),sampled_constraints.end(),[&](const CollisionConstraint& row) {
+            return row.scenario_id==experimental_removed_scenario_;
+        })) throw std::runtime_error("invalid experimental single-scenario deletion");
+    removed_scenarios.insert(experimental_removed_scenario_);
+    support_scenarios.insert(experimental_removed_scenario_);
+    std::cerr << "[SQP SCENARIO REMOVAL] id=" << experimental_removed_scenario_
+              << " removed=1 budget=1 experimental=1\n";
+}
+bool collision_rows_dirty = true;
+
+// Eq. (24) does not prescribe tie-breaking within the available budget.
+// Retain deterministic joint-ID ordering from the existing framework.
+auto remove_scenarios = [&](const std::set<int>& candidates) {
+    bool changed = false;
+    if (!paper_scenario_algorithm) return changed;
+    for (int id : candidates) {
+        if (id < 0 || removed_scenarios.count(id)) continue;
+        if (static_cast<int>(removed_scenarios.size()) >= config_.scenario_removal_budget()) break;
+        removed_scenarios.insert(id);
+        support_scenarios.insert(id);  // Theorem 5, including infeasibility removals.
+        std::cerr << "[SQP SCENARIO REMOVAL] id=" << id
+                  << " removed=" << removed_scenarios.size()
+                  << " budget=" << config_.scenario_removal_budget() << '\n';
+        collision_rows_dirty = true;
+        changed = true;
+    }
+    return changed;
 };
+auto refresh_retained_constraints = [&]() {
+    retained_sampled_constraints.clear();
+    for (const auto& row : sampled_constraints) {
+        if (!removed_scenarios.count(row.scenario_id))
+            retained_sampled_constraints.push_back(row);
+    }
+};
+auto infeasible_at_nominal = [&]() {
+    std::set<int> ids;
+    for (const auto& row : retained_sampled_constraints) {
+        if (row.k >= 1 && row.k <= N &&
+            row.evaluate(compute_collision_disc_center(x_ref[row.k], row)) <
+                -config_.solver.qp_tolerance)
+            ids.insert(row.scenario_id);
+    }
+    return ids;
+};
+
+struct FeasibleIterate {
+    std::vector<EgoState> trajectory;
+    std::vector<EgoInput> inputs;
+    std::set<int> support;
+    std::set<int> removed;
+    std::vector<CollisionConstraint> collision_rows;
+    int evaluations;
+    int iteration;
+};
+std::optional<FeasibleIterate> last_eligible_iterate;
 
 int last_qp_converged = -1;
 
 // 2. SQP loop
 for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter) {
+    refresh_retained_constraints();
+    if (paper_scenario_algorithm && collision_rows_dirty) {
+        // Reduce again after removal, from ALL remaining source halfspaces.
+        // This exposes facets previously hidden behind removed scenarios.
+        try {
+            constraints = reduce_to_free_space_polytopes(
+                retained_sampled_constraints, x_ref, x_ref,
+                config_.mpc.ego.num_discs, config_.mpc.ego.length,
+                std::max(std::abs(config_.mpc.ego.dynamics.min_velocity),
+                         std::abs(config_.mpc.ego.dynamics.max_velocity)),
+                config_.mpc.dt, 20);
+            // The retained facets are equivalent over the complete reachable
+            // domain, not just at this nominal. Rebuild only after removal.
+            collision_rows_dirty = false;
+        } catch (const EmptyFreeSpacePolygon& error) {
+            std::cerr << "[SQP FACET REJECT] reason=" << error.what()
+                      << " removed=" << removed_scenarios.size()
+                      << " budget_exhausted=" << (static_cast<int>(removed_scenarios.size()) >=
+                          config_.scenario_removal_budget()) << '\n';
+            if (remove_scenarios(infeasible_at_nominal())) continue;
+            support_accounting_valid = false;
+            break;
+        }
+    }
     // Build and solve QP subproblem
     QPProblem qp = build_condensed_qp(
         x_ref, u_ref, goal, reference_velocity, constraints,
@@ -4173,12 +4507,93 @@ for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter)
     // An invalid primal vector is not an SQP iterate and must not be used
     // to fabricate a support certificate (or indexed below).
     if (delta_u.size() != 2 * N || !delta_u.allFinite()) {
+        support_accounting_valid = false;
         break;
+    }
+
+    if (support_certification_enabled) {
+        const Eigen::VectorXd residual = qp.C * delta_u - qp.d;
+        const double tolerance = config_.solver.qp_tolerance;
+        const bool convex_feasible = qp_result.converged && residual.allFinite() &&
+            (residual.size() == 0 || residual.minCoeff() >= -tolerance) &&
+            (delta_u.array() >= qp.lb.array() - tolerance).all() &&
+            (delta_u.array() <= qp.ub.array() + tolerance).all();
+        std::set<int> active;
+        std::set<int> infeasible;
+        for (int row = 0; row < n_collision; ++row) {
+            const int id = constraints[row].scenario_id;
+            if (id < 0 || !std::isfinite(residual(row))) continue;
+            if (residual(row) < -tolerance) infeasible.insert(id);
+            else if (residual(row) <= kSupportBindingTolerance) active.insert(id);
+        }
+        if (!convex_feasible) {
+            // A failed QP is not a feasible convex iteration in Theorem 2.
+            // Its infeasibility-causing removals remain in support instead.
+            if (infeasible.empty()) infeasible = infeasible_at_nominal();
+            if (remove_scenarios(infeasible)) continue;
+            support_accounting_valid = false;
+            break;
+        }
+
+        if (experimental_fixed_normals_) {
+            std::cerr << "[FIXED ACTIVE] iter=" << sqp_iter << " ids=";
+            for (int id:active) std::cerr << id << ';';
+            std::cerr << '\n';
+        }
+        support_scenarios.insert(active.begin(), active.end());
+        ++support_iterations_evaluated;
+        std::cerr << "[SQP SUPPORT] iter=" << sqp_iter
+                  << " support_size=" << support_scenarios.size()
+                  << " support_limit=" << support_limit << '\n';
+        if (static_cast<int>(support_scenarios.size()) > support_limit) {
+            support_cap_terminated = true;
+            // Algorithm 1, lines 9–11: return theta_m with its own support,
+            // controls and removal set, never the exceeded iterate's union.
+            if (last_eligible_iterate) {
+                x_ref = last_eligible_iterate->trajectory;
+                u_ref = last_eligible_iterate->inputs;
+                support_scenarios = last_eligible_iterate->support;
+                removed_scenarios = last_eligible_iterate->removed;
+                constraints = last_eligible_iterate->collision_rows;
+                support_iterations_evaluated = last_eligible_iterate->evaluations;
+                returned_sqp_iteration = last_eligible_iterate->iteration;
+            } else {
+                no_eligible_iterate = true;
+            }
+            break;
+        }
+
+        // Full SQP step: collision-dependent backtracking would make the
+        // decision depend on scenarios outside the QP active-set union.
+        for (int k = 0; k < N; ++k) {
+            u_ref[k].a = std::clamp(u_ref[k].a + delta_u(2 * k),
+                config_.mpc.ego.dynamics.min_acceleration,
+                config_.mpc.ego.dynamics.max_acceleration);
+            u_ref[k].omega = std::clamp(u_ref[k].omega + delta_u(2 * k + 1),
+                -config_.mpc.ego.dynamics.max_omega,
+                config_.mpc.ego.dynamics.max_omega);
+        }
+        x_ref = reference_path_.has_value()
+            ? ego_dynamics_.rollout_with_spline(ego_state, u_ref, *reference_path_)
+            : ego_dynamics_.rollout(ego_state, u_ref);
+        returned_sqp_iteration = sqp_iter;
+        const double violation =
+            evaluate_constraint_violation(retained_sampled_constraints, x_ref).first;
+        if (violation <= tolerance &&
+            trajectory_is_deterministically_admissible(x_ref, u_ref, tolerance)) {
+            last_eligible_iterate = FeasibleIterate{
+                x_ref, u_ref, support_scenarios, removed_scenarios, constraints,
+                support_iterations_evaluated, sqp_iter};
+        }
+
+        // Eq. (24): removals accumulate, and are never removed from support.
+        const bool removed_active = remove_scenarios(active);
+        if (!removed_active && delta_u.norm() < config_.solver.sqp_convergence_tol) break;
+        continue;
     }
 
     // Check SQP convergence
     if (delta_u.norm() < config_.solver.sqp_convergence_tol) {
-        account_support_evaluation(x_ref);
         break;
     }
 
@@ -4314,33 +4729,13 @@ for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter)
     u_ref = best_inputs;
     x_ref = best_traj;
 
-    std::set<int> before = support_scenarios;
-
-    const bool support_ok =
-        account_support_evaluation(x_ref);
-
-    for (int id : support_scenarios) {
-        if (before.find(id) == before.end()) {
-            std::cerr
-                << "[SQP SUPPORT ADD]"
-                << " iter=" << sqp_iter
-                << " scenario=" << id
-                << std::endl;
-        }
-    }
-    std::cerr
-    << "[SQP SUPPORT]"
-    << " iter=" << sqp_iter
-    << " support_size=" << support_scenarios.size()
-    << " support_limit=" << support_limit
-    << " support_ok=" << support_ok
-    << std::endl;
-
-    if (!support_ok) {
-        std::cerr
-            << "[SQP] support cap exceeded; "
-            << "continuing optimization without certificate"
-            << std::endl;
+}
+refresh_retained_constraints();
+if (paper_scenario_algorithm) last_removed_scenario_ids_ = removed_scenarios;
+if (capture_linearized_constraints_) {
+    last_linearized_constraints_.clear();
+    for (const auto& row : constraints) {
+        if (!removed_scenarios.count(row.scenario_id)) last_linearized_constraints_.push_back(row);
     }
 }
 
@@ -4352,7 +4747,7 @@ for (int sqp_iter = 0; sqp_iter < config_.solver.sqp_max_iterations; ++sqp_iter)
 // of whether the QP solver fully converged the soft velocity rows above. When the
 // reference speed exceeds the cap the per-step QP row is momentarily infeasible
 // (cannot brake far enough in one dt); this saturation is the hard backstop.
-if (config_.mpc.constraints.enable_velocity_bounds) {
+if (config_.mpc.constraints.enable_velocity_bounds && !support_certification_enabled) {
     double v_cur = ego_state.v;
     for (int k = 0; k < N; ++k) {
         const double v_lo_a = (config_.mpc.ego.dynamics.min_velocity - v_cur) / config_.mpc.dt;
@@ -4376,11 +4771,7 @@ if (config_.mpc.constraints.enable_velocity_bounds) {
                 : ego_dynamics_.rollout(ego_state, u_ref);
 }
 
-// The hard velocity backstop may change the returned trajectory after the
-// last SQP solve.  Include that returned plan in the monotone support
-// union as a final verification pass, so result support never describes a
-// different trajectory than the one handed to the caller.
-account_support_evaluation(x_ref);
+// SH controls are not changed after the counted convex iterations.
 
 const bool is_mpcc = config_.mpc.type == MPCType::MPCC ||
                      (config_.mpc.type == MPCType::SH_MPCC ||
@@ -4449,7 +4840,7 @@ if (is_mpcc) {
 
 // Check feasibilityf
 auto [final_violation, violated_constraints] =
-evaluate_constraint_violation(constraints, x_ref);
+evaluate_constraint_violation(retained_sampled_constraints, x_ref);
 
 std::cerr
 << "[SQP FINAL]"
@@ -4459,7 +4850,7 @@ std::cerr
 
 const auto final_active_scenarios =
 sorted_scenario_ids(
-    constraints,
+    retained_sampled_constraints,
     x_ref);
 
 std::cerr
@@ -4502,7 +4893,12 @@ std::cerr
 << std::endl;
 
 }
-bool feasible = (final_violation <= 0.01);
+const double collision_tolerance = support_certification_enabled
+    ? config_.solver.qp_tolerance : 0.01;
+bool feasible = final_violation <= collision_tolerance &&
+    (!support_certification_enabled ||
+     (support_accounting_valid && !no_eligible_iterate &&
+      trajectory_is_deterministically_admissible(x_ref, u_ref, collision_tolerance)));
 
 MPCResult result;
 result.failure_diagnostics.last_qp_converged = last_qp_converged;
@@ -4520,11 +4916,11 @@ result.ego_trajectory = x_ref;
 result.control_inputs = u_ref;
 result.cost = cost;
 
-auto populate_active_scenarios = [&constraints](
+auto populate_active_scenarios = [&retained_sampled_constraints](
     const std::vector<EgoState>& trajectory,
     MPCResult& mpc_result
 ) {
-    mpc_result.active_scenarios = sorted_scenario_ids(constraints, trajectory);
+    mpc_result.active_scenarios = sorted_scenario_ids(retained_sampled_constraints, trajectory);
 };
 
 auto populate_support_accounting = [&](MPCResult& mpc_result) {
@@ -4543,8 +4939,12 @@ auto populate_support_accounting = [&](MPCResult& mpc_result) {
     mpc_result.support_size = static_cast<int>(support_scenarios.size());
     mpc_result.support_limit = support_limit;
     mpc_result.support_iterations_evaluated = support_iterations_evaluated;
+    mpc_result.support_iterations_feasible = support_accounting_valid &&
+        support_iterations_evaluated > 0;
+    mpc_result.support_cap_terminated = support_cap_terminated;
+    mpc_result.returned_sqp_iteration = returned_sqp_iteration;
 
-    if (support_iterations_evaluated == 0) {
+    if (support_iterations_evaluated == 0 || !support_accounting_valid) {
         // A cap cannot certify a solve for which no finite SQP iterate was
         // inspected.  Keep this distinct from a valid zero-support solve.
         mpc_result.support_cap_satisfied = false;
@@ -4564,7 +4964,8 @@ populate_support_accounting(result);
 // If infeasible, try safe fallback
 if (!feasible) {
     auto fallback = generate_safe_fallback(ego_state);
-    auto [fb_viol, fb_violated] = evaluate_constraint_violation(constraints, fallback.ego_trajectory);
+    auto [fb_viol, fb_violated] = evaluate_constraint_violation(
+        retained_sampled_constraints, fallback.ego_trajectory);
     // An infeasible SQP plan is never executable. Validate the existing
     // braking fallback against the sampled collision rows and hard limits.
 
@@ -4580,10 +4981,16 @@ if (!feasible) {
             [](const EgoState& state) { return state.to_array().allFinite(); })) {
         fallback.failure_diagnostics.fallback_sampled_collision_feasible =
             backup_incompatible_scenarios(fallback.ego_trajectory, scenarios_, config_.combined_radius(),
-                config_.mpc.ego.num_discs, config_.mpc.ego.length).empty();
+                config_.mpc.ego.num_discs, config_.mpc.ego.length, 0.0).empty();
     }
     fallback.used_fallback = true;
-    fallback.sampled_constraints_satisfied = std::isfinite(fb_viol) && fb_viol <= 0.01;
+    // Algorithm 1 slows the robot when no eligible iterate exists. This
+    // fallback has no scenario certificate; check all original sampled circles
+    // instead of the reference trajectory's conservative tangent halfspaces.
+    fallback.sampled_constraints_satisfied = support_certification_enabled &&
+        config_.mpc.type != MPCType::SH_MPCC_DRO_FALLBACK && !scenarios_.empty()
+        ? fallback.failure_diagnostics.fallback_sampled_collision_feasible
+        : std::isfinite(fb_viol) && fb_viol <= collision_tolerance;
     bool admissible = fallback.sampled_constraints_satisfied;
     for (const auto& input : fallback.control_inputs) {
         admissible = admissible && input.to_array().allFinite() &&
@@ -4745,9 +5152,8 @@ for (int k = 0; k < N; ++k) {
 // Regularize for positive definiteness
 H.diagonal().array() += 1e-6;
 
-// MPCC cost terms (Paper Eq. 6): contouring + lag + terminal heading
-// Applied to all steps 1..N. Safe horizon only truncates collision
-// constraints (already filtered upstream in solve()), not objectives.
+// Existing MPCC contouring + lag + terminal heading terms, at steps 1..N.
+// Safe Horizon certifies the complete horizon; it does not truncate constraints.
 //
 // Uses integrated spline parameter s from EgoState when available,
 // falling back to find_closest_point() projection otherwise.
@@ -5033,6 +5439,8 @@ return stats;
 }
 
 void MPCController::reset() {
+direct_sampler_.reset();
+obstacle_predictions_.clear();
 experimental_scenarios_.reset();
 mode_histories_.clear();
 obstacle_class_ids_.clear();
@@ -5052,6 +5460,8 @@ void MPCController::set_custom_mode_weights(
 int obstacle_id,
 const std::map<std::string, double>& weights
 ) {
+if (!config_.mpc.sampling.multimodal_bilevel)
+    throw std::invalid_argument("custom mode weights require multimodal_bilevel: true; supply direct prediction probabilities instead");
 custom_per_obstacle_weights_[obstacle_id] = weights;
 }
 

@@ -1,0 +1,27 @@
+# Safe Horizon MPC: Sec. VIII-C / IX-B of SafeHorizonMPC.pdf (2023 preprint).
+# Existing dynamics, integrator, prediction models and unlisted objective terms
+# remain framework choices. This is a controller profile, not a reproduction
+# of every pedestrian experiment or of the authors' FORCES Pro solver.
+mpc_type: sh_mpcc
+multimodal_bilevel: true
+dro_enabled: false
+nominal_resampling_baseline: false
+wdro_stratified_sampling: false
+horizon: 20
+dt: 0.2
+control_dt: 0.05
+sqp_max_iterations: 15
+one_minus_chance_constraint_violation_probability: 0.95
+chance_of_certificate_violation: 0.01
+automatically_compute_sample_size: true
+# PDF n_bar=9 INCLUDES R=1; this API uses a nonremoved cap, hence 8+1=9.
+support_cap_n_bar: 8
+scenario_removal_budget: 1
+# Table II, Gaussian experiment (IX-D).
+# Use reference-velocity tracking for this profile, rather than the framework's
+# optional progress reward. The original objective remains available elsewhere.
+progress_weight: 0.0
+velocity_weight: 0.05
+steering_weight: 0.05
+contour_weight: 0.001
+lag_weight: 0.1

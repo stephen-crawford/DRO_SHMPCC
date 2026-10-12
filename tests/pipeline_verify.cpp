@@ -663,6 +663,7 @@ int main()
 
     RuntimeConfig config;
     config.dro.enabled = true;
+    config.mpc.sampling.multimodal_bilevel = true;
 
     config.mpc.sampling.set_manual_sample_count(
         40);

@@ -102,6 +102,7 @@ def config_text(case, settings):
     if protected.intersection(settings.get('overrides', {})):
         raise ValueError('overrides may not replace matrix axes, mode supports, or placement policy')
     common.update({
+        'multimodal_bilevel': True,
         'mpc_type': ('sh_mpcc_dro_fallback' if case['solver_style'] == 'sh_mpcc_dro_fallback'
                      else 'sh_mpcc'), 'dro_enabled': case['solver_style'] != 'sh_mpcc',
         'num_obstacles': case['obstacles'], 'num_classes': case['classes'],

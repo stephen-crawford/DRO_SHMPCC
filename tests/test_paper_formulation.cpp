@@ -70,6 +70,7 @@ int main() {
     near(actual.rho_used,0,"identical predictions have zero transport design budget");
 
     RuntimeConfig cfg;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.dro.enabled=true;cfg.mpc.horizon=3;cfg.mpc.ego.num_discs=1;cfg.mpc.ego.length=0;
     cfg.mpc.constraints.support_cap_n_bar=2;cfg.mpc.constraints.scenario_removal_budget=0;
     cfg.mpc.sampling.one_minus_chance_constraint_violation_probability=.8;

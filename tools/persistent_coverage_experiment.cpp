@@ -46,6 +46,7 @@ int main(int argc,char** argv) {
     if(family=="rare_braking")initial.at(0)=ObstacleState(4,1.8,0,0);
     initial.at(0).x=scene_x;
     auto cfg=yaml_config::load_experiment_config().to_scenario_mpc_config();
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.type=(arm=="sh_mpcc_resample"||arm=="sh_mpcc_dro_fallback")?MPCType::SH_MPCC_DRO_FALLBACK:MPCType::SH_MPCC;
     cfg.mpc.safe_horizon_enabled=false;cfg.mpc.wdro_stratified_sampling=false;
     cfg.mpc.nominal_resampling_baseline=arm=="sh_mpcc_resample";

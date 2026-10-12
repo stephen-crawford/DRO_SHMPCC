@@ -66,6 +66,7 @@ int main(int argc,char** argv) {
     for (const auto& [name,count]:counts)
         for (int i=0;i<count;++i) history.record_observation(tick++,0,name);
     auto runtime=yaml_config::load_experiment_config().to_scenario_mpc_config();
+    runtime.mpc.sampling.multimodal_bilevel = true;
     runtime.mpc.horizon=horizon;
     runtime.mpc.ego.length=2.;
     runtime.mpc.ego.num_discs=3;

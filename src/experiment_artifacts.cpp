@@ -167,9 +167,17 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     if (mpc.wdro_stratified_sampling)
         out << "scenario_guarantee_status: not_applicable_non_iid_stratified\n";
     write_scalar(out, "progress_weight", mpc.objective.progress_weight);
+    write_scalar(out, "velocity_weight", mpc.objective.velocity_weight);
+    write_scalar(out, "steering_weight", mpc.objective.steering_weight);
+    write_scalar(out, "contour_weight", mpc.objective.contour_weight);
+    write_scalar(out, "lag_weight", mpc.objective.lag_weight);
     write_scalar(out, "horizon", mpc.horizon);
     write_scalar(out, "dt", mpc.dt);
+    write_scalar(out, "control_dt", mpc.control_dt);
     write_scalar(out, "num_scenarios", sampling.num_scenarios);
+    write_bool(out, "multimodal_bilevel", sampling.multimodal_bilevel);
+    write_scalar(out, "trajectory_sample_batches", sampling.trajectory_sample_batches);
+    write_scalar(out, "trajectory_noise_stddev", sampling.trajectory_noise_stddev);
     write_bool(out, "automatically_compute_sample_size",
                sampling.automatically_compute_sample_size);
     write_bool(out, "safe_horizon_enabled", mpc.safe_horizon_enabled);
@@ -248,6 +256,8 @@ void write_resolved_config(std::ofstream& out, const ExperimentConfig& config) {
     write_obstacle_states(out, obstacle.initial_obstacle_states);
     write_scalar(out, "obs_path_fraction", obstacle.default_arc_fraction);
     write_scalar(out, "obstacle_process_noise", obstacle.process_noise);
+    write_scalar(out, "obstacle_prediction_model", yaml_quote(obstacle.prediction_model));
+    write_scalar(out, "obstacle_position_noise_variance", obstacle.position_noise_variance);
     write_bool(out, "obstacle_prediction_noise", obstacle.prediction_noise);
     write_scalar(out, "obstacle_speed_cap", obstacle.speed_cap);
     write_scalar(out, "obstacle_behavior", yaml_quote(obstacle.behavior));

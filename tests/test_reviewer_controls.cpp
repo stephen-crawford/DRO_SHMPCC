@@ -24,6 +24,7 @@ int main() {
     const ModeModel threat("threat", Eigen::Matrix4d::Zero(), Eigen::Vector4d::Zero(),
                            Eigen::MatrixXd::Zero(4, 2));
     RuntimeConfig config;
+    config.mpc.sampling.multimodal_bilevel = true;
     config.mpc.type = MPCType::SH_MPCC_DRO_FALLBACK;
     config.mpc.nominal_resampling_baseline = true;
     config.mpc.horizon = 4;

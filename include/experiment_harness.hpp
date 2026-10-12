@@ -135,6 +135,9 @@ struct ObstacleExperimentConfig {
     double process_noise = 0.02;
     /// Disable model process noise in controller/predictor trajectories for deterministic fixtures.
     bool prediction_noise = true;
+    std::string prediction_model = "framework";
+    // Diagonal entries of Sigma_w; gaussian_position uses dt * sqrt(Sigma_w).
+    double position_noise_variance = 0.3;
     double speed_cap = 2.0;
     /// Test-plant policy; does not modify the controller's mode models.
     std::string behavior = "mode_switching";
@@ -447,6 +450,20 @@ struct ExperimentConfig {
         if (mpc.type == MPCType::SH_MPCC_DRO_FALLBACK)
             dro.enabled = !mpc.nominal_resampling_baseline;
         artifacts.validate();
+        if (obstacles.prediction_model != "framework" &&
+            obstacles.prediction_model != "gaussian_position")
+            throw std::invalid_argument("unknown obstacle_prediction_model");
+        if (!std::isfinite(obstacles.position_noise_variance) ||
+            obstacles.position_noise_variance < 0.0)
+            throw std::invalid_argument("obstacle_position_noise_variance must be finite and non-negative");
+        if (obstacles.prediction_model == "gaussian_position") {
+            for (const auto& mode : obstacles.obs_modes)
+                if (mode != "constant_velocity" && mode != "stop")
+                    throw std::invalid_argument("gaussian_position supports constant_velocity and stop modes");
+            if (!obstacles.rare_mode.empty() && obstacles.rare_mode != "constant_velocity" &&
+                obstacles.rare_mode != "stop")
+                throw std::invalid_argument("gaussian_position rare_mode must be constant_velocity or stop");
+        }
         obstacles.apply_layout();
         mpc.sampling.sync_belief();
         mpc.sampling.markov_jump_system =

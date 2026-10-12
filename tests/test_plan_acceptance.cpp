@@ -15,6 +15,7 @@ int main() {
     try {
         auto cfg = yaml_config::load_experiment_config(
             "configs/base_tests/sh_mpcc_1_obstacles.yaml", true);
+        cfg.mpc.sampling.multimodal_bilevel = true;
         const auto seeds = derive_seeds(77, 0);
         std::mt19937 rng(seeds.env);
         const auto env = create_environment(cfg.environment.type, rng, cfg.environment);

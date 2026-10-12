@@ -2,7 +2,9 @@
  * @file scenario_sampler.hpp
  * @brief Scenario sampling for scenario MPC.
  *
- * There are two sampling approaches:
+ * The controller defaults to DirectTrajectorySampler, which consumes supplied
+ * prediction paths using the reference scenario_module Gaussian database.
+ * The following legacy sampling approaches are selected by multimodal_bilevel:
  *
  *   (1) i.i.d. scenario sampling (de Groot 2023, arXiv:2307.01070). Each of the S
  *       scenarios is an INDEPENDENT draw: one mode per obstacle held over the horizon
@@ -27,6 +29,49 @@
 #include <random>
 
 namespace dro_mpc {
+
+/// Predictor input, matching MPCPlanner::PredictionStep. Radii are consumed
+/// literally as noise standard deviations, then integrated and multiplied by dt
+/// exactly once by the sampler, just like the reference Safe-Horizon method.
+struct GaussianPredictionStep {
+    Eigen::Vector2d position = Eigen::Vector2d::Zero();
+    double angle = 0.0;
+    double major_radius = 1.0;
+    double minor_radius = 1.0;
+};
+
+struct GaussianPredictionMode {
+    std::string mode_id;
+    double probability = 1.0;
+    // Exactly N supplied means, preserved without shifting or extrapolation.
+    // Input steps[k] maps to output steps[k+1]; output step 0 is measured state.
+    std::vector<GaussianPredictionStep> steps;
+};
+
+using ObstaclePredictions = std::map<int, std::vector<GaussianPredictionMode>>;
+
+/// scenario_module::Sampler::IntegrateAndTranslateToMeanAndVariance semantics:
+/// a persistent Gaussian database, per-stage batch picks/permutations shared
+/// across obstacles, a held supplied mode, and accumulated velocity noise * dt.
+class DirectTrajectorySampler {
+public:
+    std::vector<Scenario> sample(
+        const std::map<int, ObstacleState>& obstacles,
+        const ObstaclePredictions& predictions,
+        int horizon, int num_scenarios, double dt, int batch_count,
+        std::mt19937& rng, int scenario_id_offset = 0);
+
+    void reset() { standard_samples_.clear(); }
+
+private:
+    std::vector<std::vector<Eigen::Vector2d>> standard_samples_;
+    friend struct DirectTrajectorySamplerTestAccess;
+};
+
+/// Simple predictor for callers without externally supplied paths. It produces
+/// one constant-velocity mean path, with velocity-noise standard deviation sigma.
+ObstaclePredictions constant_velocity_predictions(
+    const std::map<int, ObstacleState>& obstacles, int horizon, double dt, double sigma);
 
 /**
  * @brief Sample scenarios following Algorithm 1.

@@ -191,6 +191,26 @@ std::vector<EgoState> EgoDynamics::rollout_with_spline(
     return states;
 }
 
+std::map<std::string, ModeModel> create_gaussian_position_mode_models(
+    double dt, double position_noise_variance) {
+    if (!std::isfinite(dt) || dt <= 0 || !std::isfinite(position_noise_variance) ||
+        position_noise_variance < 0)
+        throw std::invalid_argument("invalid Gaussian position model timestep or variance");
+    Eigen::Matrix4d A = Eigen::Matrix4d::Identity();
+    A(0, 2) = dt;
+    A(1, 3) = dt;
+    Eigen::MatrixXd G = Eigen::MatrixXd::Zero(4, 2);
+    G(0, 0) = G(1, 1) = dt * std::sqrt(position_noise_variance);
+    std::map<std::string, ModeModel> modes;
+    modes.emplace("constant_velocity", ModeModel("constant_velocity", A,
+        Eigen::Vector4d::Zero(), G, "Gaussian position increments (Eq. 36)"));
+    A = Eigen::Matrix4d::Identity();
+    A(2, 2) = A(3, 3) = 0;
+    modes.emplace("stop", ModeModel("stop", A, Eigen::Vector4d::Zero(), G,
+        "Static Gaussian position increments (Eq. 34)"));
+    return modes;
+}
+
 std::map<std::string, ModeModel> create_obstacle_mode_models(double dt) {
     std::map<std::string, ModeModel> modes;
 

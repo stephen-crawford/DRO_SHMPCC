@@ -48,6 +48,7 @@ int main() {
     auto mode_models = create_obstacle_mode_models(DT);
 
     RuntimeConfig cfg;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.horizon = 10;
     cfg.mpc.dt = DT;
     cfg.mpc.sampling.set_manual_sample_count(10);
@@ -200,6 +201,7 @@ int main() {
     {
         std::cout << "Test 5: ExperimentConfig multi-obstacle fields... ";
         ExperimentConfig ecfg;
+        ecfg.mpc.sampling.multimodal_bilevel = true;
         ecfg.obstacles.num_obstacles = 3;
         ecfg.obstacles.obstacles_per_class = 3;  // all share class 0
         ecfg.mpc.sampling.set_manual_sample_count(10);

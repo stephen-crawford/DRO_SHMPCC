@@ -310,8 +310,19 @@ inline void apply_yaml_file(
         try {
             if      (k == "mpc_type")                      { cfg.mpc.type = parse_mpc(val); cfg.mpc.sync_from_type(); }
             else if (k == "progress_weight")               cfg.mpc.objective.progress_weight = std::stod(val);
+            else if (k == "velocity_weight")               cfg.mpc.objective.velocity_weight = std::stod(val);
+            else if (k == "steering_weight")               cfg.mpc.objective.steering_weight = std::stod(val);
+            else if (k == "contour_weight")                cfg.mpc.objective.contour_weight = std::stod(val);
+            else if (k == "lag_weight")                    cfg.mpc.objective.lag_weight = std::stod(val);
             else if (k == "horizon")                       cfg.mpc.horizon = std::stoi(val);
+            else if (k == "control_dt")                    cfg.mpc.control_dt = std::stod(val);
             else if (k == "dt")                            cfg.mpc.dt = std::stod(val);
+            else if (k == "multimodal_bilevel")             cfg.mpc.sampling.multimodal_bilevel = to_bool(val);
+            else if (k == "trajectory_sample_batches")      cfg.mpc.sampling.trajectory_sample_batches = std::stoi(val);
+            else if (k == "trajectory_noise_stddev")         cfg.mpc.sampling.trajectory_noise_stddev = std::stod(val);
+            else if (k == "deterministic_anchor_selection") cfg.mpc.sampling.deterministic_anchor_selection = to_bool(val);
+            else if (k == "anchor_inflation_kappa") cfg.mpc.sampling.anchor_inflation_kappa = std::stod(val);
+            else if (k == "anchor_pilot_samples") cfg.mpc.sampling.anchor_pilot_samples = std::stoi(val);
             else if (k == "num_scenarios") {
                 cfg.mpc.sampling.num_scenarios = std::stoi(val);
                 saw_num_scenarios = true;
@@ -333,7 +344,7 @@ inline void apply_yaml_file(
                 throw std::invalid_argument("renamed to support_cap_n_bar");
             else if (k == "enable_scenario_removal" || k == "scenario_removal_enabled")
                 throw std::invalid_argument(
-                    "removed because online scenario removal is not implemented; use scenario_removal_budget for conservative certification");
+                    "use scenario_removal_budget to configure cumulative online removal");
             else if (k == "scenario_removal_count" || k == "removal_count")
                 throw std::invalid_argument("renamed to scenario_removal_budget");
             else if (k == "clearance_filter_distance")     cfg.mpc.constraints.clearance_filter_distance = std::stod(val);
@@ -431,6 +442,8 @@ inline void apply_yaml_file(
             else if (k == "obstacle_behavior") cfg.obstacles.behavior = val;
             else if (k == "obstacle_behavior_initial_speed") cfg.obstacles.behavior_initial_speed = std::stod(val);
             else if (k == "obstacle_behavior_path_offset") cfg.obstacles.behavior_path_offset = std::stod(val);
+            else if (k == "obstacle_prediction_model") cfg.obstacles.prediction_model = val;
+            else if (k == "obstacle_position_noise_variance") cfg.obstacles.position_noise_variance = std::stod(val);
             else if (k == "obstacle_prediction_noise") cfg.obstacles.prediction_noise = to_bool(val);
             else if (k == "obstacle_process_noise")        cfg.obstacles.process_noise = std::stod(val);
             else if (k == "obstacle_speed_cap")            cfg.obstacles.speed_cap = std::stod(val);

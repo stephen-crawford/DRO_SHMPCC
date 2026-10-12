@@ -1,3 +1,4 @@
+multimodal_bilevel: true
 # Single obstacle matrix: seed 77; full controller sample sizing.
 mpc_type: sh_mpcc
 dro_enabled: true

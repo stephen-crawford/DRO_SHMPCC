@@ -18,7 +18,8 @@ int main(int argc,char**argv) {
     if(argc!=6){std::cerr<<"usage: paper_shift_experiment output geometry delta seed arm\n";return 2;}
     fs::path out=argv[1];std::string geometry=argv[2],arm=argv[5];double delta=std::stod(argv[3]);unsigned seed=std::stoul(argv[4]);fs::create_directories(out);
     auto cfg=yaml_config::load_experiment_config();cfg.mpc.type=MPCType::SH_MPCC;cfg.mpc.safe_horizon_enabled=true;
-    cfg.dro.enabled=arm=="full_proposed";
+    cfg.mpc.sampling.multimodal_bilevel = true;
+    cfg.dro.enabled=arm=="full_proposed" || arm=="reweight_only";
     cfg.mpc.horizon=20;cfg.rollout.rollout_steps=200;
     cfg.environment.road_length=25;cfg.environment.roundabout_radius=4;
     cfg.environment.type=geometry=="straight"?EnvironmentType::TWO_LANE_HIGHWAY:geometry=="s_curve"?EnvironmentType::S_CURVE:EnvironmentType::TWO_LANE_ROUNDABOUT;
@@ -57,6 +58,10 @@ int main(int argc,char**argv) {
     if(arm=="envelope_optimal") {
         auto runtime=cfg.to_scenario_mpc_config();int S=runtime.compute_required_scenarios_for_risk(.05/minimum,6,2);cfg.mpc.sampling.set_manual_sample_count(S);
     }
+    if(arm=="reweight_only") {
+        auto runtime=cfg.to_scenario_mpc_config();
+        cfg.mpc.sampling.set_manual_sample_count(runtime.compute_required_scenarios());
+    }
     cfg.normalize();
     auto laws=file(out/"laws.csv","geometry,delta,seed,arm,mode,risk_initial,shift_target,p_true,count,g,p_nominal,L,U,u,q_env,cp_covered");
     for(int j=0;j<3;++j)laws<<geometry<<','<<delta<<','<<seed<<','<<arm<<','<<ids[j]<<','<<risk.at(ids[j])<<','<<(j==dangerous)<<','<<truth[j]<<','<<counts[j]<<','<<g<<','<<nominal[j]<<','<<cp.lower[j]<<','<<cp.upper[j]<<','<<cp.coordinate_envelope[j]<<','<<env.at(ids[j])<<','<<covered<<'\n';
@@ -71,14 +76,14 @@ int main(int argc,char**argv) {
         if(arm=="envelope_optimal")controller.set_custom_mode_weights(id,env);
     };
     cfg.rollout.result_callback=[&](const DecisionContext& c,const MPCResult& result,const MPCController& controller){
-        if(arm=="full_proposed") {
+        if(arm=="full_proposed" || arm=="reweight_only") {
             const auto& allocation=controller.last_dro_results().at(0);
             if(allocation.radius_observation_count!=g)throw std::runtime_error("calibration count changed");
             for(int j=0;j<3;++j)if(std::abs(allocation.coordinate_envelope.at(ids[j])-cp.coordinate_envelope[j])>1e-9)throw std::runtime_error("calibration envelope changed");
         }
         ++observed;double z=arm=="envelope_optimal"?minimum:0;
         if(arm=="nominal")for(int j=0;j<3;++j)z=std::max(z,cp.coordinate_envelope[j]/nominal[j]);
-        if(arm=="full_proposed")z=result.distribution_domination_factor;
+        if(arm=="full_proposed" || arm=="reweight_only")z=result.distribution_domination_factor;
         bool transfer=result.certificate_status==SafeHorizonCertificateStatus::CERTIFIED && controller.config().compute_effective_epsilon(result.sampled_scenarios,controller.config().support_limit())<=.05/z;
         auto tic=std::chrono::steady_clock::now();
         int violations=0;

@@ -36,6 +36,11 @@ min_acceleration: -5.0
 max_omega: 0.8
 
 # --- scenario sampling / chance constraint ---
+multimodal_bilevel: false
+# Reference scenario_module Gaussian database size (number of batches).
+trajectory_sample_batches: 100
+# Velocity-noise standard deviation for the built-in constant-velocity predictor.
+trajectory_noise_stddev: 1.0
 one_minus_chance_constraint_violation_probability: 0.95
 chance_of_certificate_violation: 0.01
 automatically_compute_sample_size: true

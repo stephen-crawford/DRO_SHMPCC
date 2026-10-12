@@ -1,3 +1,4 @@
+multimodal_bilevel: true
 # Reproducible base scenario; inherits solver/certificate settings from default.yaml.
 mpc_type: sh_mpc
 num_obstacles: 1

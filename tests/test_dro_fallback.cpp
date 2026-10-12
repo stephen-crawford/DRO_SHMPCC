@@ -12,6 +12,7 @@ int main() {
     // A close stationary obstacle makes ordinary SQP fail; the existing
     // recovery selects a collision-checked braking candidate and retries SQP.
     RuntimeConfig recovery_cfg;
+    recovery_cfg.mpc.sampling.multimodal_bilevel = true;
     recovery_cfg.mpc.type = MPCType::SH_MPCC_DRO_FALLBACK;
     recovery_cfg.mpc.horizon = 10;
     recovery_cfg.mpc.sampling.set_manual_sample_count(8);
@@ -33,6 +34,7 @@ int main() {
     std::cout << "PASS: admissible DRO braking/homotopy recovery skips nominal\n";
 
     RuntimeConfig cfg;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.type = yaml_config::parse_mpc("sh_mpcc_dro_fallback");
     cfg.mpc.sync_from_type();
     cfg.mpc.horizon = 4;

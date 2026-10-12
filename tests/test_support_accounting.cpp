@@ -27,6 +27,7 @@ int main() {
     // sampled joint scenario binding/violated.  A zero support cap therefore
     // exercises the reference-style SUPPORT_EXCEEDED path deterministically.
     RuntimeConfig cfg;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.type = MPCType::SH_MPC;
     cfg.mpc.safe_horizon_enabled = true;
     cfg.mpc.horizon = 8;

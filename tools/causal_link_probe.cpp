@@ -24,6 +24,7 @@ int main(int argc,char** argv){
     fs::create_directories(out);
     try{
         auto cfg=yaml_config::load_experiment_config().to_scenario_mpc_config();
+        cfg.mpc.sampling.multimodal_bilevel = true;
         cfg.mpc.type=MPCType::SH_MPCC;cfg.mpc.safe_horizon_enabled=false;cfg.mpc.wdro_stratified_sampling=false;cfg.mpc.nominal_resampling_baseline=false;
         cfg.dro.enabled=false;cfg.dro.solver.radius_calibration.use_entropic_allocator=false;
         cfg.mpc.sampling.set_manual_sample_count(S);cfg.mpc.sampling.markov_jump_system=false;cfg.mpc.sampling.max_history_length=-1;

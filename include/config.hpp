@@ -92,9 +92,8 @@ struct MPCConstraintSettings {
     // scenario_module/config/params.yaml uses n_bar: 6 by default.
     int support_cap_n_bar = 6;
 
-    /// Conservative offline budget R for removed scenarios.  The controller
-    /// does not remove scenarios online; nevertheless, a stated budget raises
-    /// the total certificate cap exactly as in de Groot Thm. 5.
+    /// Maximum cumulative number R of joint scenarios removed online.
+    /// Removed scenarios remain in the support (de Groot Eq. 24 / Thm. 5).
     int scenario_removal_budget = 0;
 
     /// Total support cap used by the certificate: n̄ + R.
@@ -177,10 +176,21 @@ inline ModeBeliefConfig make_mode_belief_config(
  * effect when the corresponding flags / kinds are selected.
  */
 struct ScenarioSamplingSettings {
+    /// Default: sample supplied Gaussian prediction paths like scenario_module.
+    /// Opt in to the existing history-based modal / bi-level DRO sampler.
+    bool multimodal_bilevel = false;
+    int trajectory_sample_batches = 100;
+    double trajectory_noise_stddev = 1.0;  // velocity units; CV predictor fallback
+
     /// Effective number of sampled scenarios. When automatic sizing is on it
     /// is derived during RuntimeConfig::normalize(); otherwise it is the
     /// explicit static sample count from YAML or C++.
     int num_scenarios = 40;
+
+    /// Independent preparation scenarios; excluded from certification support.
+    int anchor_pilot_samples = 0;
+    bool deterministic_anchor_selection = false;
+    double anchor_inflation_kappa = 3.0;
 
     double one_minus_chance_constraint_violation_probability = 0.95; // = 1 - eps  (safety prob)
     double chance_of_certificate_violation = 0.01; // = beta  (certificate confidence = 1 - beta)
@@ -232,6 +242,9 @@ struct MPCConfig {
     MPCType type = MPCType::SH_MPCC;
     int horizon = 20;
     double dt = 0.1;
+    // The -1 sentinel preserves the historical one-prediction-step execution.
+    double control_dt = -1.0;
+    double execution_dt() const { return control_dt == -1.0 ? dt : control_dt; }
 
     EgoVehicleSpecification ego;
     MPCObjectiveWeights objective;
@@ -629,6 +642,16 @@ struct RuntimeConfig {
     }
 
     void validate() const {
+        if (!mpc.sampling.multimodal_bilevel &&
+            (dro.enabled || mpc.sampling.markov_jump_system ||
+             mpc.type == MPCType::SH_MPCC_DRO_FALLBACK || mpc.wdro_stratified_sampling ||
+             mpc.sampling.deterministic_anchor_selection))
+            throw std::invalid_argument("DRO / Markov sampling / modal deterministic anchors require multimodal_bilevel: true");
+        if (mpc.sampling.trajectory_sample_batches <= 0)
+            throw std::invalid_argument("trajectory_sample_batches must be positive");
+        if (!std::isfinite(mpc.sampling.trajectory_noise_stddev) ||
+            mpc.sampling.trajectory_noise_stddev < 0.0)
+            throw std::invalid_argument("trajectory_noise_stddev must be finite and non-negative");
         if (mpc.wdro_stratified_sampling &&
             (!dro.enabled || mpc.uses_safe_horizon() ||
              mpc.sampling.automatically_compute_sample_size || mpc.sampling.markov_jump_system ||
@@ -638,12 +661,38 @@ struct RuntimeConfig {
             throw std::invalid_argument("nominal_resampling_baseline requires sh_mpcc_dro_fallback");
         if (!std::isfinite(mpc.objective.progress_weight) || mpc.objective.progress_weight < 0.0)
             throw std::invalid_argument("progress_weight must be finite and non-negative");
+        // Theorem 2 assumes convex QP iterations; these squared-term weights
+        // must not turn the existing Gauss–Newton Hessian indefinite.
+        for (double weight : {mpc.objective.goal_weight, mpc.objective.velocity_weight,
+                              mpc.objective.acceleration_weight, mpc.objective.steering_weight,
+                              mpc.objective.terminal_heading_weight, mpc.objective.contour_weight,
+                              mpc.objective.lag_weight}) {
+            if (!std::isfinite(weight) || weight < 0.0)
+                throw std::invalid_argument("quadratic objective weights must be finite and non-negative");
+        }
         if (mpc.horizon <= 0) throw std::invalid_argument("horizon must be positive");
-        if (mpc.dt <= 0) throw std::invalid_argument("dt must be positive");
+        if (!std::isfinite(mpc.dt) || mpc.dt <= 0) throw std::invalid_argument("dt must be finite and positive");
+        if (!std::isfinite(mpc.execution_dt()) || mpc.execution_dt() <= 0 ||
+            mpc.execution_dt() > mpc.dt)
+            throw std::invalid_argument("control_dt must be positive and no greater than dt, or -1 to inherit dt");
         if (mpc.sampling.one_minus_chance_constraint_violation_probability <= 0 || mpc.sampling.one_minus_chance_constraint_violation_probability >= 1)
             throw std::invalid_argument("confidence_level must be in (0, 1)");
         if (mpc.sampling.chance_of_certificate_violation <= 0 || mpc.sampling.chance_of_certificate_violation >= 1)
             throw std::invalid_argument("beta must be in (0, 1)");
+        if (!std::isfinite(mpc.sampling.anchor_inflation_kappa) || mpc.sampling.anchor_inflation_kappa < 0)
+            throw std::invalid_argument("anchor_inflation_kappa must be finite and non-negative");
+        if (mpc.sampling.deterministic_anchor_selection &&
+            (!mpc.uses_safe_horizon() || dro.enabled ||
+             mpc.type == MPCType::SH_MPCC_DRO_FALLBACK ||
+             mpc.sampling.markov_jump_system || mpc.sampling.anchor_pilot_samples != 0))
+            throw std::invalid_argument("deterministic anchors require ordinary held-mode SH without pilots");
+        if (mpc.sampling.anchor_pilot_samples < 0)
+            throw std::invalid_argument("anchor_pilot_samples must be non-negative");
+        if (mpc.sampling.anchor_pilot_samples > 0 &&
+            (!mpc.uses_safe_horizon() || dro.enabled ||
+             mpc.type == MPCType::SH_MPCC_DRO_FALLBACK ||
+             mpc.nominal_resampling_baseline || mpc.wdro_stratified_sampling))
+            throw std::invalid_argument("anchor pilots require ordinary non-DRO SH sampling");
         if (mpc.sampling.num_scenarios <= 0)
             throw std::invalid_argument("num_scenarios must be positive");
         if (mpc.sampling.max_history_length == 0 ||

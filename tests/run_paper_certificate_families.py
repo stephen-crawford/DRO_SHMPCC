@@ -26,7 +26,7 @@ def main():
         return dict(m=m,g=g,seed=seed,beta=beta,truth=truth,counts=counts,rho=rho,vertices=int(vertices),cp_ms=cp_ms,u_ms=u_ms,q_ms=q_ms,p=p,r=r,lo=lo,hi=hi,u=u,ub=ub,q=q,D=D)
     mode_rows=[];cost_rows=[];arm_rows=[];radius_rows=[];scaling=[];scaling_obs=[]
     for m in [2,3,5]:
-        for g in [10,25,50,100,250,1000]:
+        for g in [10,25,50,100,250,500,1000]:
             for seed in range(a.seeds):
                 x=instance(m,g,100000+m*10000+g*100+seed,.05);p,r,u,D=x['p'],x['r'],x['u'],x['D'];minimum=u.sum()
                 ident=f'cal_m{m}_g{g}_s{seed}'
@@ -48,7 +48,7 @@ def main():
                     if arm=='wasserstein_min_zeta':assert abs(z-1/lp.x[-1])<1e-6
                     assert z>=minimum-1e-7
                     if arm=='full_proposed':assert z<=max(u/p)+1e-7 and min(q[r>=.01]-p[r>=.01],default=0)>=-1e-7
-                    arm_rows.append(dict(instance=ident,M=m,g=g,seed=seed,arm=arm,beta_DRO=.05,epsilon=.05,rho=x['rho'],vertices=x['vertices'],minimum_zeta=minimum,zeta=z,normalized_zeta=z/minimum,epsilon_SH=.05/z,required_S=S,S_bound_satisfied=ok,old_new_envelope_ratio=x['ub'].sum()/minimum,cp_covered=int(np.all(x['truth']>=x['lo']) and np.all(x['truth']<=x['hi'])),risk_expectation=q@r,risk_lift=(q-p)@r,cp_radius_total_ms=x['cp_ms'],envelope_formula_ms=x['u_ms'],allocation_ms=ms,construction_total_ms=x['cp_ms']+ms,q=json.dumps(q.tolist())))
+                    arm_rows.append(dict(instance=ident,M=m,g=g,seed=seed,arm=arm,beta_DRO=.05,epsilon=.05,rho=x['rho'],vertices=x['vertices'],minimum_zeta=minimum,zeta=z,normalized_zeta=z/minimum,epsilon_SH=.05/z,required_S=S,S_bound_satisfied=ok,old_new_envelope_ratio=x['ub'].sum()/minimum,cp_covered=int(np.all(x['truth']>=x['lo']) and np.all(x['truth']<=x['hi'])),risk_expectation=q@r,risk_lift=(q-p)@r,dangerous_mass_change=float((q-p)[r>=.01].sum()),cp_radius_total_ms=x['cp_ms'],envelope_formula_ms=x['u_ms'],allocation_ms=ms,construction_total_ms=x['cp_ms']+ms,q=json.dumps(q.tolist())))
             print(f'certificate M={m} g={g}: {a.seeds} seeds',flush=True)
     for m in range(2,9):
         for seed in range(a.seeds):

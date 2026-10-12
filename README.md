@@ -167,6 +167,44 @@ overwritten by the runner and that explicit CLI options take precedence.
 
 ## Configuration notes
 
+Scenario sampling defaults to the reference `scenario_module` Safe-Horizon
+trajectory sampler (`multimodal_bilevel: false`). It samples a supplied prediction
+mode once per obstacle, then accumulates Gaussian perturbations from a persistent
+sample database along that mode's mean path. `trajectory_sample_batches` defaults
+to 100. Without supplied paths, the controller uses a constant-velocity predictor
+with `trajectory_noise_stddev: 1.0`; the experiment harness also honors
+`obstacle_prediction_noise: false`.
+
+Set `multimodal_bilevel: true` to retain the existing mode-history sampler,
+including optional `dro_enabled: true` bi-level reweighting and Markov switching.
+DRO/Markov profiles must explicitly select that option. Existing modal experiment
+profiles and drivers select it to preserve their sampling behavior.
+
+For external predictions, call `MPCController::set_obstacle_predictions()` before
+each solve with an `ObstaclePredictions` map. Each obstacle can have multiple
+`GaussianPredictionMode` paths with supplied probabilities; each path contains
+exactly `horizon` positions, headings, and major/minor noise standard deviations.
+These paths bypass mode-history inference and DRO. See
+[sampling semantics and source comparison](docs/direct_trajectory_sampling.md)
+for indexing, covariance conventions, reproducibility differences, and validation.
+
+The candidate alignment with the supplied 2023 Safe Horizon MPC paper uses
+active constraints at feasible convex QP solutions, cumulative scenario
+removal, and return of a saved feasible iterate when the support cap is
+exceeded. The existing RK4 dynamics, MPCC path representation, and acados
+backend remain framework choices. Use `configs/safe_horizon_paper.yaml` for
+the paper's N=20, prediction dt=0.2, execution dt=0.05, R=1, total support cap 9, S=1237 and Gaussian
+Table II weights. The profile disables the optional progress reward and
+tracks reference velocity. `configs/safe_horizon_paper_static.yaml` additionally
+selects the Eq. (34) position random walk and static experiment geometry/weights.
+The covariance convention is explicit in that profile. Existing configurations
+inherit prediction dt as their execution interval. DRO remains an optional extension.
+
+See [the alignment and validation report](docs/safe_horizon_alignment_audit.md)
+for numerical tolerances, test failures and rollout limitations. The base-run
+results below describe earlier candidates and have not been re-established
+for this alignment.
+
 `configs/default.yaml` is the source of numerical defaults. A user overlay is
 loaded on top of it, then normalized and validated before controller creation.
 The CSV and artifact manifest record both the requested and effective mode-set
@@ -180,10 +218,11 @@ penalties, and reward average progress along the reference path over the horizon
 
 ```text
 J = sum(contour/lag penalties) + sum(control-effort penalties)
-    + terminal-heading penalty - progress_weight * (s_N - s_0) / (N * dt)
+    + sum(reference-velocity penalties) + terminal-heading penalty
+    - progress_weight * (s_N - s_0) / (N * dt)
 ```
 
-They have no endpoint-distance or reference-speed tracking term. MPC and SH-MPC
+They have no endpoint-distance term and do track reference speed. MPC and SH-MPC
 retain their existing objectives. `progress_weight` defaults to 10.0 and is
 recorded in `resolved_config.yaml`; it trades progress against the remaining
 penalties. Weight 1.0 stalled before the stationary obstacle in the base MPCC

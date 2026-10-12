@@ -10,6 +10,7 @@ static void require(bool ok,const char* message) {
 int main() {
     for (bool nominal : {true,false}) {
         RuntimeConfig cfg;
+        cfg.mpc.sampling.multimodal_bilevel = true;
         cfg.mpc.type=MPCType::SH_MPCC_DRO_FALLBACK;
         cfg.mpc.nominal_resampling_baseline=nominal;
         cfg.mpc.horizon=4;
@@ -53,6 +54,7 @@ int main() {
     {
         RuntimeConfig cfg;
         cfg.dro.enabled=true;
+        cfg.mpc.sampling.multimodal_bilevel = true;
         cfg.mpc.safe_horizon_enabled=false;
         cfg.mpc.wdro_stratified_sampling=true;
         cfg.mpc.ego.num_discs=1;cfg.mpc.ego.length=0;

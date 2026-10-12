@@ -238,6 +238,7 @@ int main() {
             .set_manual_sample_count(4);
 
         controller_config.dro.enabled = true;
+        controller_config.mpc.sampling.multimodal_bilevel = true;
         controller_config.random_seed = 117u;
 
         MPCController controller(

@@ -252,6 +252,7 @@ int main(int argc, char** argv) {
         if (step < 0 || samples < 1 || root.empty() || config_path.empty()) throw std::runtime_error("config/output/step and positive samples required");
         if (fs::exists(root)) throw std::runtime_error("output already exists; use a new directory");
         auto config = yaml_config::load_experiment_config(config_path, true);
+        config.mpc.sampling.multimodal_bilevel = true;
         config.rollout.rollout_steps = step+1;
         config.artifacts.output_directory = (root/"replay").string();
         config.artifacts.run_name = "source";

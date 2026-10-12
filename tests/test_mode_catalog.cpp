@@ -133,6 +133,7 @@ int main() {
                 << "obstacles_per_class: 2\n"
                 << "obstacle_history: shared_history_classes\n"
                 << "markov_jump_system: true\n"
+                << "multimodal_bilevel: true\n"
                 << "obstacle_starts: [4.5,1.0,0.5,0; 8.0,-2.0; 12,3,-1,0.25]\n"
                 << "fixed_rho: 0.23\n"
                 << "risk_measure: joint_cvar\n"

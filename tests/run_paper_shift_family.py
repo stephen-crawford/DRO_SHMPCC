@@ -5,9 +5,9 @@ from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 def main():
- p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--seeds',type=int,default=30);p.add_argument('--jobs',type=int,default=4);p.add_argument('--resume',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
+ p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--seeds',type=int,default=30);p.add_argument('--jobs',type=int,default=4);p.add_argument('--resume',action='store_true');p.add_argument('--focused',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
  binary=ROOT/'build-base/paper_shift_experiment'
- manifest=dict(seeds=list(range(500,500+a.seeds)),geometries=['straight','s_curve','roundabout'],shifts=[0,.2,.4,.6],arms=['nominal','envelope_optimal','full_proposed'],jobs=a.jobs,g=25,N=20,n_validation=1000,max_steps=200,epsilon=.05,beta_DRO=.05,beta_SH=.01,runner_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),timeout_seconds=180)
+ manifest=dict(seeds=list(range(500,500+a.seeds)),geometries=['straight'] if a.focused else ['straight','s_curve','roundabout'],shifts=[0,.2,.4,.6],arms=['nominal','reweight_only','full_proposed'] if a.focused else ['nominal','envelope_optimal','full_proposed'],jobs=a.jobs,g=25,N=20,n_validation=1000,max_steps=200,epsilon=.05,beta_DRO=.05,beta_SH=.01,runner_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),timeout_seconds=180)
  path=a.output/'shift_manifest.json'
  if path.exists() and json.loads(path.read_text())!=manifest:raise RuntimeError('manifest changed')
  path.write_text(json.dumps(manifest,indent=2)+'\n')

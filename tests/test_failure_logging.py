@@ -19,7 +19,7 @@ def main():
         # Explicitly blocked start exercises rejection; no safety-performance inference.
         text = text.replace('[12.5,0,0,0]', '[0,0,0,0]').replace('rollout_steps: 450', 'rollout_steps: 1')
         config = root/'blocked.yaml'
-        config.write_text(text+'\nartifact_write_analysis_csv: true\n')
+        config.write_text(text+'\nartifact_write_analysis_csv: true\nmultimodal_bilevel: true\n')
         command = [str(runner), '--config', str(config), '--seed', '77', '--output',
                    str(root), '--label', 'blocked', '--no-svg', '--no-gif', '--no-rviz']
         run = subprocess.run(command, cwd=matrix.ROOT, capture_output=True, text=True, check=True)

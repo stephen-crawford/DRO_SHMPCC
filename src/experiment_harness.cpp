@@ -540,9 +540,19 @@ namespace dro_mpc {
         rec.mode_selection_policy = mode_selection_policy_name(config.obstacles);
         rec.requested_random_mode_count = config.obstacles.num_modes;
 
-        auto mode_models = create_obstacle_mode_models(config.mpc.dt);
+        const auto make_mode_models = [&](double model_dt) {
+            return config.obstacles.prediction_model == "gaussian_position"
+                ? create_gaussian_position_mode_models(model_dt, config.obstacles.position_noise_variance)
+                : create_obstacle_mode_models(model_dt);
+        };
+        auto mode_models = make_mode_models(config.mpc.dt);
         if (!config.obstacles.prediction_noise) {
             for (auto& [id, model] : mode_models) model.G.setZero();
+        }
+
+        auto plant_mode_models = make_mode_models(config.mpc.execution_dt());
+        if (!config.obstacles.prediction_noise) {
+            for (auto& [id, model] : plant_mode_models) model.G.setZero();
         }
 
         RuntimeConfig mpc_cfg = config.to_scenario_mpc_config();
@@ -570,7 +580,7 @@ namespace dro_mpc {
             capture_collision_visualization);
 
         const double metrics_v_ref = config.rollout.metrics_v_ref;
-        const double dt = config.mpc.dt;
+        const double dt = config.mpc.execution_dt();
         EnvironmentSetup env_setup = create_environment(
             config.environment.type, plant_rng, config.environment);
         ReferencePath ref_path = config.environment.custom_ref_path.has_value()
@@ -608,7 +618,7 @@ namespace dro_mpc {
         double completion_progress = 0.0;
 
         auto obs_sims = construct_obstacles(
-            config.obstacles, env_setup.initial_obs, ref_path, mode_models, plant_rng);
+            config.obstacles, env_setup.initial_obs, ref_path, plant_mode_models, plant_rng);
         // New test policies derive starts from the actual generated reference path.
         // Existing mode-switching experiments retain their original placement.
         const auto crossing = ref_path.get_point_at(0.5 * path_length);
@@ -732,7 +742,8 @@ namespace dro_mpc {
 
         for (int i = 0; i < n_obs; ++i) {
             int obs_class = config.obstacles.class_id(i);
-            controller.initialize_obstacle(i, obs_class, obs_sims[i].mode_models);
+            controller.initialize_obstacle(i, obs_class,
+                mode_models_for(obs_sims[i].available_modes, mode_models));
         }
 
                /*
@@ -1011,6 +1022,12 @@ namespace dro_mpc {
             const Eigen::Vector2d goal = rollout_tracking_goal(
                 ref_path, path_progress, trajectory_speed,
                 config.mpc.horizon, config.mpc.dt);
+            if (!config.mpc.sampling.multimodal_bilevel) {
+                controller.set_obstacle_predictions(constant_velocity_predictions(
+                    obstacles, config.mpc.horizon, config.mpc.dt,
+                    config.obstacles.prediction_noise
+                        ? config.mpc.sampling.trajectory_noise_stddev : 0.0));
+            }
             if (config.rollout.decision_callback) {
                 config.rollout.decision_callback(
                     {step, ego, obstacles, goal, trajectory_speed, path_progress, path_length},

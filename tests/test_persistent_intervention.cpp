@@ -5,6 +5,7 @@ using namespace dro_mpc;
 static void require(bool ok,const char* m){if(!ok)throw std::runtime_error(m);}
 int main(){
     RuntimeConfig cfg;cfg.mpc.type=MPCType::SH_MPCC;cfg.mpc.safe_horizon_enabled=false;cfg.dro.enabled=false;
+    cfg.mpc.sampling.multimodal_bilevel = true;
     cfg.mpc.horizon=4;cfg.mpc.sampling.set_manual_sample_count(10);cfg.random_seed=701;
     ModeModel safe("safe",Eigen::Matrix4d::Identity(),Eigen::Vector4d::Zero(),Eigen::MatrixXd::Zero(4,2));
     ModeModel danger("danger",Eigen::Matrix4d::Identity(),Eigen::Vector4d(-.1,0,0,0),Eigen::MatrixXd::Zero(4,2));
